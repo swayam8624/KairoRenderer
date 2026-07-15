@@ -53,6 +53,13 @@ collider, and broadphase diagnostic data.
 The line vocabulary includes axes, AABBs, quaternion-oriented boxes, wire
 spheres/capsules, and contact normals; all transformations reuse KairoMath.
 
+When `KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=ON`, the separate
+`KairoRendererPhysicsDebug` target translates `PhysicsWorld` snapshots into
+that line vocabulary. It preserves spheres, capsules, AABBs, oriented boxes,
+bounded plane grids, contact markers/normals, trigger coloring, sleeping state,
+and optional broadphase bounds. The dependency is one-way: the integration
+target imports both libraries; PhysicsEngine never imports Renderer.
+
 ## Mesh Submission Boundary
 
 `CreateMesh` uploads validated `Mesh` vertices and indices and returns an opaque

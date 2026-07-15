@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(KAIRO_RENDERER_BUILD_TESTS "Build KairoRenderer tests" ${PROJECT_IS_TOP_LEVEL})
+option(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE "Build the optional PhysicsEngine debug adapter" ${PROJECT_IS_TOP_LEVEL})
 option(KAIRO_RENDERER_ENABLE_VALIDATION "Enable Vulkan validation layers in debug configurations" ON)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -112,6 +113,26 @@ target_compile_definitions(KairoRenderer PUBLIC $<$<BOOL:${KAIRO_RENDERER_ENABLE
 target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry glfw ${KAIRO_VULKAN_LOADER_LIBRARY}
     "-framework Metal" "-framework QuartzCore" "-framework CoreFoundation" "-framework IOKit" "-framework IOSurface")
 
+if(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE)
+    if(NOT TARGET KairoPhysicsEngine)
+        set(KAIRO_PHYSICS_ENGINE_SOURCE_DIR "" CACHE PATH "Path to a local KairoPhysicsEngine checkout")
+        if(KAIRO_PHYSICS_ENGINE_SOURCE_DIR AND EXISTS "${KAIRO_PHYSICS_ENGINE_SOURCE_DIR}/CMakeLists.txt")
+            add_subdirectory("${KAIRO_PHYSICS_ENGINE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoPhysicsEngine")
+        elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoPhysicsEngine/CMakeLists.txt")
+            add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoPhysicsEngine" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoPhysicsEngine")
+        else()
+            include(FetchContent)
+            FetchContent_Declare(KairoPhysicsEngine GIT_REPOSITORY https://github.com/swayam8624/KairoPhysicsEngine.git GIT_TAG main)
+            FetchContent_MakeAvailable(KairoPhysicsEngine)
+        endif()
+    endif()
+
+    add_library(KairoRendererPhysicsDebug)
+    target_sources(KairoRendererPhysicsDebug PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
+        PhysicsDebugBridge.cppm)
+    target_link_libraries(KairoRendererPhysicsDebug PUBLIC KairoRenderer KairoPhysicsEngine)
+endif()
+
 add_executable(KairoRendererClear examples/clear_window.cpp)
 target_link_libraries(KairoRendererClear PRIVATE KairoRenderer)
 
@@ -123,4 +144,9 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     target_link_libraries(KairoRendererTests PRIVATE KairoRenderer Catch2::Catch2WithMain)
     enable_testing()
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
+    if(TARGET KairoRendererPhysicsDebug)
+        add_executable(KairoRendererPhysicsDebugTests tests/PhysicsDebugBridgeTests.cpp)
+        target_link_libraries(KairoRendererPhysicsDebugTests PRIVATE KairoRendererPhysicsDebug Catch2::Catch2WithMain)
+        add_test(NAME KairoRendererPhysicsDebugTests COMMAND KairoRendererPhysicsDebugTests)
+    endif()
 endif()
