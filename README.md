@@ -48,6 +48,15 @@ camera space as the scene. This keeps `KairoPhysicsEngine` independent from
 Vulkan while allowing an engine/editor adapter to translate its contact,
 collider, and broadphase diagnostic data.
 
+## Tooling Overlay Contract
+
+`RendererRuntime::BackendContext()` returns a non-owning Vulkan handle snapshot
+for editor/tool backends. `SetOverlayRecorder()` installs a callback invoked
+inside the active scene render pass. The callback may record overlay draw calls
+but never owns command-buffer reset, render-pass begin/end, queue submission,
+or presentation. This is the integration boundary used by KairoEditor; the
+editor does not create a second renderer or Vulkan device.
+
 ## Dependencies
 
 Resolution prefers local Kairo packages:

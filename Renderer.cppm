@@ -4,6 +4,7 @@ module;
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <utility>
 #include <stdexcept>
 #include <vector>
 
@@ -19,6 +20,7 @@ import Kairo.Renderer.VulkanCommand;
 import Kairo.Renderer.VulkanSync;
 import Kairo.Renderer.VulkanTriangle;
 import Kairo.Renderer.DebugDraw;
+import Kairo.Renderer.VulkanBackendContext;
 
 export namespace kairo::renderer
 {
@@ -127,6 +129,26 @@ export namespace kairo::renderer
         {
             m_Triangle.SetDebugDrawList(debug);
         }
+
+        /// Input: renderer-neutral owner supplies a callback that records only
+        /// overlay draw commands. Passing an empty callback disables overlays.
+        /// Task: integrate tooling UI into the existing scene pass and command
+        /// submission lifecycle without exposing begin/end/submit ownership.
+        void SetOverlayRecorder(VulkanOverlayRecorder recorder)
+        {
+            m_OverlayRecorder = std::move(recorder);
+        }
+
+        /// Output: current non-owning Vulkan handles for a tooling backend.
+        /// Precondition: this RendererRuntime remains alive while handles are used.
+        [[nodiscard]] VulkanBackendContext BackendContext() const noexcept
+        {
+            return {
+                m_Instance.Handle(), m_Device.PhysicalHandle(), m_Device.Handle(),
+                m_Device.GraphicsQueue(), m_Device.GraphicsFamily(), m_Triangle.RenderPass(),
+                static_cast<std::uint32_t>(m_Swapchain.Images().size())
+            };
+        }
     private:
         GlfwRuntime m_Glfw;
         Window m_Window;
@@ -137,11 +159,12 @@ export namespace kairo::renderer
         VulkanCommandBuffer m_Command;
         VulkanFrameSync m_Sync;
         VulkanTriangle m_Triangle;
+        VulkanOverlayRecorder m_OverlayRecorder;
 
         /// Task: record the complete mesh and debug-line render pass.
         void RecordFrameCommands(std::uint32_t imageIndex)
         {
-            m_Triangle.Record(m_Command, imageIndex, m_Swapchain.Extent());
+            m_Triangle.Record(m_Command, imageIndex, m_Swapchain.Extent(), m_OverlayRecorder);
         }
 
         void RecreateSwapchain()

@@ -7,6 +7,7 @@ module;
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -23,6 +24,7 @@ import Kairo.Renderer.VulkanDepth;
 import Kairo.Renderer.VulkanDescriptor;
 import Kairo.Renderer.VulkanDevice;
 import Kairo.Renderer.VulkanSwapchain;
+import Kairo.Renderer.VulkanBackendContext;
 import Kairo.Foundation.Math;
 
 export namespace kairo::renderer
@@ -75,10 +77,13 @@ export namespace kairo::renderer
         /// Task: release image-view-dependent resources before swapchain teardown.
         void ReleaseSwapchainResources() noexcept { Destroy(); }
 
+        [[nodiscard]] VkRenderPass RenderPass() const noexcept { return m_RenderPass; }
+
         /// Precondition: imageIndex belongs to the current swapchain and the
         /// caller has waited for this command buffer's completion fence.
         /// Task: render the showcase mesh, then debug lines into one depth pass.
-        void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent)
+        void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent,
+            const VulkanOverlayRecorder& overlayRecorder)
         {
             m_Camera.Advance(1.0f / 60.0f);
             UpdateUniform(extent);
@@ -113,6 +118,7 @@ export namespace kairo::renderer
             vkCmdBindIndexBuffer(command.Handle(), m_IndexBuffer.Handle(), 0u, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(command.Handle(), static_cast<std::uint32_t>(m_ShowcaseMesh.Indices().size()), 1u, 0u, 0, 0u);
             DrawDebugLines(command);
+            if (overlayRecorder) overlayRecorder(command.Handle());
             vkCmdEndRenderPass(command.Handle());
             command.End();
         }

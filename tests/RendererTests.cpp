@@ -12,6 +12,14 @@ TEST_CASE("Renderer window descriptions validate required dimensions", "[KairoRe
     REQUIRE_THROWS(ValidateWindowDesc({ "Test", 0, 1, false }));
 }
 
+TEST_CASE("Vulkan backend snapshots reject incomplete integration handles", "[KairoRenderer][Backend]")
+{
+    const VulkanBackendContext context;
+    CHECK_FALSE(context.IsValid());
+    const VulkanOverlayRecorder recorder;
+    CHECK_FALSE(static_cast<bool>(recorder));
+}
+
 TEST_CASE("Showcase camera produces Vulkan-depth projection and advances its model", "[KairoRenderer][Camera]")
 {
     ShowcaseCamera camera;
