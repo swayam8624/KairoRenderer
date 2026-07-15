@@ -33,22 +33,29 @@ export namespace kairo::renderer
         VulkanInstance(const VulkanInstanceDesc& desc, const std::vector<const char*>& surfaceExtensions)
         {
             std::vector<const char*> extensions = surfaceExtensions;
-            extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-            if (desc.EnableValidation && HasLayer("VK_LAYER_KHRONOS_validation"))
+            VkInstanceCreateFlags flags = 0u;
+            if (HasExtension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME))
+            {
+                extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+                flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            }
+            if (desc.EnableValidation && HasLayer("VK_LAYER_KHRONOS_validation") && HasExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
             {
                 m_ValidationEnabled = true;
                 extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
             }
 
-            VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+            VkApplicationInfo app{};
+            app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
             app.pApplicationName = desc.ApplicationName.c_str();
             app.applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0);
             app.pEngineName = "Kairo";
             app.engineVersion = VK_MAKE_API_VERSION(0, 0, 1, 0);
             app.apiVersion = VK_API_VERSION_1_1;
 
-            VkInstanceCreateInfo create{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
-            create.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            VkInstanceCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+            create.flags = flags;
             create.pApplicationInfo = &app;
             create.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
             create.ppEnabledExtensionNames = extensions.data();
@@ -82,6 +89,17 @@ export namespace kairo::renderer
             return std::any_of(layers.begin(), layers.end(), [name](const VkLayerProperties& layer)
             {
                 return std::strcmp(layer.layerName, name) == 0;
+            });
+        }
+        [[nodiscard]] static bool HasExtension(const char* name)
+        {
+            std::uint32_t count = 0;
+            vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr);
+            std::vector<VkExtensionProperties> extensions(count);
+            vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data());
+            return std::any_of(extensions.begin(), extensions.end(), [name](const VkExtensionProperties& extension)
+            {
+                return std::strcmp(extension.extensionName, name) == 0;
             });
         }
     };

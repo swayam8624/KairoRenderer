@@ -2,6 +2,7 @@ module;
 
 #include <GLFW/glfw3.h>
 
+#include <cstdlib>
 #include <stdexcept>
 #include <utility>
 
@@ -18,6 +19,19 @@ export namespace kairo::renderer
     public:
         GlfwRuntime()
         {
+#if defined(__APPLE__) && defined(KAIRO_RENDERER_MOLTENVK_ICD_FILE)
+            // Homebrew installations can coexist with a legacy MoltenVK ICD
+            // under /usr/local. Prefer this build's configured ICD, but honor
+            // a caller's explicit VK_ICD_FILENAMES override for diagnostics.
+            const char* configuredIcd = std::getenv("VK_ICD_FILENAMES");
+            if (configuredIcd == nullptr || configuredIcd[0] == '\0')
+            {
+                if (setenv("VK_ICD_FILENAMES", KAIRO_RENDERER_MOLTENVK_ICD_FILE, 0) != 0)
+                {
+                    throw std::runtime_error("Failed to configure the MoltenVK ICD path.");
+                }
+            }
+#endif
             if (glfwInit() != GLFW_TRUE)
             {
                 throw std::runtime_error("GLFW initialization failed.");
