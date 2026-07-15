@@ -3,6 +3,7 @@ module;
 #include <GLFW/glfw3.h>
 
 #include <stdexcept>
+#include <utility>
 
 export module Kairo.Renderer.Window;
 
@@ -53,6 +54,13 @@ export namespace kairo::renderer
         [[nodiscard]] bool ShouldClose() const noexcept { return glfwWindowShouldClose(m_Handle) == GLFW_TRUE; }
         void PollEvents() const noexcept { glfwPollEvents(); }
         void RequestClose() const noexcept { glfwSetWindowShouldClose(m_Handle, GLFW_TRUE); }
+        [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> FramebufferExtent() const noexcept
+        {
+            int width = 0;
+            int height = 0;
+            glfwGetFramebufferSize(m_Handle, &width, &height);
+            return { static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height) };
+        }
     private:
         GLFWwindow* m_Handle = nullptr;
     };

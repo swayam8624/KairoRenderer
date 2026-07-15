@@ -4,4 +4,7 @@ export import Kairo.Renderer.Window;
 export import Kairo.Renderer.VulkanInstance;
 export import Kairo.Renderer.VulkanSurface;
 export import Kairo.Renderer.VulkanDevice;
+export import Kairo.Renderer.VulkanSwapchain;
+export import Kairo.Renderer.VulkanCommand;
+export import Kairo.Renderer.VulkanSync;
 export import Kairo.Renderer.Runtime;

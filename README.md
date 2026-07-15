@@ -7,10 +7,10 @@ debug draw, and later editor rendering.
 
 ## Current milestone
 
-M1 is complete: GLFW window ownership, Vulkan instance creation, MoltenVK
-portability flags, and a GLFW-created Vulkan surface. The next milestone is
-device/queue selection and swapchain presentation; no fake frame loop is
-claimed before that exists.
+M3 is complete: GLFW window ownership, Vulkan instance and surface creation,
+device/queue selection, swapchain acquisition, synchronization, transfer
+clearing, and presentation. `KairoRendererClear` presents a dark blue Vulkan
+frame in a real native window.
 
 ## Build
 
@@ -22,8 +22,9 @@ ctest --test-dir build --output-on-failure
 ./build/KairoRendererClear
 ```
 
-The sample creates a native Vulkan-capable window and remains open until the
-window is closed. It does not clear or present until the swapchain milestone.
+The sample creates a native Vulkan window and continuously presents a cleared
+frame until the window is closed. Resizing is supported; minimizing pauses
+submission until the framebuffer is restored.
 
 ## Dependencies
 
@@ -38,7 +39,7 @@ On macOS, the project links GLFW and MoltenVK. The Homebrew Vulkan headers are
 required for compilation:
 
 ```bash
-/opt/homebrew/bin/brew install vulkan-headers glfw molten-vk shaderc glslang
+/opt/homebrew/bin/brew install vulkan-headers vulkan-loader glfw molten-vk shaderc glslang
 ```
 
 The renderer uses Vulkan API design with MoltenVK as the macOS implementation.
@@ -49,8 +50,8 @@ but `KairoPhysicsEngine` never imports this repository.
 
 ```text
 M1 window + Vulkan instance + surface       complete
-M2 physical device + queues + swapchain     next
-M3 command buffers + synchronization + clear
+M2 physical device + queues                  complete
+M3 swapchain + command buffers + clear       complete
 M4 shader pipeline + triangle
 M5 mesh buffers + camera + cube
 M6 debug draw + KairoPhysicsEngine shapes
