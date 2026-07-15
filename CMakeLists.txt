@@ -79,6 +79,7 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     VulkanCommand.cppm
     VulkanSync.cppm
     VulkanBuffer.cppm
+    VulkanDepth.cppm
     VulkanTriangle.cppm
     Renderer.cppm
     KairoRenderer.cppm)

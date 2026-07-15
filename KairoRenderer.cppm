@@ -9,5 +9,6 @@ export import Kairo.Renderer.VulkanSwapchain;
 export import Kairo.Renderer.VulkanCommand;
 export import Kairo.Renderer.VulkanSync;
 export import Kairo.Renderer.VulkanBuffer;
+export import Kairo.Renderer.VulkanDepth;
 export import Kairo.Renderer.VulkanTriangle;
 export import Kairo.Renderer.Runtime;
