@@ -71,6 +71,7 @@ add_library(KairoRenderer)
 target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
     RendererTypes.cppm
     Camera.cppm
+    DebugDraw.cppm
     Window.cppm
     VulkanInstance.cppm
     VulkanSurface.cppm

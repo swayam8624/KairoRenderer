@@ -25,3 +25,13 @@ TEST_CASE("Showcase camera produces Vulkan-depth projection and advances its mod
     CHECK(projection(1, 1) > 0.0f);
     CHECK(projection(3, 2) == -1.0f);
 }
+
+TEST_CASE("Debug draw emits deterministic AABB edges and axes", "[KairoRenderer][Debug]")
+{
+    DebugDrawList draw;
+    draw.AddAABB({ -1.0f, -2.0f, -3.0f }, { 1.0f, 2.0f, 3.0f });
+    REQUIRE(draw.Lines().size() == 12u);
+    draw.AddAxes({ 0.0f, 0.0f, 0.0f }, 2.0f);
+    CHECK(draw.Lines().size() == 15u);
+    REQUIRE_THROWS(draw.AddAABB({ 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 1.0f }));
+}
