@@ -16,14 +16,32 @@ elseif(MSVC)
 endif()
 
 find_package(glfw3 CONFIG REQUIRED)
-find_path(KAIRO_VULKAN_INCLUDE_DIR vulkan/vulkan.h REQUIRED)
+find_package(Vulkan REQUIRED)
 find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED)
-find_library(KAIRO_VULKAN_LOADER_LIBRARY NAMES vulkan REQUIRED PATHS /opt/homebrew/lib)
 if(APPLE)
+    find_program(KAIRO_RENDERER_BREW_EXECUTABLE NAMES brew)
+    if(KAIRO_RENDERER_BREW_EXECUTABLE)
+        execute_process(
+            COMMAND "${KAIRO_RENDERER_BREW_EXECUTABLE}" --prefix molten-vk
+            OUTPUT_VARIABLE KAIRO_RENDERER_MOLTENVK_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE KAIRO_RENDERER_MOLTENVK_RESULT
+            ERROR_QUIET)
+    endif()
     find_file(KAIRO_MOLTENVK_ICD_FILE MoltenVK_icd.json
-        PATHS /opt/homebrew/opt/molten-vk/etc/vulkan/icd.d
+        HINTS
+            "${KAIRO_RENDERER_MOLTENVK_PREFIX}/etc/vulkan/icd.d"
+            "$ENV{VULKAN_SDK}/etc/vulkan/icd.d"
         REQUIRED)
 endif()
+
+# Standalone builds use immutable fallbacks. The umbrella build always supplies
+# these targets locally, while a consumer outside the workspace receives the
+# exact revisions validated by this renderer rather than whichever branch head
+# happens to exist when CMake configures.
+set(KAIRO_RENDERER_MATH_REVISION 24ed9ec2bacf508228bc7264fdbad109b65cf63b)
+set(KAIRO_RENDERER_GEOMETRY_REVISION 0929f0d6f4ce889c4baa2f40443ffffc8ee21b83)
+set(KAIRO_RENDERER_PHYSICS_REVISION 23085098ad12f7250dbe7ac37a534756613df3ba)
 
 if(NOT TARGET KairoMath)
     set(KAIRO_MATH_SOURCE_DIR "" CACHE PATH "Path to a local KairoMath checkout")
@@ -33,7 +51,10 @@ if(NOT TARGET KairoMath)
         add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoMath" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoMath")
     else()
         include(FetchContent)
-        FetchContent_Declare(KairoMath GIT_REPOSITORY https://github.com/swayam8624/KairoMath.git GIT_TAG main)
+        FetchContent_Declare(KairoMath
+            GIT_REPOSITORY https://github.com/swayam8624/KairoMath.git
+            GIT_TAG ${KAIRO_RENDERER_MATH_REVISION}
+            GIT_SHALLOW TRUE)
         FetchContent_MakeAvailable(KairoMath)
     endif()
 endif()
@@ -46,7 +67,10 @@ if(NOT TARGET KairoGeometry)
         add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoGeometry" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoGeometry")
     else()
         include(FetchContent)
-        FetchContent_Declare(KairoGeometry GIT_REPOSITORY https://github.com/swayam8624/KairoGeometry.git GIT_TAG main)
+        FetchContent_Declare(KairoGeometry
+            GIT_REPOSITORY https://github.com/swayam8624/KairoGeometry.git
+            GIT_TAG ${KAIRO_RENDERER_GEOMETRY_REVISION}
+            GIT_SHALLOW TRUE)
         FetchContent_MakeAvailable(KairoGeometry)
     endif()
 endif()
@@ -114,14 +138,20 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     Renderer.cppm
     KairoRenderer.cppm)
 add_dependencies(KairoRenderer KairoRendererShaders)
-target_include_directories(KairoRenderer PUBLIC ${KAIRO_VULKAN_INCLUDE_DIR})
 target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_SHADER_DIR="${KAIRO_RENDERER_SHADER_OUTPUT_DIR}")
 if(APPLE)
     target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_MOLTENVK_ICD_FILE="${KAIRO_MOLTENVK_ICD_FILE}")
 endif()
 target_compile_definitions(KairoRenderer PUBLIC $<$<BOOL:${KAIRO_RENDERER_ENABLE_VALIDATION}>:KAIRO_RENDERER_ENABLE_VALIDATION=1>)
-target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry glfw ${KAIRO_VULKAN_LOADER_LIBRARY}
-    "-framework Metal" "-framework QuartzCore" "-framework CoreFoundation" "-framework IOKit" "-framework IOSurface")
+target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry glfw Vulkan::Vulkan)
+if(APPLE)
+    target_link_libraries(KairoRenderer PUBLIC
+        "-framework Metal"
+        "-framework QuartzCore"
+        "-framework CoreFoundation"
+        "-framework IOKit"
+        "-framework IOSurface")
+endif()
 
 if(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE)
     if(NOT TARGET KairoPhysicsEngine)
@@ -132,7 +162,10 @@ if(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE)
             add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoPhysicsEngine" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoPhysicsEngine")
         else()
             include(FetchContent)
-            FetchContent_Declare(KairoPhysicsEngine GIT_REPOSITORY https://github.com/swayam8624/KairoPhysicsEngine.git GIT_TAG main)
+            FetchContent_Declare(KairoPhysicsEngine
+                GIT_REPOSITORY https://github.com/swayam8624/KairoPhysicsEngine.git
+                GIT_TAG ${KAIRO_RENDERER_PHYSICS_REVISION}
+                GIT_SHALLOW TRUE)
             FetchContent_MakeAvailable(KairoPhysicsEngine)
         endif()
     endif()
