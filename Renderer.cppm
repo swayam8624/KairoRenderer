@@ -27,6 +27,16 @@ import Kairo.Renderer.ShadowSettings;
 
 export namespace kairo::renderer
 {
+    /// Signals that the current host can create a GLFW window but cannot expose
+    /// a Vulkan presentation surface. This is a capability condition, not a
+    /// renderer correctness failure: CI can skip native viewport smoke tests
+    /// while retaining all headless/core renderer validation.
+    class PresentationUnavailableError final : public std::runtime_error
+    {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+
     /// Input: native window description.
     /// Output: an owning Vulkan runtime capable of mesh, debug, and tooling
     /// overlay presentation.
@@ -234,7 +244,8 @@ export namespace kairo::renderer
         {
             std::uint32_t count = 0;
             const char** names = glfwGetRequiredInstanceExtensions(&count);
-            if (names == nullptr || count == 0u) throw std::runtime_error("GLFW did not provide Vulkan surface extensions.");
+            if (names == nullptr || count == 0u)
+                throw PresentationUnavailableError("GLFW did not provide Vulkan surface extensions.");
             return { names, names + count };
         }
     };
