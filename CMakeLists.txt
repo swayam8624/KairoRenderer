@@ -70,6 +70,7 @@ add_custom_target(KairoRendererShaders DEPENDS
 add_library(KairoRenderer)
 target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
     RendererTypes.cppm
+    Camera.cppm
     Window.cppm
     VulkanInstance.cppm
     VulkanSurface.cppm
@@ -77,6 +78,7 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     VulkanSwapchain.cppm
     VulkanCommand.cppm
     VulkanSync.cppm
+    VulkanBuffer.cppm
     VulkanTriangle.cppm
     Renderer.cppm
     KairoRenderer.cppm)
