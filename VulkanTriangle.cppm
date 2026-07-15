@@ -21,12 +21,14 @@ import Kairo.Renderer.Camera;
 import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.Mesh;
 import Kairo.Renderer.RenderScene;
+import Kairo.Renderer.ShadowSettings;
 import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.VulkanCommand;
 import Kairo.Renderer.VulkanDepth;
 import Kairo.Renderer.VulkanDescriptor;
 import Kairo.Renderer.VulkanDevice;
 import Kairo.Renderer.VulkanSwapchain;
+import Kairo.Renderer.VulkanShadowMap;
 import Kairo.Renderer.VulkanBackendContext;
 import Kairo.Foundation.Math;
 
@@ -41,7 +43,9 @@ export namespace kairo::renderer
         VulkanTriangle(const VulkanDevice& device, const VulkanSwapchain& swapchain)
             : m_VulkanDevice(device), m_Device(device.Handle()),
               m_UniformBuffer(device, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
-              m_UniformDescriptor(device, m_UniformBuffer, sizeof(CameraUniform)), m_Depth(device, swapchain.Extent())
+              m_ShadowMap(device, 2048u),
+              m_UniformDescriptor(device, m_UniformBuffer, sizeof(CameraUniform), m_ShadowMap.View(), m_ShadowMap.Sampler()),
+              m_Depth(device, swapchain.Extent())
         {
             Create(swapchain);
         }
@@ -106,6 +110,20 @@ export namespace kairo::renderer
 
         [[nodiscard]] VkRenderPass RenderPass() const noexcept { return m_RenderPass; }
 
+        /// Input: validated user-facing directional shadow controls.
+        /// Task: update bias and visibility policy without rebuilding GPU
+        /// resources. The next recorded frame observes the new values.
+        void SetDirectionalShadowSettings(const DirectionalShadowSettings& settings)
+        {
+            settings.Validate();
+            m_ShadowSettings = settings;
+        }
+
+        [[nodiscard]] const DirectionalShadowSettings& DirectionalShadows() const noexcept
+        {
+            return m_ShadowSettings;
+        }
+
         /// Precondition: imageIndex belongs to the current swapchain and the
         /// caller has waited for this command buffer's completion fence.
         /// Task: render submitted mesh draws, debug lines, and an optional
@@ -117,6 +135,10 @@ export namespace kairo::renderer
             UploadDebugVertices();
 
             command.Begin();
+            // Populate and transition the sampled depth image whenever a mesh
+            // pass can consume its descriptor. Enabled controls attenuation,
+            // not resource validity, so toggling it before frame one is safe.
+            if (!m_Draws.empty()) DrawDirectionalShadowMap(command);
             const std::array<VkClearValue, 2> clear{ VkClearValue{ { { 0.025f, 0.055f, 0.11f, 1.0f } } }, VkClearValue{ { 1.0f, 0u } } };
             VkRenderPassBeginInfo begin{};
             begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -146,7 +168,7 @@ export namespace kairo::renderer
 
     private:
         /// std140-compatible view/projection plus directional-light data.
-        struct CameraUniform final { std::array<float, 44> Values{}; };
+        struct CameraUniform final { std::array<float, 64> Values{}; };
         /// 64-byte model + three padded normal columns + 16-byte tint exactly
         /// fit Vulkan's guaranteed minimum 128-byte push-constant capacity.
         struct MeshPushConstants final { std::array<float, 32> Values{}; };
@@ -168,10 +190,13 @@ export namespace kairo::renderer
         VkPipelineLayout m_Layout = VK_NULL_HANDLE;
         VkPipeline m_MeshPipeline = VK_NULL_HANDLE;
         VkPipeline m_DebugLinePipeline = VK_NULL_HANDLE;
+        VkPipeline m_ShadowPipeline = VK_NULL_HANDLE;
         VulkanHostBuffer m_UniformBuffer;
+        VulkanDirectionalShadowMap m_ShadowMap;
         VulkanUniformDescriptor m_UniformDescriptor;
         VulkanDepthAttachment m_Depth;
         ShowcaseCamera m_Camera;
+        DirectionalShadowSettings m_ShadowSettings;
         std::vector<VkFramebuffer> m_Framebuffers;
         std::unordered_map<MeshHandle, GpuMesh> m_Meshes;
         std::vector<MeshDraw> m_Draws;
@@ -254,6 +279,7 @@ export namespace kairo::renderer
             meshInput.vertexBindingDescriptionCount = 1u; meshInput.pVertexBindingDescriptions = &meshBinding;
             meshInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(meshAttributes.size()); meshInput.pVertexAttributeDescriptions = meshAttributes.data();
             m_MeshPipeline = CreatePipeline("triangle.vert.spv", "triangle.frag.spv", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, meshInput, VK_TRUE);
+            m_ShadowPipeline = CreateShadowPipeline(meshInput);
 
             VkVertexInputBindingDescription binding{};
             binding.binding = 0u; binding.stride = sizeof(DebugVertex); binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -266,6 +292,70 @@ export namespace kairo::renderer
             lineInput.pVertexBindingDescriptions = &binding; lineInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
             lineInput.pVertexAttributeDescriptions = attributes.data();
             m_DebugLinePipeline = CreatePipeline("debug_line.vert.spv", "debug_line.frag.spv", VK_PRIMITIVE_TOPOLOGY_LINE_LIST, lineInput, VK_FALSE);
+        }
+
+        /// Output: a vertex-only depth pipeline compatible with the persistent
+        /// directional shadow render pass.
+        /// Task: reuse the scene mesh layout and push constants while omitting
+        /// all color attachments and fragment work. Dynamic depth bias allows
+        /// tools to tune acne/peter-panning tradeoffs without pipeline rebuilds.
+        [[nodiscard]] VkPipeline CreateShadowPipeline(const VkPipelineVertexInputStateCreateInfo& vertexInput) const
+        {
+            const VkShaderModule vertex = CreateShaderModule(ReadSpirv("shadow.vert.spv"));
+            try
+            {
+                VkPipelineShaderStageCreateInfo stage{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+                stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+                stage.module = vertex;
+                stage.pName = "main";
+                VkPipelineInputAssemblyStateCreateInfo assembly{ VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+                assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+                VkPipelineViewportStateCreateInfo viewport{ VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+                viewport.viewportCount = 1u;
+                viewport.scissorCount = 1u;
+                VkPipelineRasterizationStateCreateInfo rasterizer{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+                rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+                rasterizer.cullMode = VK_CULL_MODE_NONE;
+                rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+                rasterizer.depthBiasEnable = VK_TRUE;
+                rasterizer.lineWidth = 1.0f;
+                VkPipelineMultisampleStateCreateInfo multisampling{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+                multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+                VkPipelineDepthStencilStateCreateInfo depth{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+                depth.depthTestEnable = VK_TRUE;
+                depth.depthWriteEnable = VK_TRUE;
+                depth.depthCompareOp = VK_COMPARE_OP_LESS;
+                VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+                const std::array dynamicStates{
+                    VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS
+                };
+                VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+                dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
+                dynamic.pDynamicStates = dynamicStates.data();
+                VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+                create.stageCount = 1u;
+                create.pStages = &stage;
+                create.pVertexInputState = &vertexInput;
+                create.pInputAssemblyState = &assembly;
+                create.pViewportState = &viewport;
+                create.pRasterizationState = &rasterizer;
+                create.pMultisampleState = &multisampling;
+                create.pDepthStencilState = &depth;
+                create.pColorBlendState = &blend;
+                create.pDynamicState = &dynamic;
+                create.layout = m_Layout;
+                create.renderPass = m_ShadowMap.RenderPass();
+                VkPipeline pipeline = VK_NULL_HANDLE;
+                if (vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1u, &create, nullptr, &pipeline) != VK_SUCCESS)
+                    throw std::runtime_error("vkCreateGraphicsPipelines for the directional shadow pass failed.");
+                vkDestroyShaderModule(m_Device, vertex, nullptr);
+                return pipeline;
+            }
+            catch (...)
+            {
+                vkDestroyShaderModule(m_Device, vertex, nullptr);
+                throw;
+            }
         }
 
         [[nodiscard]] VkPipeline CreatePipeline(const std::string& vertexName, const std::string& fragmentName,
@@ -326,6 +416,53 @@ export namespace kairo::renderer
             vkCmdBindDescriptorSets(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout, 0u, 1u, &descriptor, 0u, nullptr);
         }
 
+        /// Task: rasterize every submitted mesh from the directional light's
+        /// orthographic camera. Only model transforms are consumed from the
+        /// shared push block; material and normal slots remain zeroed.
+        void DrawDirectionalShadowMap(const VulkanCommandBuffer& command) const
+        {
+            const VkClearValue clear{ { 1.0f, 0u } };
+            VkRenderPassBeginInfo begin{};
+            begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            begin.renderPass = m_ShadowMap.RenderPass();
+            begin.framebuffer = m_ShadowMap.Framebuffer();
+            begin.renderArea.extent = { m_ShadowMap.Resolution(), m_ShadowMap.Resolution() };
+            begin.clearValueCount = 1u;
+            begin.pClearValues = &clear;
+            vkCmdBeginRenderPass(command.Handle(), &begin, VK_SUBPASS_CONTENTS_INLINE);
+
+            VkViewport viewport{};
+            viewport.width = static_cast<float>(m_ShadowMap.Resolution());
+            viewport.height = static_cast<float>(m_ShadowMap.Resolution());
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+            const VkRect2D scissor{ {}, { m_ShadowMap.Resolution(), m_ShadowMap.Resolution() } };
+            vkCmdSetViewport(command.Handle(), 0u, 1u, &viewport);
+            vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
+            vkCmdSetDepthBias(command.Handle(), m_ShadowSettings.ConstantDepthBias, 0.0f, m_ShadowSettings.SlopeDepthBias);
+            BindCamera(command);
+            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_ShadowPipeline);
+
+            constexpr VkDeviceSize offset = 0u;
+            for (const MeshDraw& draw : m_Draws)
+            {
+                const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
+                MeshPushConstants push{};
+                CopyTranspose(draw.Model, push.Values.data());
+                // Vulkan requires every stage declared by an overlapping
+                // pipeline-layout range, even when this pipeline has no
+                // fragment shader consuming the bytes.
+                vkCmdPushConstants(command.Handle(), m_Layout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                    0u, sizeof(push), &push);
+                const VkBuffer vertexBuffer = mesh.Vertices->Handle();
+                vkCmdBindVertexBuffers(command.Handle(), 0u, 1u, &vertexBuffer, &offset);
+                vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, 1u, 0u, 0, 0u);
+            }
+            vkCmdEndRenderPass(command.Handle());
+        }
+
         void DrawMeshes(const VulkanCommandBuffer& command) const
         {
             if (m_Draws.empty()) return;
@@ -383,16 +520,27 @@ export namespace kairo::renderer
 
         void UpdateUniform(VkExtent2D extent)
         {
+            using namespace kairo::foundation::math;
             CameraUniform uniform{};
             CopyTranspose(m_Camera.View(), uniform.Values.data());
             CopyTranspose(m_Camera.Projection(extent.width, extent.height), uniform.Values.data() + 16u);
             // Direction points from the shaded surface toward the light. The
             // w components are reserved for intensity/ambient strength.
-            uniform.Values[32u] = -0.45f; uniform.Values[33u] = 0.8f; uniform.Values[34u] = 0.35f; uniform.Values[35u] = 4.0f;
+            const Vec3f lightDirection = SafeNormalize(Vec3f{ -0.45f, 0.8f, 0.35f }, Vec3f::Up());
+            uniform.Values[32u] = lightDirection.x; uniform.Values[33u] = lightDirection.y;
+            uniform.Values[34u] = lightDirection.z; uniform.Values[35u] = 4.0f;
             uniform.Values[36u] = 0.075f; uniform.Values[37u] = 0.09f; uniform.Values[38u] = 0.13f; uniform.Values[39u] = 1.0f;
             const auto cameraPosition = m_Camera.Position();
             uniform.Values[40u] = cameraPosition.x; uniform.Values[41u] = cameraPosition.y;
             uniform.Values[42u] = cameraPosition.z; uniform.Values[43u] = 1.0f;
+            const Mat4f lightView = LookAt(lightDirection * 12.0f, Vec3f::Zero(), Vec3f::Up());
+            Mat4f lightProjection = Orthographic(-8.0f, 8.0f, -8.0f, 8.0f, 0.1f, 30.0f);
+            lightProjection(1u, 1u) *= -1.0f;
+            CopyTranspose(lightProjection * lightView, uniform.Values.data() + 44u);
+            uniform.Values[60u] = m_ShadowSettings.Enabled ? 1.0f : 0.0f;
+            uniform.Values[61u] = m_ShadowSettings.Strength;
+            uniform.Values[62u] = 1.0f / static_cast<float>(m_ShadowMap.Resolution());
+            uniform.Values[63u] = m_ShadowSettings.ReceiverBias;
             m_UniformBuffer.Write(&uniform, sizeof(uniform));
         }
 
@@ -426,11 +574,13 @@ export namespace kairo::renderer
             m_DebugVertexBuffer.reset(); m_DebugVertexCapacity = 0u;
             for (const VkFramebuffer framebuffer : m_Framebuffers) vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
             m_Framebuffers.clear();
+            if (m_ShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_ShadowPipeline, nullptr);
             if (m_DebugLinePipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_DebugLinePipeline, nullptr);
             if (m_MeshPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_MeshPipeline, nullptr);
             if (m_Layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(m_Device, m_Layout, nullptr);
             if (m_RenderPass != VK_NULL_HANDLE) vkDestroyRenderPass(m_Device, m_RenderPass, nullptr);
-            m_DebugLinePipeline = VK_NULL_HANDLE; m_MeshPipeline = VK_NULL_HANDLE; m_Layout = VK_NULL_HANDLE; m_RenderPass = VK_NULL_HANDLE;
+            m_ShadowPipeline = VK_NULL_HANDLE; m_DebugLinePipeline = VK_NULL_HANDLE;
+            m_MeshPipeline = VK_NULL_HANDLE; m_Layout = VK_NULL_HANDLE; m_RenderPass = VK_NULL_HANDLE;
         }
     };
 }

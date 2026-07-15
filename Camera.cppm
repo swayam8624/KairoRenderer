@@ -43,7 +43,13 @@ export namespace kairo::renderer
         [[nodiscard]] kairo::foundation::math::Mat4f Projection(std::uint32_t width, std::uint32_t height) const noexcept
         {
             using namespace kairo::foundation::math;
-            return Perspective(1.0471975512f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
+            Mat4f projection = Perspective(
+                1.0471975512f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
+            // The renderer uses Vulkan's conventional positive-height
+            // viewport. Flip clip-space Y once in the projection so +Y world
+            // geometry appears upward in the framebuffer.
+            projection(1u, 1u) *= -1.0f;
+            return projection;
         }
 
     private:

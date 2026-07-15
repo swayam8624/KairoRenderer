@@ -23,6 +23,7 @@ import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.VulkanBackendContext;
 import Kairo.Renderer.Mesh;
 import Kairo.Renderer.RenderScene;
+import Kairo.Renderer.ShadowSettings;
 
 export namespace kairo::renderer
 {
@@ -158,6 +159,19 @@ export namespace kairo::renderer
             m_Triangle.SetRenderScene(scene);
         }
 
+        /// Input: renderer-neutral directional shadow controls.
+        /// Task: expose runtime/editor tuning without publishing Vulkan depth
+        /// resources or forcing a swapchain rebuild.
+        void SetDirectionalShadowSettings(const DirectionalShadowSettings& settings)
+        {
+            m_Triangle.SetDirectionalShadowSettings(settings);
+        }
+
+        [[nodiscard]] const DirectionalShadowSettings& DirectionalShadows() const noexcept
+        {
+            return m_Triangle.DirectionalShadows();
+        }
+
         /// Input: renderer-neutral owner supplies a callback that records only
         /// overlay draw commands. Passing an empty callback disables overlays.
         /// Task: integrate tooling UI into the existing scene pass and command
@@ -202,6 +216,13 @@ export namespace kairo::renderer
             {
                 return;
             }
+            // Resize can arrive immediately after presentation while the GPU
+            // still owns the old depth buffer, framebuffers, and pipelines.
+            // M10 has one frame in flight, so an explicit idle point is the
+            // simplest correct teardown contract; later render graphs can
+            // retire generations with per-frame fences instead.
+            if (vkDeviceWaitIdle(m_Device.Handle()) != VK_SUCCESS)
+                throw std::runtime_error("vkDeviceWaitIdle failed before swapchain recreation.");
             m_Triangle.ReleaseSwapchainResources();
             m_Swapchain.Recreate(m_Window);
             m_Sync.Recreate(static_cast<std::uint32_t>(m_Swapchain.Images().size()));

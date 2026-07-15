@@ -7,20 +7,44 @@ debug draw, and later editor rendering.
 
 ## Current milestone
 
-M9 PBR materials are complete: GLFW window ownership, Vulkan instance and surface creation,
+M10 directional shadows are complete: GLFW window ownership, Vulkan instance and surface creation,
 device/queue selection, swapchain presentation, synchronization, shader
 compilation, uniform descriptors, a D32 depth attachment, a camera-driven
 indexed-mesh handle registry, validated multi-object draw extraction, per-draw
 model/normal/material push constants, a Cook-Torrance GGX metallic-roughness
-directional-light pass, tone mapping, and a
+directional-light pass, tone mapping, a persistent sampled D32 directional
+shadow map with slope/constant depth bias and 3x3 PCF, and a
 dynamic world-space debug-line pipeline. `KairoRendererClear` presents two
-independently transformed depth-tested mesh instances with axes, an AABB, and a
-wire sphere in a real native window.
+independently transformed depth-tested mesh instances casting shadows onto a
+receiver with world axes in a real native window.
 
 `PBRMaterial` validates linear base color, metallic, perceptual roughness, and
 ambient-occlusion factors. Its scalar factors occupy padding already reserved
 inside the portable 128-byte per-draw push block; the material milestone does
 not raise Vulkan's minimum push-constant requirement.
+
+## Directional Shadows
+
+M10 owns one fixed 2048 x 2048 D32 shadow map independently of swapchain size.
+Each frame records a depth-only indexed-mesh pass from an orthographic light
+camera, transitions the stored depth for fragment sampling, and applies a 3x3
+percentage-closer filter only to direct PBR lighting. Ambient light remains
+unshadowed. The renderer validates every public tuning value before use:
+
+```cpp
+kairo::renderer::DirectionalShadowSettings shadows;
+shadows.Strength = 0.82f;
+shadows.ConstantDepthBias = 1.25f;
+shadows.SlopeDepthBias = 1.75f;
+shadows.ReceiverBias = 0.0015f;
+runtime.SetDirectionalShadowSettings(shadows);
+```
+
+`Enabled` disables attenuation but the renderer still establishes a valid
+sampled-image layout when meshes are submitted. This avoids an invalid first
+frame when tools toggle shadows before rendering. M10 intentionally covers one
+directional light; cascades, point-light cube maps, atlases, and render-graph
+scheduling are later milestones rather than hidden partial implementations.
 
 ## Build
 
@@ -130,5 +154,5 @@ M6 GPU debug lines + external bridge contract   complete
 M7 indexed mesh registry + multi-draw submission complete
 M8 directional lighting                         complete
 M9 validated metallic-roughness PBR materials     complete
-M10 directional shadows
+M10 directional shadow map + bias + 3x3 PCF        complete
 ```

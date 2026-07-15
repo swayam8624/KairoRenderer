@@ -76,11 +76,18 @@ add_custom_command(
     COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.frag" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.frag"
     VERBATIM)
+add_custom_command(
+    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert"
+    VERBATIM)
 add_custom_target(KairoRendererShaders DEPENDS
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv")
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv")
 
 add_library(KairoRenderer)
 target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
@@ -88,6 +95,7 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     Camera.cppm
     Mesh.cppm
     Material.cppm
+    ShadowSettings.cppm
     RenderScene.cppm
     DebugDraw.cppm
     Window.cppm
@@ -100,6 +108,7 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     VulkanBuffer.cppm
     VulkanDescriptor.cppm
     VulkanDepth.cppm
+    VulkanShadowMap.cppm
     VulkanBackendContext.cppm
     VulkanTriangle.cppm
     Renderer.cppm

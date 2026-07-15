@@ -6,6 +6,8 @@ layout(set = 0, binding = 0) uniform CameraMatrices {
     vec4 lightDirectionAndIntensity;
     vec4 ambient;
     vec4 cameraPosition;
+    mat4 lightViewProjection;
+    vec4 shadowParameters;
 } camera;
 
 layout(push_constant) uniform DrawData {
@@ -22,6 +24,7 @@ layout(location = 2) in vec3 inNormal;
 layout(location = 0) out vec3 outColor;
 layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec3 outWorldPosition;
+layout(location = 3) out vec4 outLightClipPosition;
 
 void main()
 {
@@ -31,4 +34,5 @@ void main()
     const mat3 normalMatrix = mat3(draw.normalColumn0.xyz, draw.normalColumn1.xyz, draw.normalColumn2.xyz);
     outNormal = normalMatrix * inNormal;
     outWorldPosition = worldPosition.xyz;
+    outLightClipPosition = camera.lightViewProjection * worldPosition;
 }

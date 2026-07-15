@@ -22,6 +22,23 @@ TEST_CASE("Vulkan backend snapshots reject incomplete integration handles", "[Ka
     CHECK_FALSE(static_cast<bool>(recorder));
 }
 
+TEST_CASE("Directional shadow settings reject unsafe runtime tuning", "[KairoRenderer][Shadow]")
+{
+    DirectionalShadowSettings settings;
+    REQUIRE_NOTHROW(settings.Validate());
+    settings.Strength = 1.01f;
+    REQUIRE_THROWS(settings.Validate());
+    settings = {};
+    settings.ReceiverBias = std::numeric_limits<float>::infinity();
+    REQUIRE_THROWS(settings.Validate());
+    settings = {};
+    settings.ConstantDepthBias = -0.01f;
+    REQUIRE_THROWS(settings.Validate());
+    settings = {};
+    settings.SlopeDepthBias = 16.01f;
+    REQUIRE_THROWS(settings.Validate());
+}
+
 TEST_CASE("Showcase camera produces Vulkan-depth projection and advances its model", "[KairoRenderer][Camera]")
 {
     ShowcaseCamera camera;
@@ -32,7 +49,7 @@ TEST_CASE("Showcase camera produces Vulkan-depth projection and advances its mod
 
     CHECK(camera.Model() != initialModel);
     CHECK(projection(0, 0) > 0.0f);
-    CHECK(projection(1, 1) > 0.0f);
+    CHECK(projection(1, 1) < 0.0f);
     CHECK(projection(3, 2) == -1.0f);
 }
 

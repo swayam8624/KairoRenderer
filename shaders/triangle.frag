@@ -3,6 +3,7 @@
 layout(location = 0) in vec3 inColor;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec3 inWorldPosition;
+layout(location = 3) in vec4 inLightClipPosition;
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform CameraMatrices {
@@ -11,7 +12,11 @@ layout(set = 0, binding = 0) uniform CameraMatrices {
     vec4 lightDirectionAndIntensity;
     vec4 ambient;
     vec4 cameraPosition;
+    mat4 lightViewProjection;
+    vec4 shadowParameters;
 } camera;
+
+layout(set = 0, binding = 1) uniform sampler2D shadowMap;
 
 layout(push_constant) uniform DrawData {
     mat4 model;
@@ -43,6 +48,33 @@ vec3 FresnelSchlick(float cosTheta, vec3 reflectanceAtNormal)
     return reflectanceAtNormal + (1.0 - reflectanceAtNormal) * pow(1.0 - cosTheta, 5.0);
 }
 
+// Returns direct-light visibility. Both the camera and light projection flip
+// clip-space Y for Vulkan's positive-height viewport, so projected XY maps
+// directly into the sampled image's normalized coordinates.
+float DirectionalShadowVisibility(vec3 normal, vec3 lightDirection)
+{
+    if (camera.shadowParameters.x < 0.5 || inLightClipPosition.w <= 0.0)
+        return 1.0;
+
+    const vec3 projected = inLightClipPosition.xyz / inLightClipPosition.w;
+    const vec2 uv = projected.xy * 0.5 + 0.5;
+    if (projected.z < 0.0 || projected.z > 1.0 ||
+        uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+        return 1.0;
+
+    const float receiverBias = camera.shadowParameters.w *
+        max(0.25, 1.0 - max(dot(normal, lightDirection), 0.0));
+    const float texel = camera.shadowParameters.z;
+    float blocked = 0.0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+        {
+            const float storedDepth = texture(shadowMap, uv + vec2(x, y) * texel).r;
+            blocked += projected.z - receiverBias > storedDepth ? 1.0 : 0.0;
+        }
+    return 1.0 - camera.shadowParameters.y * (blocked / 9.0);
+}
+
 void main()
 {
     const vec3 baseColor = inColor * draw.tint.rgb;
@@ -63,7 +95,8 @@ void main()
     const vec3 specular = distribution * geometry * fresnel / max(4.0 * nDotV * nDotL, 1.0e-5);
     const vec3 diffuseWeight = (vec3(1.0) - fresnel) * (1.0 - metallic);
     const vec3 radiance = vec3(camera.lightDirectionAndIntensity.w);
-    const vec3 direct = (diffuseWeight * baseColor / Pi + specular) * radiance * nDotL;
+    const float shadowVisibility = DirectionalShadowVisibility(normal, lightDirection);
+    const vec3 direct = (diffuseWeight * baseColor / Pi + specular) * radiance * nDotL * shadowVisibility;
     const vec3 ambient = camera.ambient.rgb * baseColor * ambientOcclusion;
     const vec3 hdrColor = ambient + direct;
     outColor = vec4(hdrColor / (hdrColor + vec3(1.0)), 1.0);
