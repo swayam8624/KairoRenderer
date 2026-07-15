@@ -103,6 +103,22 @@ scene.Add({ cube, modelMatrix, { 0.8f, 0.9f, 1.0f } });
 runtime.SubmitRenderScene(scene);
 ```
 
+Imported geometry crosses the same boundary through the portable
+`kairo::assets::MeshArtifactData` contract:
+
+```cpp
+const kairo::assets::MeshArtifactData artifact =
+    kairo::assets::ParseMeshDerivedArtifact(derivedArtifact);
+const auto mesh = runtime.CreateMesh(
+    kairo::renderer::Mesh::FromArtifact(artifact));
+```
+
+KairoAssets owns source parsing, topology validation, portable serialization,
+and the derived-data format. KairoRenderer performs only the final CPU-to-GPU
+vertex adaptation. The forward shader currently requires imported normals and
+fails clearly when they are absent; imported UVs remain preserved in the asset
+artifact for the future texture/material upload path.
+
 Submission rejects unknown handles, non-finite or singular transforms, and
 invalid linear RGB tints before command recording. Normal transforms use a
 scale-normalized KairoMath inverse-transpose and are packed once per draw rather
@@ -124,6 +140,7 @@ Resolution prefers local Kairo packages:
 ```text
 KairoMath      ../Foundation/KairoMath -> GitHub fallback
 KairoGeometry  ../Foundation/KairoGeometry -> GitHub fallback
+KairoAssets    ../KairoAssets -> GitHub fallback
 ```
 
 On macOS, the project links GLFW and the Vulkan loader; the loader discovers

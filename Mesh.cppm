@@ -1,5 +1,6 @@
 module;
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -9,6 +10,7 @@ module;
 export module Kairo.Renderer.Mesh;
 
 import Kairo.Foundation.Math;
+import Kairo.Assets.MeshArtifact;
 
 export namespace kairo::renderer
 {
@@ -40,6 +42,38 @@ export namespace kairo::renderer
         [[nodiscard]] const std::vector<std::uint32_t>& Indices() const noexcept { return m_Indices; }
         [[nodiscard]] std::size_t VertexBytes() const noexcept { return m_Vertices.size() * sizeof(MeshVertex); }
         [[nodiscard]] std::size_t IndexBytes() const noexcept { return m_Indices.size() * sizeof(std::uint32_t); }
+
+        /// Input: a validated, backend-neutral KairoAssets triangle mesh and
+        /// a finite non-negative linear-RGB vertex color.
+        /// Output: renderer-owned vertices and indices ready for GPU upload.
+        /// Task: keep source parsing and derived-data layout in KairoAssets
+        /// while adapting that canonical representation exactly once at the
+        /// renderer boundary. The current forward shader requires normals;
+        /// UVs remain in the artifact until the renderer texture path consumes
+        /// them instead of being duplicated in an ad-hoc renderer asset type.
+        [[nodiscard]] static Mesh FromArtifact(
+            const kairo::assets::MeshArtifactData& artifact,
+            const kairo::foundation::math::Vec3f& color = { 1.0f, 1.0f, 1.0f })
+        {
+            kairo::assets::ValidateMeshArtifactData(artifact);
+            if (!artifact.HasNormals)
+                throw std::invalid_argument("Renderer mesh artifacts require vertex normals.");
+            if (!std::isfinite(color.x) || !std::isfinite(color.y) || !std::isfinite(color.z) ||
+                color.x < 0.0f || color.y < 0.0f || color.z < 0.0f)
+                throw std::invalid_argument("Renderer mesh color must be finite and non-negative.");
+
+            std::vector<MeshVertex> vertices;
+            vertices.reserve(artifact.Vertices.size());
+            for (const kairo::assets::MeshArtifactVertex& source : artifact.Vertices)
+            {
+                vertices.push_back({
+                    { source.Position[0], source.Position[1], source.Position[2] },
+                    color,
+                    { source.Normal[0], source.Normal[1], source.Normal[2] }
+                });
+            }
+            return Mesh(std::move(vertices), artifact.Indices);
+        }
 
         /// Output: a 24-vertex/36-index cube with face colors. Duplicating
         /// corners preserves a clean path for future per-face normals/UVs.

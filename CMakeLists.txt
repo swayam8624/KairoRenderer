@@ -41,6 +41,7 @@ endif()
 # happens to exist when CMake configures.
 set(KAIRO_RENDERER_MATH_REVISION d77c98d7401f63b697c1486ebf59a1fae74c6490)
 set(KAIRO_RENDERER_GEOMETRY_REVISION d570c91eaddf5c40e05b5a22cea6db78177e7fd0)
+set(KAIRO_RENDERER_ASSETS_REVISION 306a715094ff21707cba209e38eecb282bbb9f1c)
 set(KAIRO_RENDERER_PHYSICS_REVISION 0c2a4c43a65f828a6bc7766c470db82bb3a58a13)
 
 if(NOT TARGET KairoMath)
@@ -72,6 +73,22 @@ if(NOT TARGET KairoGeometry)
             GIT_TAG ${KAIRO_RENDERER_GEOMETRY_REVISION}
             GIT_SHALLOW TRUE)
         FetchContent_MakeAvailable(KairoGeometry)
+    endif()
+endif()
+
+if(NOT TARGET KairoAssets)
+    set(KAIRO_ASSETS_SOURCE_DIR "" CACHE PATH "Path to a local KairoAssets checkout")
+    if(KAIRO_ASSETS_SOURCE_DIR AND EXISTS "${KAIRO_ASSETS_SOURCE_DIR}/CMakeLists.txt")
+        add_subdirectory("${KAIRO_ASSETS_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoAssets")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../KairoAssets/CMakeLists.txt")
+        add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../KairoAssets" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoAssets")
+    else()
+        include(FetchContent)
+        FetchContent_Declare(KairoAssets
+            GIT_REPOSITORY https://github.com/swayam8624/KairoAssets.git
+            GIT_TAG ${KAIRO_RENDERER_ASSETS_REVISION}
+            GIT_SHALLOW TRUE)
+        FetchContent_MakeAvailable(KairoAssets)
     endif()
 endif()
 
@@ -143,7 +160,7 @@ if(APPLE)
     target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_MOLTENVK_ICD_FILE="${KAIRO_MOLTENVK_ICD_FILE}")
 endif()
 target_compile_definitions(KairoRenderer PUBLIC $<$<BOOL:${KAIRO_RENDERER_ENABLE_VALIDATION}>:KAIRO_RENDERER_ENABLE_VALIDATION=1>)
-target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry glfw Vulkan::Vulkan)
+target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry KairoAssets glfw Vulkan::Vulkan)
 if(APPLE)
     target_link_libraries(KairoRenderer PUBLIC
         "-framework Metal"

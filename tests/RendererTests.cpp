@@ -4,6 +4,7 @@
 
 import Kairo.Renderer;
 import Kairo.Foundation.Math;
+import Kairo.Assets.MeshArtifact;
 
 using namespace kairo::renderer;
 
@@ -69,6 +70,33 @@ TEST_CASE("Indexed mesh validates topology and exposes a complete cube", "[Kairo
     CHECK(cube.Vertices().size() == 24u);
     CHECK(cube.Indices().size() == 36u);
     REQUIRE_THROWS(Mesh({ {{ 0.0f, 0.0f, 0.0f }, {} } }, { 0u, 1u, 0u }));
+}
+
+TEST_CASE("Renderer mesh consumes the shared portable asset contract", "[KairoRenderer][Mesh][Assets]")
+{
+    kairo::assets::MeshArtifactData artifact;
+    artifact.HasNormals = true;
+    artifact.Vertices = {
+        { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, {} },
+        { { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, {} },
+        { { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, {} }
+    };
+    artifact.Indices = { 0u, 1u, 2u };
+
+    const Mesh mesh = Mesh::FromArtifact(artifact, { 0.25f, 0.5f, 0.75f });
+    REQUIRE(mesh.Vertices().size() == 3u);
+    CHECK(mesh.Indices() == artifact.Indices);
+    CHECK(mesh.Vertices()[1u].Position == kairo::foundation::math::Vec3f{ 1.0f, 0.0f, 0.0f });
+    CHECK(mesh.Vertices()[1u].Normal == kairo::foundation::math::Vec3f{ 0.0f, 0.0f, 1.0f });
+    CHECK(mesh.Vertices()[1u].Color == kairo::foundation::math::Vec3f{ 0.25f, 0.5f, 0.75f });
+
+    artifact.HasNormals = false;
+    for (auto& vertex : artifact.Vertices) vertex.Normal = {};
+    REQUIRE_THROWS_AS(Mesh::FromArtifact(artifact), std::invalid_argument);
+    artifact.HasNormals = true;
+    for (auto& vertex : artifact.Vertices) vertex.Normal = { 0.0f, 0.0f, 1.0f };
+    REQUIRE_THROWS_AS(Mesh::FromArtifact(
+        artifact, { std::numeric_limits<float>::infinity(), 1.0f, 1.0f }), std::invalid_argument);
 }
 
 TEST_CASE("Render scenes validate draw handles transforms and tints", "[KairoRenderer][Scene]")
