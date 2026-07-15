@@ -1,6 +1,7 @@
 module;
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
@@ -78,6 +79,41 @@ export namespace kairo::renderer
             AddLine(origin, origin + kairo::foundation::math::Vec3f{ scale, 0.0f, 0.0f }, { 0.95f, 0.2f, 0.2f, 1.0f });
             AddLine(origin, origin + kairo::foundation::math::Vec3f{ 0.0f, scale, 0.0f }, { 0.2f, 0.95f, 0.35f, 1.0f });
             AddLine(origin, origin + kairo::foundation::math::Vec3f{ 0.0f, 0.0f, scale }, { 0.3f, 0.5f, 1.0f, 1.0f });
+        }
+
+        /// Task: emit three orthogonal wire circles. `segments` must be at
+        /// least three so every ring is a valid closed polygon.
+        void AddWireSphere(const kairo::foundation::math::Vec3f& center, float radius, std::size_t segments = 24u, DebugColor color = {})
+        {
+            if (radius <= 0.0f || segments < 3u) throw std::invalid_argument("Wire sphere requires positive radius and at least three segments.");
+            constexpr float Tau = 6.28318530718f;
+            for (std::size_t index = 0u; index < segments; ++index)
+            {
+                const float a = Tau * static_cast<float>(index) / static_cast<float>(segments);
+                const float b = Tau * static_cast<float>((index + 1u) % segments) / static_cast<float>(segments);
+                AddLine(center + kairo::foundation::math::Vec3f{ std::cos(a) * radius, std::sin(a) * radius, 0.0f }, center + kairo::foundation::math::Vec3f{ std::cos(b) * radius, std::sin(b) * radius, 0.0f }, color);
+                AddLine(center + kairo::foundation::math::Vec3f{ std::cos(a) * radius, 0.0f, std::sin(a) * radius }, center + kairo::foundation::math::Vec3f{ std::cos(b) * radius, 0.0f, std::sin(b) * radius }, color);
+                AddLine(center + kairo::foundation::math::Vec3f{ 0.0f, std::cos(a) * radius, std::sin(a) * radius }, center + kairo::foundation::math::Vec3f{ 0.0f, std::cos(b) * radius, std::sin(b) * radius }, color);
+            }
+        }
+
+        /// Task: display the capsule center segment plus endpoint spheres.
+        /// The physics convention is world-space endpoints and a scalar radius.
+        void AddWireCapsule(const kairo::foundation::math::Vec3f& a, const kairo::foundation::math::Vec3f& b, float radius, std::size_t segments = 16u, DebugColor color = {})
+        {
+            if (radius <= 0.0f) throw std::invalid_argument("Wire capsule requires a positive radius.");
+            AddWireSphere(a, radius, segments, color);
+            AddWireSphere(b, radius, segments, color);
+            AddLine(a + kairo::foundation::math::Vec3f{ radius, 0.0f, 0.0f }, b + kairo::foundation::math::Vec3f{ radius, 0.0f, 0.0f }, color);
+            AddLine(a - kairo::foundation::math::Vec3f{ radius, 0.0f, 0.0f }, b - kairo::foundation::math::Vec3f{ radius, 0.0f, 0.0f }, color);
+            AddLine(a + kairo::foundation::math::Vec3f{ 0.0f, 0.0f, radius }, b + kairo::foundation::math::Vec3f{ 0.0f, 0.0f, radius }, color);
+            AddLine(a - kairo::foundation::math::Vec3f{ 0.0f, 0.0f, radius }, b - kairo::foundation::math::Vec3f{ 0.0f, 0.0f, radius }, color);
+        }
+
+        void AddContactNormal(const kairo::foundation::math::Vec3f& point, const kairo::foundation::math::Vec3f& normal, float scale = 0.25f, DebugColor color = { 1.0f, 0.85f, 0.15f, 1.0f })
+        {
+            if (scale <= 0.0f) throw std::invalid_argument("Contact-normal scale must be positive.");
+            AddLine(point, point + normal * scale, color);
         }
 
     private:

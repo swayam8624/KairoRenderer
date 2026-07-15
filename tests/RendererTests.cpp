@@ -35,3 +35,14 @@ TEST_CASE("Debug draw emits deterministic AABB edges and axes", "[KairoRenderer]
     CHECK(draw.Lines().size() == 15u);
     REQUIRE_THROWS(draw.AddAABB({ 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 1.0f }));
 }
+
+TEST_CASE("Debug draw emits sphere, capsule, and contact geometry", "[KairoRenderer][Debug]")
+{
+    DebugDrawList draw;
+    draw.AddWireSphere({ 0.0f, 0.0f, 0.0f }, 1.0f, 8u);
+    REQUIRE(draw.Lines().size() == 24u);
+    draw.AddWireCapsule({ 0.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, 0.5f, 4u);
+    CHECK(draw.Lines().size() == 52u);
+    draw.AddContactNormal({ 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
+    CHECK(draw.Lines().size() == 53u);
+}
