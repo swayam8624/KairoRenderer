@@ -39,8 +39,8 @@ endif()
 # these targets locally, while a consumer outside the workspace receives the
 # exact revisions validated by this renderer rather than whichever branch head
 # happens to exist when CMake configures.
-set(KAIRO_RENDERER_MATH_REVISION ea0ac4845b91316bb85dd03932b2bc5494f6525f)
-set(KAIRO_RENDERER_GEOMETRY_REVISION 87c32babcf71f5bbc375398e4a15af48610569ab)
+set(KAIRO_RENDERER_MATH_REVISION d77c98d7401f63b697c1486ebf59a1fae74c6490)
+set(KAIRO_RENDERER_GEOMETRY_REVISION 480322fd147be12b6d33c82177f5952f7ad9e991)
 set(KAIRO_RENDERER_PHYSICS_REVISION 0c2a4c43a65f828a6bc7766c470db82bb3a58a13)
 
 if(NOT TARGET KairoMath)
