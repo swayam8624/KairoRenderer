@@ -40,7 +40,7 @@ endif()
 # exact revisions validated by this renderer rather than whichever branch head
 # happens to exist when CMake configures.
 set(KAIRO_RENDERER_MATH_REVISION 24ed9ec2bacf508228bc7264fdbad109b65cf63b)
-set(KAIRO_RENDERER_GEOMETRY_REVISION 0929f0d6f4ce889c4baa2f40443ffffc8ee21b83)
+set(KAIRO_RENDERER_GEOMETRY_REVISION 0dd716a24d64adf0c49617a3a0b1d3d08a4f1015)
 set(KAIRO_RENDERER_PHYSICS_REVISION 23085098ad12f7250dbe7ac37a534756613df3ba)
 
 if(NOT TARGET KairoMath)
