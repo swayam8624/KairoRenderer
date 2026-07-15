@@ -63,9 +63,23 @@ add_custom_command(
     COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag"
     VERBATIM)
+add_custom_command(
+    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.vert"
+    VERBATIM)
+add_custom_command(
+    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.frag" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.frag"
+    VERBATIM)
 add_custom_target(KairoRendererShaders DEPENDS
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv")
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv")
 
 add_library(KairoRenderer)
 target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES

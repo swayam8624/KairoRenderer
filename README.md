@@ -7,11 +7,12 @@ debug draw, and later editor rendering.
 
 ## Current milestone
 
-M5 is complete: GLFW window ownership, Vulkan instance and surface creation,
+M6 is complete: GLFW window ownership, Vulkan instance and surface creation,
 device/queue selection, swapchain presentation, synchronization, shader
-compilation, uniform descriptors, a D32 depth attachment, and a camera-driven
-mesh pass. `KairoRendererClear` presents a rotating, depth-tested cube in a
-real native window.
+compilation, uniform descriptors, a D32 depth attachment, a camera-driven
+mesh pass, and a dynamic world-space debug-line pipeline. `KairoRendererClear`
+presents a rotating depth-tested cube with axes, an AABB, and a wire sphere in
+a real native window.
 
 ## Build
 
@@ -24,8 +25,28 @@ ctest --test-dir build --output-on-failure
 ```
 
 The sample creates a native Vulkan window and continuously presents a rotating
-cube until the window is closed. Resizing recreates color/depth framebuffers;
-minimizing pauses submission until the framebuffer is restored.
+cube plus debug geometry until the window is closed. Resizing recreates
+color/depth framebuffers; minimizing pauses submission until the framebuffer
+is restored.
+
+## Debug Draw Boundary
+
+`DebugDrawList` is the renderer-neutral data contract used by physics, tools,
+and game code. It owns no GPU state. Build a list each frame from world-space
+positions, submit it, and reuse or clear the source list immediately:
+
+```cpp
+kairo::renderer::DebugDrawList debug;
+debug.AddAABB(minimum, maximum, { 0.2f, 0.8f, 1.0f, 1.0f });
+debug.AddContactNormal(point, normal);
+runtime.SubmitDebugDraw(debug);
+```
+
+The renderer copies the submitted vertices, uploads them after the in-flight
+frame fence completes, and draws thin depth-tested line segments in the same
+camera space as the scene. This keeps `KairoPhysicsEngine` independent from
+Vulkan while allowing an engine/editor adapter to translate its contact,
+collider, and broadphase diagnostic data.
 
 ## Dependencies
 
@@ -60,7 +81,7 @@ M2 physical device + queues                  complete
 M3 swapchain + command buffers + clear       complete
 M4 shader pipeline + triangle                complete
 M5 camera uniform + depth-tested cube         complete
-M6 debug draw + KairoPhysicsEngine shapes
+M6 GPU debug lines + external bridge contract   complete
 M7 forward mesh rendering + lighting
 M8 PBR materials + shadows
 ```
