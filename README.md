@@ -7,11 +7,11 @@ debug draw, and later editor rendering.
 
 ## Current milestone
 
-M4 is complete: GLFW window ownership, Vulkan instance and surface creation,
-device/queue selection, swapchain presentation, synchronization, a render
-pass, runtime SPIR-V loading, and the first graphics pipeline.
-`KairoRendererClear` presents a color-interpolated Vulkan triangle in a real
-native window.
+M5 is complete: GLFW window ownership, Vulkan instance and surface creation,
+device/queue selection, swapchain presentation, synchronization, shader
+compilation, uniform descriptors, a D32 depth attachment, and a camera-driven
+mesh pass. `KairoRendererClear` presents a rotating, depth-tested cube in a
+real native window.
 
 ## Build
 
@@ -23,9 +23,9 @@ ctest --test-dir build --output-on-failure
 ./build/KairoRendererClear
 ```
 
-The sample creates a native Vulkan window and continuously presents a triangle
-until the window is closed. Resizing is supported; minimizing pauses submission
-until the framebuffer is restored.
+The sample creates a native Vulkan window and continuously presents a rotating
+cube until the window is closed. Resizing recreates color/depth framebuffers;
+minimizing pauses submission until the framebuffer is restored.
 
 ## Dependencies
 
@@ -59,7 +59,7 @@ M1 window + Vulkan instance + surface       complete
 M2 physical device + queues                  complete
 M3 swapchain + command buffers + clear       complete
 M4 shader pipeline + triangle                complete
-M5 mesh buffers + camera + cube
+M5 camera uniform + depth-tested cube         complete
 M6 debug draw + KairoPhysicsEngine shapes
 M7 forward mesh rendering + lighting
 M8 PBR materials + shadows

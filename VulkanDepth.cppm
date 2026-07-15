@@ -20,7 +20,7 @@ export namespace kairo::renderer
     {
     public:
         VulkanDepthAttachment(const VulkanDevice& device, VkExtent2D extent)
-            : m_Device(device.Handle())
+            : m_Device(device.Handle()), m_Physical(device.PhysicalHandle())
         {
             if (extent.width == 0u || extent.height == 0u)
             {
@@ -29,12 +29,7 @@ export namespace kairo::renderer
             Create(device.PhysicalHandle(), extent);
         }
 
-        ~VulkanDepthAttachment()
-        {
-            if (m_View != VK_NULL_HANDLE) vkDestroyImageView(m_Device, m_View, nullptr);
-            if (m_Image != VK_NULL_HANDLE) vkDestroyImage(m_Device, m_Image, nullptr);
-            if (m_Memory != VK_NULL_HANDLE) vkFreeMemory(m_Device, m_Memory, nullptr);
-        }
+        ~VulkanDepthAttachment() { Destroy(); }
 
         VulkanDepthAttachment(const VulkanDepthAttachment&) = delete;
         VulkanDepthAttachment& operator=(const VulkanDepthAttachment&) = delete;
@@ -42,11 +37,34 @@ export namespace kairo::renderer
         [[nodiscard]] VkImageView View() const noexcept { return m_View; }
         [[nodiscard]] VkFormat Format() const noexcept { return VK_FORMAT_D32_SFLOAT; }
 
+        /// Precondition: the device is idle and no framebuffer retains View().
+        /// Task: rebuild the depth image to match a recreated swapchain extent.
+        void Recreate(VkExtent2D extent)
+        {
+            if (extent.width == 0u || extent.height == 0u)
+            {
+                throw std::invalid_argument("VulkanDepthAttachment requires a non-zero extent.");
+            }
+            Destroy();
+            Create(m_Physical, extent);
+        }
+
     private:
         VkDevice m_Device = VK_NULL_HANDLE;
+        VkPhysicalDevice m_Physical = VK_NULL_HANDLE;
         VkImage m_Image = VK_NULL_HANDLE;
         VkDeviceMemory m_Memory = VK_NULL_HANDLE;
         VkImageView m_View = VK_NULL_HANDLE;
+
+        void Destroy() noexcept
+        {
+            if (m_View != VK_NULL_HANDLE) vkDestroyImageView(m_Device, m_View, nullptr);
+            if (m_Image != VK_NULL_HANDLE) vkDestroyImage(m_Device, m_Image, nullptr);
+            if (m_Memory != VK_NULL_HANDLE) vkFreeMemory(m_Device, m_Memory, nullptr);
+            m_View = VK_NULL_HANDLE;
+            m_Image = VK_NULL_HANDLE;
+            m_Memory = VK_NULL_HANDLE;
+        }
 
         void Create(VkPhysicalDevice physical, VkExtent2D extent)
         {

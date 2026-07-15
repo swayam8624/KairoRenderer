@@ -13,8 +13,13 @@ module;
 export module Kairo.Renderer.VulkanTriangle;
 
 import Kairo.Renderer.VulkanCommand;
+import Kairo.Renderer.Camera;
+import Kairo.Renderer.VulkanBuffer;
+import Kairo.Renderer.VulkanDepth;
+import Kairo.Renderer.VulkanDescriptor;
 import Kairo.Renderer.VulkanDevice;
 import Kairo.Renderer.VulkanSwapchain;
+import Kairo.Foundation.Math;
 
 export namespace kairo::renderer
 {
@@ -27,7 +32,7 @@ export namespace kairo::renderer
     {
     public:
         VulkanTriangle(const VulkanDevice& device, const VulkanSwapchain& swapchain)
-            : m_Device(device.Handle())
+            : m_Device(device.Handle()), m_UniformBuffer(device, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT), m_UniformDescriptor(device, m_UniformBuffer, sizeof(CameraUniform)), m_Depth(device, swapchain.Extent())
         {
             Create(swapchain);
         }
@@ -41,6 +46,7 @@ export namespace kairo::renderer
         void Recreate(const VulkanSwapchain& swapchain)
         {
             Destroy();
+            m_Depth.Recreate(swapchain.Extent());
             Create(swapchain);
         }
 
@@ -50,19 +56,23 @@ export namespace kairo::renderer
 
         /// Precondition: imageIndex was acquired from the matching swapchain.
         /// Task: encode clear, viewport/scissor setup, and one triangle draw.
-        void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent) const
+        void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent)
         {
+            m_Camera.Advance(1.0f / 60.0f);
+            UpdateUniform(extent);
             command.Begin();
-            const VkClearValue clear{ { { 0.025f, 0.055f, 0.11f, 1.0f } } };
+            const std::array<VkClearValue, 2> clear{ VkClearValue{ { { 0.025f, 0.055f, 0.11f, 1.0f } } }, VkClearValue{ { 1.0f, 0u } } };
             VkRenderPassBeginInfo begin{};
             begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             begin.renderPass = m_RenderPass;
             begin.framebuffer = m_Framebuffers.at(imageIndex);
             begin.renderArea.extent = extent;
-            begin.clearValueCount = 1u;
-            begin.pClearValues = &clear;
+            begin.clearValueCount = static_cast<std::uint32_t>(clear.size());
+            begin.pClearValues = clear.data();
             vkCmdBeginRenderPass(command.Handle(), &begin, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_Pipeline);
+            const VkDescriptorSet descriptor = m_UniformDescriptor.Set();
+            vkCmdBindDescriptorSets(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout, 0u, 1u, &descriptor, 0u, nullptr);
 
             VkViewport viewport{};
             viewport.width = static_cast<float>(extent.width);
@@ -73,7 +83,7 @@ export namespace kairo::renderer
             scissor.extent = extent;
             vkCmdSetViewport(command.Handle(), 0u, 1u, &viewport);
             vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
-            vkCmdDraw(command.Handle(), 3u, 1u, 0u, 0u);
+            vkCmdDraw(command.Handle(), 36u, 1u, 0u, 0u);
             vkCmdEndRenderPass(command.Handle());
             command.End();
         }
@@ -83,6 +93,11 @@ export namespace kairo::renderer
         VkRenderPass m_RenderPass = VK_NULL_HANDLE;
         VkPipelineLayout m_Layout = VK_NULL_HANDLE;
         VkPipeline m_Pipeline = VK_NULL_HANDLE;
+        struct CameraUniform final { std::array<float, 48> Values{}; };
+        VulkanHostBuffer m_UniformBuffer;
+        VulkanUniformDescriptor m_UniformDescriptor;
+        VulkanDepthAttachment m_Depth;
+        ShowcaseCamera m_Camera;
         std::vector<VkFramebuffer> m_Framebuffers;
 
         void Create(const VulkanSwapchain& swapchain)
@@ -109,13 +124,24 @@ export namespace kairo::renderer
             color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            VkAttachmentDescription depth{};
+            depth.format = m_Depth.Format();
+            depth.samples = VK_SAMPLE_COUNT_1_BIT;
+            depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             VkAttachmentReference reference{};
             reference.attachment = 0u;
             reference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            VkAttachmentReference depthReference{};
+            depthReference.attachment = 1u;
+            depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             VkSubpassDescription subpass{};
             subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
             subpass.colorAttachmentCount = 1u;
             subpass.pColorAttachments = &reference;
+            subpass.pDepthStencilAttachment = &depthReference;
             VkSubpassDependency dependency{};
             dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
             dependency.dstSubpass = 0u;
@@ -124,8 +150,9 @@ export namespace kairo::renderer
             dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
             VkRenderPassCreateInfo create{};
             create.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            create.attachmentCount = 1u;
-            create.pAttachments = &color;
+            const std::array attachments{ color, depth };
+            create.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+            create.pAttachments = attachments.data();
             create.subpassCount = 1u;
             create.pSubpasses = &subpass;
             create.dependencyCount = 1u;
@@ -143,8 +170,9 @@ export namespace kairo::renderer
                 VkFramebufferCreateInfo create{};
                 create.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
                 create.renderPass = m_RenderPass;
-                create.attachmentCount = 1u;
-                create.pAttachments = &imageView;
+                const std::array attachments{ imageView, m_Depth.View() };
+                create.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+                create.pAttachments = attachments.data();
                 create.width = swapchain.Extent().width;
                 create.height = swapchain.Extent().height;
                 create.layers = 1u;
@@ -207,6 +235,11 @@ export namespace kairo::renderer
             VkPipelineMultisampleStateCreateInfo multisampling{};
             multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
             multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            VkPipelineDepthStencilStateCreateInfo depth{};
+            depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+            depth.depthTestEnable = VK_TRUE;
+            depth.depthWriteEnable = VK_TRUE;
+            depth.depthCompareOp = VK_COMPARE_OP_LESS;
             VkPipelineColorBlendAttachmentState blendAttachment{};
             blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -221,6 +254,9 @@ export namespace kairo::renderer
             dynamic.pDynamicStates = dynamicStates.data();
             VkPipelineLayoutCreateInfo layout{};
             layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            layout.setLayoutCount = 1u;
+            const VkDescriptorSetLayout descriptorLayout = m_UniformDescriptor.Layout();
+            layout.pSetLayouts = &descriptorLayout;
             if (vkCreatePipelineLayout(m_Device, &layout, nullptr, &m_Layout) != VK_SUCCESS)
             {
                 throw std::runtime_error("vkCreatePipelineLayout failed.");
@@ -234,6 +270,7 @@ export namespace kairo::renderer
             pipeline.pViewportState = &viewport;
             pipeline.pRasterizationState = &rasterizer;
             pipeline.pMultisampleState = &multisampling;
+            pipeline.pDepthStencilState = &depth;
             pipeline.pColorBlendState = &blend;
             pipeline.pDynamicState = &dynamic;
             pipeline.layout = m_Layout;
@@ -244,6 +281,22 @@ export namespace kairo::renderer
                 m_Layout = VK_NULL_HANDLE;
                 throw std::runtime_error("vkCreateGraphicsPipelines failed.");
             }
+        }
+
+        void UpdateUniform(VkExtent2D extent)
+        {
+            CameraUniform uniform{};
+            CopyTranspose(m_Camera.Model(), uniform.Values.data());
+            CopyTranspose(m_Camera.View(), uniform.Values.data() + 16u);
+            CopyTranspose(m_Camera.Projection(extent.width, extent.height), uniform.Values.data() + 32u);
+            m_UniformBuffer.Write(&uniform, sizeof(uniform));
+        }
+
+        static void CopyTranspose(const kairo::foundation::math::Mat4f& matrix, float* destination) noexcept
+        {
+            for (std::size_t row = 0u; row < 4u; ++row)
+                for (std::size_t column = 0u; column < 4u; ++column)
+                    destination[column * 4u + row] = matrix(row, column);
         }
 
         [[nodiscard]] VkShaderModule CreateShaderModule(const std::vector<std::uint32_t>& spirv) const
