@@ -11,6 +11,7 @@ module;
 export module Kairo.Renderer.RenderScene;
 
 import Kairo.Foundation.Math;
+import Kairo.Renderer.Material;
 
 export namespace kairo::renderer
 {
@@ -20,14 +21,14 @@ export namespace kairo::renderer
     using MeshHandle = std::uint64_t;
     inline constexpr MeshHandle InvalidMeshHandle = 0u;
 
-    /// Input: a valid mesh handle, object-to-world matrix, and linear RGB tint.
+    /// Input: a valid mesh handle, object-to-world matrix, and PBR factors.
     /// Output: one indexed draw request for the next submitted scene.
     /// Task: keep frame extraction independent from Vulkan command structures.
     struct MeshDraw final
     {
         MeshHandle Mesh = InvalidMeshHandle;
         kairo::foundation::math::Mat4f Model = kairo::foundation::math::Mat4f::Identity();
-        kairo::foundation::math::Vec3f Tint{ 1.0f, 1.0f, 1.0f };
+        PBRMaterial Material{};
     };
 
     /// Input: finite object-to-world matrix with a non-singular linear part.
@@ -80,9 +81,7 @@ export namespace kairo::renderer
         {
             if (draw.Mesh == InvalidMeshHandle) throw std::invalid_argument("MeshDraw requires a valid mesh handle.");
             static_cast<void>(ComputeNormalMatrix(draw.Model));
-            if (!std::isfinite(draw.Tint.x) || !std::isfinite(draw.Tint.y) || !std::isfinite(draw.Tint.z) ||
-                draw.Tint.x < 0.0f || draw.Tint.y < 0.0f || draw.Tint.z < 0.0f)
-                throw std::invalid_argument("MeshDraw tint must contain finite non-negative linear RGB values.");
+            draw.Material.Validate();
         }
 
     private:

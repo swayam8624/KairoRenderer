@@ -7,14 +7,20 @@ debug draw, and later editor rendering.
 
 ## Current milestone
 
-M8 basic forward lighting is complete: GLFW window ownership, Vulkan instance and surface creation,
+M9 PBR materials are complete: GLFW window ownership, Vulkan instance and surface creation,
 device/queue selection, swapchain presentation, synchronization, shader
 compilation, uniform descriptors, a D32 depth attachment, a camera-driven
 indexed-mesh handle registry, validated multi-object draw extraction, per-draw
-model/normal/tint push constants, a directional-light forward pass, and a
+model/normal/material push constants, a Cook-Torrance GGX metallic-roughness
+directional-light pass, tone mapping, and a
 dynamic world-space debug-line pipeline. `KairoRendererClear` presents two
 independently transformed depth-tested mesh instances with axes, an AABB, and a
 wire sphere in a real native window.
+
+`PBRMaterial` validates linear base color, metallic, perceptual roughness, and
+ambient-occlusion factors. Its scalar factors occupy padding already reserved
+inside the portable 128-byte per-draw push block; the material milestone does
+not raise Vulkan's minimum push-constant requirement.
 
 ## Build
 
@@ -123,6 +129,6 @@ M5 camera uniform + depth-tested cube         complete
 M6 GPU debug lines + external bridge contract   complete
 M7 indexed mesh registry + multi-draw submission complete
 M8 directional lighting                         complete
-M9 material parameters + PBR foundation
-M10 PBR materials + shadows
+M9 validated metallic-roughness PBR materials     complete
+M10 directional shadows
 ```

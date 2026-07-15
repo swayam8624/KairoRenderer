@@ -2,6 +2,7 @@ export module Kairo.Renderer;
 export import Kairo.Renderer.Types;
 export import Kairo.Renderer.Camera;
 export import Kairo.Renderer.Mesh;
+export import Kairo.Renderer.Material;
 export import Kairo.Renderer.RenderScene;
 export import Kairo.Renderer.DebugDraw;
 export import Kairo.Renderer.Window;

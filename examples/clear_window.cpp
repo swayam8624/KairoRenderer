@@ -9,7 +9,7 @@ int main()
 {
     try
     {
-        kairo::renderer::RendererRuntime runtime({ "KairoRenderer M8 - Lit Mesh and Debug Draw", 1280, 800, true });
+        kairo::renderer::RendererRuntime runtime({ "KairoRenderer M9 - PBR Materials and Debug Draw", 1280, 800, true });
         if (!runtime.BackendContext().IsValid())
         {
             throw std::runtime_error("Renderer did not expose a valid Vulkan tooling context.");
@@ -18,9 +18,9 @@ int main()
         kairo::renderer::RenderScene scene;
         using kairo::foundation::math::Vec3f;
         scene.Add({ cube, kairo::foundation::math::MakeTranslation(Vec3f{ -0.8f, 0.0f, 0.0f }) *
-            kairo::foundation::math::MakeScale(Vec3f{ 0.6f, 0.6f, 0.6f }), { 1.0f, 0.75f, 0.75f } });
+            kairo::foundation::math::MakeScale(Vec3f{ 0.6f, 0.6f, 0.6f }), { { 0.95f, 0.45f, 0.35f }, 0.05f, 0.72f, 1.0f } });
         scene.Add({ cube, kairo::foundation::math::MakeTranslation(Vec3f{ 0.8f, 0.0f, 0.0f }) *
-            kairo::foundation::math::MakeScale(Vec3f{ 0.5f, 0.9f, 0.5f }), { 0.7f, 0.85f, 1.0f } });
+            kairo::foundation::math::MakeScale(Vec3f{ 0.5f, 0.9f, 0.5f }), { { 0.82f, 0.9f, 1.0f }, 0.85f, 0.22f, 1.0f } });
         runtime.SubmitRenderScene(scene);
         kairo::renderer::DebugDrawList debug;
         debug.AddAxes({ 0.0f, 0.0f, 0.0f }, 2.5f);

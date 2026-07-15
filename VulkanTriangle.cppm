@@ -146,7 +146,7 @@ export namespace kairo::renderer
 
     private:
         /// std140-compatible view/projection plus directional-light data.
-        struct CameraUniform final { std::array<float, 40> Values{}; };
+        struct CameraUniform final { std::array<float, 44> Values{}; };
         /// 64-byte model + three padded normal columns + 16-byte tint exactly
         /// fit Vulkan's guaranteed minimum 128-byte push-constant capacity.
         struct MeshPushConstants final { std::array<float, 32> Values{}; };
@@ -341,7 +341,13 @@ export namespace kairo::renderer
                 for (std::size_t column = 0u; column < 3u; ++column)
                     for (std::size_t row = 0u; row < 3u; ++row)
                         push.Values[16u + column * 4u + row] = normal(row, column);
-                push.Values[28u] = draw.Tint.x; push.Values[29u] = draw.Tint.y; push.Values[30u] = draw.Tint.z; push.Values[31u] = 1.0f;
+                push.Values[19u] = draw.Material.Metallic;
+                push.Values[23u] = draw.Material.Roughness;
+                push.Values[27u] = draw.Material.AmbientOcclusion;
+                push.Values[28u] = draw.Material.BaseColor.x;
+                push.Values[29u] = draw.Material.BaseColor.y;
+                push.Values[30u] = draw.Material.BaseColor.z;
+                push.Values[31u] = 1.0f;
                 vkCmdPushConstants(command.Handle(), m_Layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                     0u, sizeof(push), &push);
                 const VkBuffer vertexBuffer = mesh.Vertices->Handle();
@@ -382,8 +388,11 @@ export namespace kairo::renderer
             CopyTranspose(m_Camera.Projection(extent.width, extent.height), uniform.Values.data() + 16u);
             // Direction points from the shaded surface toward the light. The
             // w components are reserved for intensity/ambient strength.
-            uniform.Values[32u] = -0.45f; uniform.Values[33u] = 0.8f; uniform.Values[34u] = 0.35f; uniform.Values[35u] = 1.0f;
+            uniform.Values[32u] = -0.45f; uniform.Values[33u] = 0.8f; uniform.Values[34u] = 0.35f; uniform.Values[35u] = 4.0f;
             uniform.Values[36u] = 0.075f; uniform.Values[37u] = 0.09f; uniform.Values[38u] = 0.13f; uniform.Values[39u] = 1.0f;
+            const auto cameraPosition = m_Camera.Position();
+            uniform.Values[40u] = cameraPosition.x; uniform.Values[41u] = cameraPosition.y;
+            uniform.Values[42u] = cameraPosition.z; uniform.Values[43u] = 1.0f;
             m_UniformBuffer.Write(&uniform, sizeof(uniform));
         }
 

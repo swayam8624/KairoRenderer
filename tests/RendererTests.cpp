@@ -65,7 +65,14 @@ TEST_CASE("Render scenes validate draw handles transforms and tints", "[KairoRen
     invalidMatrix.Model(2u, 1u) = std::numeric_limits<float>::infinity();
     REQUIRE_THROWS(scene.Add(invalidMatrix));
     REQUIRE_THROWS(scene.Add({ 1u, kairo::foundation::math::MakeScale(kairo::foundation::math::Vec3f{ 1.0f, 0.0f, 1.0f }) }));
-    REQUIRE_THROWS(scene.Add({ 1u, kairo::foundation::math::Mat4f::Identity(), { 1.0f, -0.1f, 1.0f } }));
+    REQUIRE_THROWS(scene.Add({ 1u, kairo::foundation::math::Mat4f::Identity(), { { 1.0f, -0.1f, 1.0f } } }));
+
+    PBRMaterial invalidMaterial;
+    invalidMaterial.Metallic = 1.1f;
+    REQUIRE_THROWS(scene.Add({ 1u, kairo::foundation::math::Mat4f::Identity(), invalidMaterial }));
+    invalidMaterial = {};
+    invalidMaterial.Roughness = 0.0f;
+    REQUIRE_THROWS(scene.Add({ 1u, kairo::foundation::math::Mat4f::Identity(), invalidMaterial }));
 
     const auto normal = ComputeNormalMatrix(
         kairo::foundation::math::MakeScale(kairo::foundation::math::Vec3f{ 2.0f, 1.0f, 0.5f }));

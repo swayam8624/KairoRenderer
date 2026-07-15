@@ -32,7 +32,12 @@ export namespace kairo::renderer
         [[nodiscard]] kairo::foundation::math::Mat4f View() const noexcept
         {
             using namespace kairo::foundation::math;
-            return LookAt(Vec3f{ 2.6f, 1.9f, 3.8f }, Vec3f::Zero(), Vec3f::Up());
+            return LookAt(Position(), Vec3f::Zero(), Vec3f::Up());
+        }
+
+        [[nodiscard]] static constexpr kairo::foundation::math::Vec3f Position() noexcept
+        {
+            return { 2.6f, 1.9f, 3.8f };
         }
 
         [[nodiscard]] kairo::foundation::math::Mat4f Projection(std::uint32_t width, std::uint32_t height) const noexcept
