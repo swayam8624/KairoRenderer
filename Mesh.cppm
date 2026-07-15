@@ -19,6 +19,7 @@ export namespace kairo::renderer
     {
         kairo::foundation::math::Vec3f Position{};
         kairo::foundation::math::Vec3f Color{ 1.0f, 1.0f, 1.0f };
+        kairo::foundation::math::Vec3f Normal{ 0.0f, 1.0f, 0.0f };
     };
 
     /// Indexed triangle mesh with explicit ownership of CPU geometry.
@@ -44,7 +45,7 @@ export namespace kairo::renderer
         /// corners preserves a clean path for future per-face normals/UVs.
         [[nodiscard]] static Mesh MakeCube()
         {
-            const std::vector<MeshVertex> vertices{
+            std::vector<MeshVertex> vertices{
                 {{-1,-1, 1},{0.95f,0.25f,0.25f}}, {{ 1,-1, 1},{0.95f,0.25f,0.25f}}, {{ 1, 1, 1},{0.95f,0.25f,0.25f}}, {{-1, 1, 1},{0.95f,0.25f,0.25f}},
                 {{ 1,-1,-1},{0.25f,0.5f,0.95f}}, {{-1,-1,-1},{0.25f,0.5f,0.95f}}, {{-1, 1,-1},{0.25f,0.5f,0.95f}}, {{ 1, 1,-1},{0.25f,0.5f,0.95f}},
                 {{-1,-1,-1},{0.25f,0.9f,0.45f}}, {{-1,-1, 1},{0.25f,0.9f,0.45f}}, {{-1, 1, 1},{0.25f,0.9f,0.45f}}, {{-1, 1,-1},{0.25f,0.9f,0.45f}},
@@ -52,6 +53,13 @@ export namespace kairo::renderer
                 {{-1, 1, 1},{0.65f,0.35f,0.95f}}, {{ 1, 1, 1},{0.65f,0.35f,0.95f}}, {{ 1, 1,-1},{0.65f,0.35f,0.95f}}, {{-1, 1,-1},{0.65f,0.35f,0.95f}},
                 {{-1,-1,-1},{0.2f,0.85f,0.85f}}, {{ 1,-1,-1},{0.2f,0.85f,0.85f}}, {{ 1,-1, 1},{0.2f,0.85f,0.85f}}, {{-1,-1, 1},{0.2f,0.85f,0.85f}}
             };
+            const kairo::foundation::math::Vec3f faceNormals[]{
+                { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, -1.0f }, { -1.0f, 0.0f, 0.0f },
+                { 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, -1.0f, 0.0f }
+            };
+            for (std::size_t face = 0u; face < 6u; ++face)
+                for (std::size_t corner = 0u; corner < 4u; ++corner)
+                    vertices[face * 4u + corner].Normal = faceNormals[face];
             const std::vector<std::uint32_t> indices{
                 0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11,
                 12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23

@@ -118,7 +118,8 @@ export namespace kairo::renderer
         }
 
     private:
-        struct CameraUniform final { std::array<float, 48> Values{}; };
+        /// std140-compatible model/view/projection plus directional-light data.
+        struct CameraUniform final { std::array<float, 56> Values{}; };
         struct DebugVertex final
         {
             float Position[3]{};
@@ -207,7 +208,8 @@ export namespace kairo::renderer
             meshBinding.binding = 0u; meshBinding.stride = sizeof(MeshVertex); meshBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
             const std::array meshAttributes{
                 VkVertexInputAttributeDescription{ 0u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Position) },
-                VkVertexInputAttributeDescription{ 1u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Color) }
+                VkVertexInputAttributeDescription{ 1u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Color) },
+                VkVertexInputAttributeDescription{ 2u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Normal) }
             };
             VkPipelineVertexInputStateCreateInfo meshInput{};
             meshInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -314,7 +316,12 @@ export namespace kairo::renderer
         {
             CameraUniform uniform{};
             CopyTranspose(m_Camera.Model(), uniform.Values.data()); CopyTranspose(m_Camera.View(), uniform.Values.data() + 16u);
-            CopyTranspose(m_Camera.Projection(extent.width, extent.height), uniform.Values.data() + 32u); m_UniformBuffer.Write(&uniform, sizeof(uniform));
+            CopyTranspose(m_Camera.Projection(extent.width, extent.height), uniform.Values.data() + 32u);
+            // Direction points from the shaded surface toward the light. The
+            // w components are reserved for intensity/ambient strength.
+            uniform.Values[48u] = -0.45f; uniform.Values[49u] = 0.8f; uniform.Values[50u] = 0.35f; uniform.Values[51u] = 1.0f;
+            uniform.Values[52u] = 0.075f; uniform.Values[53u] = 0.09f; uniform.Values[54u] = 0.13f; uniform.Values[55u] = 1.0f;
+            m_UniformBuffer.Write(&uniform, sizeof(uniform));
         }
 
         static void CopyTranspose(const kairo::foundation::math::Mat4f& matrix, float* destination) noexcept
