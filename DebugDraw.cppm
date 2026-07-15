@@ -73,6 +73,46 @@ export namespace kairo::renderer
             for (const auto& edge : edges) AddLine(corners[edge[0]], corners[edge[1]], color);
         }
 
+        /// Input: world-space center, strictly positive local half extents,
+        /// and a finite non-zero orientation quaternion.
+        /// Output: twelve oriented box edges.
+        /// Task: display narrowphase boxes without replacing them by broadphase
+        /// AABBs. KairoMath performs the quaternion rotation, including safe
+        /// handling of finite non-unit orientations.
+        void AddOBB(const kairo::foundation::math::Vec3f& center,
+            const kairo::foundation::math::Vec3f& halfExtents,
+            const kairo::foundation::math::Quatf& orientation,
+            DebugColor color = {})
+        {
+            if (!(halfExtents.x > 0.0f && halfExtents.y > 0.0f && halfExtents.z > 0.0f) ||
+                !std::isfinite(halfExtents.x) || !std::isfinite(halfExtents.y) || !std::isfinite(halfExtents.z))
+                throw std::invalid_argument("DebugDrawList::AddOBB requires finite positive half extents.");
+            if (!std::isfinite(orientation.x) || !std::isfinite(orientation.y) ||
+                !std::isfinite(orientation.z) || !std::isfinite(orientation.w) ||
+                orientation.LengthSquared() <= 1.0e-12f)
+                throw std::invalid_argument("DebugDrawList::AddOBB requires a finite non-zero orientation.");
+
+            const std::array localCorners{
+                kairo::foundation::math::Vec3f{ -halfExtents.x, -halfExtents.y, -halfExtents.z },
+                kairo::foundation::math::Vec3f{  halfExtents.x, -halfExtents.y, -halfExtents.z },
+                kairo::foundation::math::Vec3f{  halfExtents.x,  halfExtents.y, -halfExtents.z },
+                kairo::foundation::math::Vec3f{ -halfExtents.x,  halfExtents.y, -halfExtents.z },
+                kairo::foundation::math::Vec3f{ -halfExtents.x, -halfExtents.y,  halfExtents.z },
+                kairo::foundation::math::Vec3f{  halfExtents.x, -halfExtents.y,  halfExtents.z },
+                kairo::foundation::math::Vec3f{  halfExtents.x,  halfExtents.y,  halfExtents.z },
+                kairo::foundation::math::Vec3f{ -halfExtents.x,  halfExtents.y,  halfExtents.z }
+            };
+            std::array<kairo::foundation::math::Vec3f, 8> corners{};
+            for (std::size_t index = 0u; index < corners.size(); ++index)
+                corners[index] = center + kairo::foundation::math::Rotate(orientation, localCorners[index]);
+            constexpr std::array<std::array<std::size_t, 2>, 12> edges{{
+                {{ 0u, 1u }}, {{ 1u, 2u }}, {{ 2u, 3u }}, {{ 3u, 0u }},
+                {{ 4u, 5u }}, {{ 5u, 6u }}, {{ 6u, 7u }}, {{ 7u, 4u }},
+                {{ 0u, 4u }}, {{ 1u, 5u }}, {{ 2u, 6u }}, {{ 3u, 7u }}
+            }};
+            for (const auto& edge : edges) AddLine(corners[edge[0]], corners[edge[1]], color);
+        }
+
         void AddAxes(const kairo::foundation::math::Vec3f& origin, float scale = 1.0f)
         {
             if (scale <= 0.0f) throw std::invalid_argument("DebugDrawList::AddAxes requires a positive scale.");

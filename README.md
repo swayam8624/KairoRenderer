@@ -40,6 +40,7 @@ positions, submit it, and reuse or clear the source list immediately:
 ```cpp
 kairo::renderer::DebugDrawList debug;
 debug.AddAABB(minimum, maximum, { 0.2f, 0.8f, 1.0f, 1.0f });
+debug.AddOBB(center, halfExtents, orientation, { 0.9f, 0.7f, 0.2f, 1.0f });
 debug.AddContactNormal(point, normal);
 runtime.SubmitDebugDraw(debug);
 ```
@@ -49,6 +50,8 @@ frame fence completes, and draws thin depth-tested line segments in the same
 camera space as the scene. This keeps `KairoPhysicsEngine` independent from
 Vulkan while allowing an engine/editor adapter to translate its contact,
 collider, and broadphase diagnostic data.
+The line vocabulary includes axes, AABBs, quaternion-oriented boxes, wire
+spheres/capsules, and contact normals; all transformations reuse KairoMath.
 
 ## Mesh Submission Boundary
 

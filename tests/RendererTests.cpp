@@ -84,3 +84,17 @@ TEST_CASE("Debug draw emits sphere, capsule, and contact geometry", "[KairoRende
     draw.AddContactNormal({ 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
     CHECK(draw.Lines().size() == 53u);
 }
+
+TEST_CASE("Debug draw preserves oriented box geometry", "[KairoRenderer][Debug]")
+{
+    DebugDrawList draw;
+    const auto rotation = kairo::foundation::math::AxisAngle(
+        kairo::foundation::math::Vec3f::Up(), 1.57079632679f);
+    draw.AddOBB({ 2.0f, 3.0f, 4.0f }, { 1.0f, 0.5f, 2.0f }, rotation);
+
+    REQUIRE(draw.Lines().size() == 12u);
+    CHECK(draw.Lines().front().A.y == 2.5f);
+    CHECK(draw.Lines().front().B.y == 2.5f);
+    REQUIRE_THROWS(draw.AddOBB({}, { 1.0f, 0.0f, 1.0f }, rotation));
+    REQUIRE_THROWS(draw.AddOBB({}, { 1.0f, 1.0f, 1.0f }, kairo::foundation::math::Quatf::Zero()));
+}
