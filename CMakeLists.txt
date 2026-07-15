@@ -53,6 +53,7 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     Window.cppm
     VulkanInstance.cppm
     VulkanSurface.cppm
+    VulkanDevice.cppm
     Renderer.cppm
     KairoRenderer.cppm)
 target_include_directories(KairoRenderer PUBLIC ${KAIRO_VULKAN_INCLUDE_DIR})

@@ -11,6 +11,7 @@ import Kairo.Renderer.Types;
 import Kairo.Renderer.Window;
 import Kairo.Renderer.VulkanInstance;
 import Kairo.Renderer.VulkanSurface;
+import Kairo.Renderer.VulkanDevice;
 
 export namespace kairo::renderer
 {
@@ -21,7 +22,7 @@ export namespace kairo::renderer
     {
     public:
         explicit RendererRuntime(const WindowDesc& windowDesc)
-            : m_Glfw(), m_Window(windowDesc), m_Instance(MakeInstanceDesc(), RequiredExtensions()), m_Surface(m_Instance, m_Window)
+            : m_Glfw(), m_Window(windowDesc), m_Instance(MakeInstanceDesc(), RequiredExtensions()), m_Surface(m_Instance, m_Window), m_Device(m_Instance, m_Surface)
         {
         }
         [[nodiscard]] Window& NativeWindow() noexcept { return m_Window; }
@@ -31,6 +32,7 @@ export namespace kairo::renderer
         Window m_Window;
         VulkanInstance m_Instance;
         VulkanSurface m_Surface;
+        VulkanDevice m_Device;
         [[nodiscard]] static VulkanInstanceDesc MakeInstanceDesc() { return { "KairoRenderer", true }; }
         [[nodiscard]] static std::vector<const char*> RequiredExtensions()
         {
