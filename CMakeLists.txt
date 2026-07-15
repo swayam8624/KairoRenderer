@@ -86,6 +86,7 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     RendererTypes.cppm
     Camera.cppm
     Mesh.cppm
+    RenderScene.cppm
     DebugDraw.cppm
     Window.cppm
     VulkanInstance.cppm

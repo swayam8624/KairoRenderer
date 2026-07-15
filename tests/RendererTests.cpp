@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <limits>
 
 import Kairo.Renderer;
+import Kairo.Foundation.Math;
 
 using namespace kairo::renderer;
 
@@ -50,6 +52,26 @@ TEST_CASE("Indexed mesh validates topology and exposes a complete cube", "[Kairo
     CHECK(cube.Vertices().size() == 24u);
     CHECK(cube.Indices().size() == 36u);
     REQUIRE_THROWS(Mesh({ {{ 0.0f, 0.0f, 0.0f }, {} } }, { 0u, 1u, 0u }));
+}
+
+TEST_CASE("Render scenes validate draw handles transforms and tints", "[KairoRenderer][Scene]")
+{
+    RenderScene scene;
+    scene.Add({ 1u });
+    REQUIRE(scene.Draws().size() == 1u);
+    REQUIRE_THROWS(scene.Add({ InvalidMeshHandle }));
+
+    MeshDraw invalidMatrix{ 1u };
+    invalidMatrix.Model(2u, 1u) = std::numeric_limits<float>::infinity();
+    REQUIRE_THROWS(scene.Add(invalidMatrix));
+    REQUIRE_THROWS(scene.Add({ 1u, kairo::foundation::math::MakeScale(kairo::foundation::math::Vec3f{ 1.0f, 0.0f, 1.0f }) }));
+    REQUIRE_THROWS(scene.Add({ 1u, kairo::foundation::math::Mat4f::Identity(), { 1.0f, -0.1f, 1.0f } }));
+
+    const auto normal = ComputeNormalMatrix(
+        kairo::foundation::math::MakeScale(kairo::foundation::math::Vec3f{ 2.0f, 1.0f, 0.5f }));
+    CHECK(normal(0u, 0u) == 1.0f);
+    CHECK(normal(1u, 1u) == 2.0f);
+    CHECK(normal(2u, 2u) == 4.0f);
 }
 
 TEST_CASE("Debug draw emits sphere, capsule, and contact geometry", "[KairoRenderer][Debug]")

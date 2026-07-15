@@ -2,6 +2,7 @@ module;
 
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@ module;
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 export module Kairo.Renderer.VulkanTriangle;
@@ -18,6 +20,7 @@ export module Kairo.Renderer.VulkanTriangle;
 import Kairo.Renderer.Camera;
 import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.Mesh;
+import Kairo.Renderer.RenderScene;
 import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.VulkanCommand;
 import Kairo.Renderer.VulkanDepth;
@@ -29,21 +32,17 @@ import Kairo.Foundation.Math;
 
 export namespace kairo::renderer
 {
-    /// Owns the current swapchain render pass and two pipelines: the static
-    /// depth-tested showcase cube and dynamic world-space debug lines. It is
-    /// intentionally a small rendering unit, not a general render graph.
+    /// Owns the current swapchain render pass, renderer-owned indexed mesh
+    /// buffers, a lit mesh pipeline, and dynamic world-space debug lines. It
+    /// remains a focused forward-pass unit rather than a general render graph.
     class VulkanTriangle final
     {
     public:
         VulkanTriangle(const VulkanDevice& device, const VulkanSwapchain& swapchain)
-            : m_VulkanDevice(device), m_Device(device.Handle()), m_ShowcaseMesh(Mesh::MakeCube()),
-              m_VertexBuffer(device, m_ShowcaseMesh.VertexBytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
-              m_IndexBuffer(device, m_ShowcaseMesh.IndexBytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
+            : m_VulkanDevice(device), m_Device(device.Handle()),
               m_UniformBuffer(device, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
               m_UniformDescriptor(device, m_UniformBuffer, sizeof(CameraUniform)), m_Depth(device, swapchain.Extent())
         {
-            m_VertexBuffer.Write(m_ShowcaseMesh.Vertices().data(), m_ShowcaseMesh.VertexBytes());
-            m_IndexBuffer.Write(m_ShowcaseMesh.Indices().data(), m_ShowcaseMesh.IndexBytes());
             Create(swapchain);
         }
 
@@ -66,6 +65,34 @@ export namespace kairo::renderer
             }
         }
 
+        [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
+        {
+            if (m_NextMesh == InvalidMeshHandle) throw std::overflow_error("Renderer mesh handle space is exhausted.");
+            auto vertices = std::make_unique<VulkanHostBuffer>(m_VulkanDevice, mesh.VertexBytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            auto indices = std::make_unique<VulkanHostBuffer>(m_VulkanDevice, mesh.IndexBytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            vertices->Write(mesh.Vertices().data(), mesh.VertexBytes());
+            indices->Write(mesh.Indices().data(), mesh.IndexBytes());
+            const MeshHandle handle = m_NextMesh++;
+            m_Meshes.emplace(handle, GpuMesh{ std::move(vertices), std::move(indices), static_cast<std::uint32_t>(mesh.Indices().size()) });
+            return handle;
+        }
+
+        void DestroyMesh(MeshHandle mesh)
+        {
+            if (mesh == InvalidMeshHandle || m_Meshes.erase(mesh) == 0u) throw std::out_of_range("Renderer does not own this mesh handle.");
+            std::erase_if(m_Draws, [mesh](const MeshDraw& draw) { return draw.Mesh == mesh; });
+        }
+
+        void SetRenderScene(const RenderScene& scene)
+        {
+            for (const MeshDraw& draw : scene.Draws())
+            {
+                RenderScene::Validate(draw);
+                if (!m_Meshes.contains(draw.Mesh)) throw std::out_of_range("RenderScene references an unknown mesh handle.");
+            }
+            m_Draws = scene.Draws();
+        }
+
         /// Task: rebuild resources whose compatibility depends on the swapchain.
         void Recreate(const VulkanSwapchain& swapchain)
         {
@@ -81,11 +108,11 @@ export namespace kairo::renderer
 
         /// Precondition: imageIndex belongs to the current swapchain and the
         /// caller has waited for this command buffer's completion fence.
-        /// Task: render the showcase mesh, then debug lines into one depth pass.
+        /// Task: render submitted mesh draws, debug lines, and an optional
+        /// tooling overlay into one depth-capable presentation pass.
         void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent,
             const VulkanOverlayRecorder& overlayRecorder)
         {
-            m_Camera.Advance(1.0f / 60.0f);
             UpdateUniform(extent);
             UploadDebugVertices();
 
@@ -110,13 +137,7 @@ export namespace kairo::renderer
             vkCmdSetViewport(command.Handle(), 0u, 1u, &viewport);
             vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
 
-            BindCamera(command);
-            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_MeshPipeline);
-            const VkBuffer meshBuffer = m_VertexBuffer.Handle();
-            constexpr VkDeviceSize meshOffset = 0u;
-            vkCmdBindVertexBuffers(command.Handle(), 0u, 1u, &meshBuffer, &meshOffset);
-            vkCmdBindIndexBuffer(command.Handle(), m_IndexBuffer.Handle(), 0u, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(command.Handle(), static_cast<std::uint32_t>(m_ShowcaseMesh.Indices().size()), 1u, 0u, 0, 0u);
+            DrawMeshes(command);
             DrawDebugLines(command);
             if (overlayRecorder) overlayRecorder(command.Handle());
             vkCmdEndRenderPass(command.Handle());
@@ -124,8 +145,17 @@ export namespace kairo::renderer
         }
 
     private:
-        /// std140-compatible model/view/projection plus directional-light data.
-        struct CameraUniform final { std::array<float, 56> Values{}; };
+        /// std140-compatible view/projection plus directional-light data.
+        struct CameraUniform final { std::array<float, 40> Values{}; };
+        /// 64-byte model + three padded normal columns + 16-byte tint exactly
+        /// fit Vulkan's guaranteed minimum 128-byte push-constant capacity.
+        struct MeshPushConstants final { std::array<float, 32> Values{}; };
+        struct GpuMesh final
+        {
+            std::unique_ptr<VulkanHostBuffer> Vertices;
+            std::unique_ptr<VulkanHostBuffer> Indices;
+            std::uint32_t IndexCount = 0u;
+        };
         struct DebugVertex final
         {
             float Position[3]{};
@@ -138,14 +168,14 @@ export namespace kairo::renderer
         VkPipelineLayout m_Layout = VK_NULL_HANDLE;
         VkPipeline m_MeshPipeline = VK_NULL_HANDLE;
         VkPipeline m_DebugLinePipeline = VK_NULL_HANDLE;
-        Mesh m_ShowcaseMesh;
-        VulkanHostBuffer m_VertexBuffer;
-        VulkanHostBuffer m_IndexBuffer;
         VulkanHostBuffer m_UniformBuffer;
         VulkanUniformDescriptor m_UniformDescriptor;
         VulkanDepthAttachment m_Depth;
         ShowcaseCamera m_Camera;
         std::vector<VkFramebuffer> m_Framebuffers;
+        std::unordered_map<MeshHandle, GpuMesh> m_Meshes;
+        std::vector<MeshDraw> m_Draws;
+        MeshHandle m_NextMesh = 1u;
         std::vector<DebugVertex> m_DebugVertices;
         std::unique_ptr<VulkanHostBuffer> m_DebugVertexBuffer;
         VkDeviceSize m_DebugVertexCapacity = 0u;
@@ -208,6 +238,8 @@ export namespace kairo::renderer
             VkPipelineLayoutCreateInfo layout{};
             layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO; layout.setLayoutCount = 1u;
             const VkDescriptorSetLayout descriptorLayout = m_UniformDescriptor.Layout(); layout.pSetLayouts = &descriptorLayout;
+            const VkPushConstantRange pushConstants{ VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0u, sizeof(MeshPushConstants) };
+            layout.pushConstantRangeCount = 1u; layout.pPushConstantRanges = &pushConstants;
             if (vkCreatePipelineLayout(m_Device, &layout, nullptr, &m_Layout) != VK_SUCCESS) throw std::runtime_error("vkCreatePipelineLayout failed.");
 
             VkVertexInputBindingDescription meshBinding{};
@@ -294,6 +326,31 @@ export namespace kairo::renderer
             vkCmdBindDescriptorSets(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout, 0u, 1u, &descriptor, 0u, nullptr);
         }
 
+        void DrawMeshes(const VulkanCommandBuffer& command) const
+        {
+            if (m_Draws.empty()) return;
+            BindCamera(command);
+            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_MeshPipeline);
+            constexpr VkDeviceSize offset = 0u;
+            for (const MeshDraw& draw : m_Draws)
+            {
+                const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
+                MeshPushConstants push{};
+                CopyTranspose(draw.Model, push.Values.data());
+                const auto normal = ComputeNormalMatrix(draw.Model);
+                for (std::size_t column = 0u; column < 3u; ++column)
+                    for (std::size_t row = 0u; row < 3u; ++row)
+                        push.Values[16u + column * 4u + row] = normal(row, column);
+                push.Values[28u] = draw.Tint.x; push.Values[29u] = draw.Tint.y; push.Values[30u] = draw.Tint.z; push.Values[31u] = 1.0f;
+                vkCmdPushConstants(command.Handle(), m_Layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                    0u, sizeof(push), &push);
+                const VkBuffer vertexBuffer = mesh.Vertices->Handle();
+                vkCmdBindVertexBuffers(command.Handle(), 0u, 1u, &vertexBuffer, &offset);
+                vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, 1u, 0u, 0, 0u);
+            }
+        }
+
         void UploadDebugVertices()
         {
             if (m_DebugVertices.empty()) return;
@@ -321,12 +378,12 @@ export namespace kairo::renderer
         void UpdateUniform(VkExtent2D extent)
         {
             CameraUniform uniform{};
-            CopyTranspose(m_Camera.Model(), uniform.Values.data()); CopyTranspose(m_Camera.View(), uniform.Values.data() + 16u);
-            CopyTranspose(m_Camera.Projection(extent.width, extent.height), uniform.Values.data() + 32u);
+            CopyTranspose(m_Camera.View(), uniform.Values.data());
+            CopyTranspose(m_Camera.Projection(extent.width, extent.height), uniform.Values.data() + 16u);
             // Direction points from the shaded surface toward the light. The
             // w components are reserved for intensity/ambient strength.
-            uniform.Values[48u] = -0.45f; uniform.Values[49u] = 0.8f; uniform.Values[50u] = 0.35f; uniform.Values[51u] = 1.0f;
-            uniform.Values[52u] = 0.075f; uniform.Values[53u] = 0.09f; uniform.Values[54u] = 0.13f; uniform.Values[55u] = 1.0f;
+            uniform.Values[32u] = -0.45f; uniform.Values[33u] = 0.8f; uniform.Values[34u] = 0.35f; uniform.Values[35u] = 1.0f;
+            uniform.Values[36u] = 0.075f; uniform.Values[37u] = 0.09f; uniform.Values[38u] = 0.13f; uniform.Values[39u] = 1.0f;
             m_UniformBuffer.Write(&uniform, sizeof(uniform));
         }
 

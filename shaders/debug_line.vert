@@ -1,11 +1,12 @@
 #version 450
 
-// Debug vertices are world-space. They skip the showcase cube's model matrix
-// so physics bounds, contacts, and axes retain their submitted coordinates.
+// Debug vertices are world-space so physics bounds, contacts, and axes retain
+// their submitted coordinates.
 layout(set = 0, binding = 0) uniform CameraMatrices {
-    mat4 model;
     mat4 view;
     mat4 projection;
+    vec4 lightDirectionAndIntensity;
+    vec4 ambient;
 } camera;
 
 layout(location = 0) in vec3 inPosition;

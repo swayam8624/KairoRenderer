@@ -21,15 +21,18 @@ import Kairo.Renderer.VulkanSync;
 import Kairo.Renderer.VulkanTriangle;
 import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.VulkanBackendContext;
+import Kairo.Renderer.Mesh;
+import Kairo.Renderer.RenderScene;
 
 export namespace kairo::renderer
 {
     /// Input: native window description.
-    /// Output: an owning Vulkan runtime capable of presenting a cleared frame.
+    /// Output: an owning Vulkan runtime capable of mesh, debug, and tooling
+    /// overlay presentation.
     /// Task: keep the window, Vulkan instance, surface, device, swapchain, and
     /// one-frame synchronization objects in destruction-safe order. This is
-    /// intentionally a minimal rendering baseline: later pipeline work builds
-    /// on the same acquire-record-submit-present lifecycle.
+    /// Later material and render-graph work builds on the same validated
+    /// acquire-record-submit-present lifecycle.
     class RendererRuntime final
     {
     public:
@@ -128,6 +131,31 @@ export namespace kairo::renderer
         void SubmitDebugDraw(const DebugDrawList& debug)
         {
             m_Triangle.SetDebugDrawList(debug);
+        }
+
+        /// Input: validated CPU indexed geometry.
+        /// Output: a stable handle for frame draw extraction.
+        /// Task: transfer mesh bytes into renderer-owned Vulkan buffers while
+        /// keeping the public handle free of native API types.
+        [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
+        {
+            return m_Triangle.CreateMesh(mesh);
+        }
+
+        /// Input: a handle returned by CreateMesh.
+        /// Task: wait for outstanding GPU use, remove pending draws that
+        /// reference the handle, and release its buffers deterministically.
+        void DestroyMesh(MeshHandle mesh)
+        {
+            if (vkDeviceWaitIdle(m_Device.Handle()) != VK_SUCCESS) throw std::runtime_error("vkDeviceWaitIdle failed before mesh destruction.");
+            m_Triangle.DestroyMesh(mesh);
+        }
+
+        /// Input: renderer-neutral mesh draws for the next and subsequent
+        /// frames, until replaced by another submission.
+        void SubmitRenderScene(const RenderScene& scene)
+        {
+            m_Triangle.SetRenderScene(scene);
         }
 
         /// Input: renderer-neutral owner supplies a callback that records only

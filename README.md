@@ -10,9 +10,11 @@ debug draw, and later editor rendering.
 M8 basic forward lighting is complete: GLFW window ownership, Vulkan instance and surface creation,
 device/queue selection, swapchain presentation, synchronization, shader
 compilation, uniform descriptors, a D32 depth attachment, a camera-driven
-indexed mesh vertex/index buffer upload, per-vertex normals, a directional-light forward pass, and a dynamic world-space debug-line pipeline. `KairoRendererClear`
-presents a rotating depth-tested cube with axes, an AABB, and a wire sphere in
-a real native window.
+indexed-mesh handle registry, validated multi-object draw extraction, per-draw
+model/normal/tint push constants, a directional-light forward pass, and a
+dynamic world-space debug-line pipeline. `KairoRendererClear` presents two
+independently transformed depth-tested mesh instances with axes, an AABB, and a
+wire sphere in a real native window.
 
 ## Build
 
@@ -24,8 +26,8 @@ ctest --test-dir build --output-on-failure
 ./build/KairoRendererClear
 ```
 
-The sample creates a native Vulkan window and continuously presents a rotating
-cube plus debug geometry until the window is closed. Resizing recreates
+The sample creates a native Vulkan window and continuously presents submitted
+mesh instances plus debug geometry until the window is closed. Resizing recreates
 color/depth framebuffers; minimizing pauses submission until the framebuffer
 is restored.
 
@@ -47,6 +49,24 @@ frame fence completes, and draws thin depth-tested line segments in the same
 camera space as the scene. This keeps `KairoPhysicsEngine` independent from
 Vulkan while allowing an engine/editor adapter to translate its contact,
 collider, and broadphase diagnostic data.
+
+## Mesh Submission Boundary
+
+`CreateMesh` uploads validated `Mesh` vertices and indices and returns an opaque
+`MeshHandle`. A `RenderScene` then supplies any number of model/tint draw
+requests without exposing Vulkan types:
+
+```cpp
+const auto cube = runtime.CreateMesh(kairo::renderer::Mesh::MakeCube());
+kairo::renderer::RenderScene scene;
+scene.Add({ cube, modelMatrix, { 0.8f, 0.9f, 1.0f } });
+runtime.SubmitRenderScene(scene);
+```
+
+Submission rejects unknown handles, non-finite or singular transforms, and
+invalid linear RGB tints before command recording. Normal transforms use a
+scale-normalized KairoMath inverse-transpose and are packed once per draw rather
+than inverted in the vertex shader.
 
 ## Tooling Overlay Contract
 
@@ -91,8 +111,8 @@ M3 swapchain + command buffers + clear       complete
 M4 shader pipeline + triangle                complete
 M5 camera uniform + depth-tested cube         complete
 M6 GPU debug lines + external bridge contract   complete
-M7 indexed mesh submission                    complete
+M7 indexed mesh registry + multi-draw submission complete
 M8 directional lighting                         complete
 M9 material parameters + PBR foundation
-M8 PBR materials + shadows
+M10 PBR materials + shadows
 ```
