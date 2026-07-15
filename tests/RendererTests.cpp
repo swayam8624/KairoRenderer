@@ -36,6 +36,14 @@ TEST_CASE("Debug draw emits deterministic AABB edges and axes", "[KairoRenderer]
     REQUIRE_THROWS(draw.AddAABB({ 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 1.0f }));
 }
 
+TEST_CASE("Indexed mesh validates topology and exposes a complete cube", "[KairoRenderer][Mesh]")
+{
+    const Mesh cube = Mesh::MakeCube();
+    CHECK(cube.Vertices().size() == 24u);
+    CHECK(cube.Indices().size() == 36u);
+    REQUIRE_THROWS(Mesh({ {{ 0.0f, 0.0f, 0.0f }, {} } }, { 0u, 1u, 0u }));
+}
+
 TEST_CASE("Debug draw emits sphere, capsule, and contact geometry", "[KairoRenderer][Debug]")
 {
     DebugDrawList draw;

@@ -7,10 +7,10 @@ debug draw, and later editor rendering.
 
 ## Current milestone
 
-M6 is complete: GLFW window ownership, Vulkan instance and surface creation,
+M7 mesh submission is complete: GLFW window ownership, Vulkan instance and surface creation,
 device/queue selection, swapchain presentation, synchronization, shader
 compilation, uniform descriptors, a D32 depth attachment, a camera-driven
-mesh pass, and a dynamic world-space debug-line pipeline. `KairoRendererClear`
+indexed mesh vertex/index buffer upload, and a dynamic world-space debug-line pipeline. `KairoRendererClear`
 presents a rotating depth-tested cube with axes, an AABB, and a wire sphere in
 a real native window.
 
@@ -82,6 +82,7 @@ M3 swapchain + command buffers + clear       complete
 M4 shader pipeline + triangle                complete
 M5 camera uniform + depth-tested cube         complete
 M6 GPU debug lines + external bridge contract   complete
-M7 forward mesh rendering + lighting
+M7 indexed mesh submission                    complete
+M8 forward lighting + materials
 M8 PBR materials + shadows
 ```

@@ -1,6 +1,7 @@
 export module Kairo.Renderer;
 export import Kairo.Renderer.Types;
 export import Kairo.Renderer.Camera;
+export import Kairo.Renderer.Mesh;
 export import Kairo.Renderer.DebugDraw;
 export import Kairo.Renderer.Window;
 export import Kairo.Renderer.VulkanInstance;

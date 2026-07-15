@@ -16,6 +16,7 @@ export module Kairo.Renderer.VulkanTriangle;
 
 import Kairo.Renderer.Camera;
 import Kairo.Renderer.DebugDraw;
+import Kairo.Renderer.Mesh;
 import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.VulkanCommand;
 import Kairo.Renderer.VulkanDepth;
@@ -33,9 +34,14 @@ export namespace kairo::renderer
     {
     public:
         VulkanTriangle(const VulkanDevice& device, const VulkanSwapchain& swapchain)
-            : m_VulkanDevice(device), m_Device(device.Handle()), m_UniformBuffer(device, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
+            : m_VulkanDevice(device), m_Device(device.Handle()), m_ShowcaseMesh(Mesh::MakeCube()),
+              m_VertexBuffer(device, m_ShowcaseMesh.VertexBytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
+              m_IndexBuffer(device, m_ShowcaseMesh.IndexBytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
+              m_UniformBuffer(device, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
               m_UniformDescriptor(device, m_UniformBuffer, sizeof(CameraUniform)), m_Depth(device, swapchain.Extent())
         {
+            m_VertexBuffer.Write(m_ShowcaseMesh.Vertices().data(), m_ShowcaseMesh.VertexBytes());
+            m_IndexBuffer.Write(m_ShowcaseMesh.Indices().data(), m_ShowcaseMesh.IndexBytes());
             Create(swapchain);
         }
 
@@ -101,7 +107,11 @@ export namespace kairo::renderer
 
             BindCamera(command);
             vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_MeshPipeline);
-            vkCmdDraw(command.Handle(), 36u, 1u, 0u, 0u);
+            const VkBuffer meshBuffer = m_VertexBuffer.Handle();
+            constexpr VkDeviceSize meshOffset = 0u;
+            vkCmdBindVertexBuffers(command.Handle(), 0u, 1u, &meshBuffer, &meshOffset);
+            vkCmdBindIndexBuffer(command.Handle(), m_IndexBuffer.Handle(), 0u, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(command.Handle(), static_cast<std::uint32_t>(m_ShowcaseMesh.Indices().size()), 1u, 0u, 0, 0u);
             DrawDebugLines(command);
             vkCmdEndRenderPass(command.Handle());
             command.End();
@@ -121,6 +131,9 @@ export namespace kairo::renderer
         VkPipelineLayout m_Layout = VK_NULL_HANDLE;
         VkPipeline m_MeshPipeline = VK_NULL_HANDLE;
         VkPipeline m_DebugLinePipeline = VK_NULL_HANDLE;
+        Mesh m_ShowcaseMesh;
+        VulkanHostBuffer m_VertexBuffer;
+        VulkanHostBuffer m_IndexBuffer;
         VulkanHostBuffer m_UniformBuffer;
         VulkanUniformDescriptor m_UniformDescriptor;
         VulkanDepthAttachment m_Depth;
@@ -190,8 +203,16 @@ export namespace kairo::renderer
             const VkDescriptorSetLayout descriptorLayout = m_UniformDescriptor.Layout(); layout.pSetLayouts = &descriptorLayout;
             if (vkCreatePipelineLayout(m_Device, &layout, nullptr, &m_Layout) != VK_SUCCESS) throw std::runtime_error("vkCreatePipelineLayout failed.");
 
+            VkVertexInputBindingDescription meshBinding{};
+            meshBinding.binding = 0u; meshBinding.stride = sizeof(MeshVertex); meshBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            const std::array meshAttributes{
+                VkVertexInputAttributeDescription{ 0u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Position) },
+                VkVertexInputAttributeDescription{ 1u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Color) }
+            };
             VkPipelineVertexInputStateCreateInfo meshInput{};
             meshInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            meshInput.vertexBindingDescriptionCount = 1u; meshInput.pVertexBindingDescriptions = &meshBinding;
+            meshInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(meshAttributes.size()); meshInput.pVertexAttributeDescriptions = meshAttributes.data();
             m_MeshPipeline = CreatePipeline("triangle.vert.spv", "triangle.frag.spv", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, meshInput, VK_TRUE);
 
             VkVertexInputBindingDescription binding{};
