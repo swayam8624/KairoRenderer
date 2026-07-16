@@ -11,6 +11,7 @@ module;
 export module Kairo.Renderer.Runtime;
 
 import Kairo.Renderer.Types;
+import Kairo.Renderer.Camera;
 import Kairo.Renderer.Window;
 import Kairo.Renderer.VulkanInstance;
 import Kairo.Renderer.VulkanSurface;
@@ -167,6 +168,15 @@ export namespace kairo::renderer
         void SubmitRenderScene(const RenderScene& scene)
         {
             m_Triangle.SetRenderScene(scene);
+        }
+
+        /// Input: a finite right-handed camera pose supplied by the host.
+        /// Output: the next frame uses the corresponding view matrix.
+        /// Task: provide a narrow editor/game camera boundary without exposing
+        /// Vulkan camera buffers or requiring the renderer to process input.
+        void SetCameraPose(const CameraPose& pose)
+        {
+            m_Triangle.SetCameraPose(pose);
         }
 
         /// Input: renderer-neutral directional shadow controls.

@@ -54,6 +54,21 @@ TEST_CASE("Showcase camera produces Vulkan-depth projection and advances its mod
     CHECK(projection(3, 2) == -1.0f);
 }
 
+TEST_CASE("Renderer camera poses reject degenerate views and drive the view matrix", "[KairoRenderer][Camera]")
+{
+    CameraPose pose;
+    REQUIRE_NOTHROW(pose.Validate());
+    ShowcaseCamera camera;
+    const auto initial = camera.View();
+    pose.Position = { 6.0f, 3.0f, 2.0f };
+    pose.Target = { 1.0f, 0.0f, -1.0f };
+    camera.SetPose(pose);
+    CHECK(camera.View() != initial);
+
+    pose.Target = pose.Position;
+    REQUIRE_THROWS_AS(pose.Validate(), std::invalid_argument);
+}
+
 TEST_CASE("Debug draw emits deterministic AABB edges and axes", "[KairoRenderer][Debug]")
 {
     DebugDrawList draw;

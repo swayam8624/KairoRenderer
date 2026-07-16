@@ -97,6 +97,10 @@ export namespace kairo::renderer
             m_Draws = scene.Draws();
         }
 
+        /// Task: accept a host-controlled scene camera while retaining matrix
+        /// upload and native rendering ownership inside the Vulkan backend.
+        void SetCameraPose(const CameraPose& pose) { m_Camera.SetPose(pose); }
+
         /// Task: rebuild resources whose compatibility depends on the swapchain.
         void Recreate(const VulkanSwapchain& swapchain)
         {
