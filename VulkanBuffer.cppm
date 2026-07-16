@@ -77,6 +77,16 @@ export namespace kairo::renderer
             std::memcpy(m_Mapped, source, static_cast<std::size_t>(byteCount));
         }
 
+        /// Input: writable destination and requested byte count.
+        /// Output: a snapshot of host-coherent GPU-written storage.
+        /// Precondition: the queue operation writing this buffer has completed.
+        void Read(void* destination, VkDeviceSize byteCount) const
+        {
+            if (destination == nullptr || byteCount > m_Size)
+                throw std::invalid_argument("VulkanHostBuffer read exceeds its mapped storage.");
+            std::memcpy(destination, m_Mapped, static_cast<std::size_t>(byteCount));
+        }
+
     private:
         VkDevice m_Device = VK_NULL_HANDLE;
         VkBuffer m_Buffer = VK_NULL_HANDLE;

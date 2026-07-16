@@ -4,6 +4,7 @@ module;
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <stdexcept>
 #include <vector>
@@ -21,6 +22,7 @@ import Kairo.Renderer.VulkanCommand;
 import Kairo.Renderer.VulkanSync;
 import Kairo.Renderer.VulkanTriangle;
 import Kairo.Renderer.VulkanViewportTarget;
+import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.VulkanBackendContext;
 import Kairo.Renderer.Mesh;
@@ -50,7 +52,7 @@ export namespace kairo::renderer
     {
     public:
         explicit RendererRuntime(const WindowDesc& windowDesc)
-            : m_Glfw(), m_Window(windowDesc), m_Instance(MakeInstanceDesc(), RequiredExtensions()), m_Surface(m_Instance, m_Window), m_Device(m_Instance, m_Surface), m_Swapchain(m_Device, m_Surface, m_Window), m_Command(m_Device), m_Sync(m_Device, static_cast<std::uint32_t>(m_Swapchain.Images().size())), m_Triangle(m_Device, m_Swapchain)
+            : m_Glfw(), m_Window(windowDesc), m_Instance(MakeInstanceDesc(), RequiredExtensions()), m_Surface(m_Instance, m_Window), m_Device(m_Instance, m_Surface), m_Swapchain(m_Device, m_Surface, m_Window), m_Command(m_Device), m_Sync(m_Device, static_cast<std::uint32_t>(m_Swapchain.Images().size())), m_Triangle(m_Device, m_Swapchain), m_PickReadback(m_Device, sizeof(std::uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT)
         {
         }
 
@@ -72,6 +74,7 @@ export namespace kairo::renderer
             {
                 throw std::runtime_error("vkWaitForFences failed.");
             }
+            CompleteViewportPick();
 
             std::uint32_t imageIndex = 0;
             const VkResult acquire = vkAcquireNextImageKHR(
@@ -111,6 +114,11 @@ export namespace kairo::renderer
             if (vkQueueSubmit(m_Device.GraphicsQueue(), 1u, &submit, m_Sync.InFlight()) != VK_SUCCESS)
             {
                 throw std::runtime_error("vkQueueSubmit failed.");
+            }
+            if (m_PickRequested.has_value())
+            {
+                m_PickInFlight = true;
+                m_PickRequested.reset();
             }
 
             const VkSwapchainKHR swapchain = m_Swapchain.Handle();
@@ -213,6 +221,23 @@ export namespace kairo::renderer
             m_Triangle.ResizeViewport({ width, height });
         }
 
+        /// Input: physical pixel coordinates local to the sampled viewport.
+        /// Task: queue a non-blocking object-ID readback for the next frame.
+        /// Repeated requests before submission retain only the newest click.
+        void RequestViewportPick(std::uint32_t x, std::uint32_t y)
+        {
+            const VkExtent2D extent = m_Triangle.ViewportTexture().Extent;
+            if (x >= extent.width || y >= extent.height)
+                throw std::out_of_range("Viewport pick lies outside the render target.");
+            m_PickRequested = VkOffset2D{ static_cast<std::int32_t>(x), static_cast<std::int32_t>(y) };
+        }
+
+        /// Output: completed stable entity ID, where zero means background.
+        [[nodiscard]] std::optional<std::uint32_t> TakeViewportPickResult() noexcept
+        {
+            return std::exchange(m_PickResult, std::nullopt);
+        }
+
         /// Input: renderer-neutral owner supplies a callback that records only
         /// overlay draw commands. Passing an empty callback disables overlays.
         /// Task: integrate tooling UI into the existing scene pass and command
@@ -242,12 +267,27 @@ export namespace kairo::renderer
         VulkanCommandBuffer m_Command;
         VulkanFrameSync m_Sync;
         VulkanTriangle m_Triangle;
+        VulkanHostBuffer m_PickReadback;
         VulkanOverlayRecorder m_OverlayRecorder;
+        std::optional<VkOffset2D> m_PickRequested;
+        std::optional<std::uint32_t> m_PickResult;
+        bool m_PickInFlight = false;
 
         /// Task: record the complete mesh and debug-line render pass.
         void RecordFrameCommands(std::uint32_t imageIndex)
         {
-            m_Triangle.Record(m_Command, imageIndex, m_Swapchain.Extent(), m_OverlayRecorder);
+            m_Triangle.Record(m_Command, imageIndex, m_Swapchain.Extent(), m_OverlayRecorder,
+                m_PickRequested.has_value() ? m_PickReadback.Handle() : VK_NULL_HANDLE,
+                m_PickRequested);
+        }
+
+        void CompleteViewportPick()
+        {
+            if (!m_PickInFlight) return;
+            std::uint32_t id = 0u;
+            m_PickReadback.Read(&id, sizeof(id));
+            m_PickResult = id;
+            m_PickInFlight = false;
         }
 
         void RecreateSwapchain()

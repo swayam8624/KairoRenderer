@@ -11,6 +11,7 @@ module;
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -143,7 +144,9 @@ export namespace kairo::renderer
         /// Task: render the scene into the sampled editor viewport, then record
         /// tooling UI into the swapchain presentation pass.
         void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent,
-            const VulkanOverlayRecorder& overlayRecorder)
+            const VulkanOverlayRecorder& overlayRecorder,
+            VkBuffer pickDestination = VK_NULL_HANDLE,
+            std::optional<VkOffset2D> pickPixel = std::nullopt)
         {
             UpdateUniform(m_Viewport.Extent());
             UploadDebugVertices();
@@ -182,6 +185,16 @@ export namespace kairo::renderer
             DrawMeshes(command);
             DrawDebugLines(command);
             vkCmdEndRenderPass(command.Handle());
+
+            if (pickDestination != VK_NULL_HANDLE && pickPixel.has_value())
+            {
+                VkBufferImageCopy copy{};
+                copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u };
+                copy.imageOffset = { pickPixel->x, pickPixel->y, 0 };
+                copy.imageExtent = { 1u, 1u, 1u };
+                vkCmdCopyImageToBuffer(command.Handle(), m_Viewport.ObjectIDImage(),
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pickDestination, 1u, &copy);
+            }
 
             const VkClearValue presentationClear{ { { 0.018f, 0.021f, 0.027f, 1.0f } } };
             begin.renderPass = m_RenderPass;
