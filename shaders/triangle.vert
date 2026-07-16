@@ -8,6 +8,7 @@ layout(set = 0, binding = 0) uniform CameraMatrices {
     vec4 cameraPosition;
     mat4 lightViewProjection;
     vec4 shadowParameters;
+    vec4 viewportParameters;
 } camera;
 
 layout(push_constant) uniform DrawData {

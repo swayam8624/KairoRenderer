@@ -3,11 +3,34 @@ module;
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 export module Kairo.Renderer.Types;
 
 export namespace kairo::renderer
 {
+    /// Fragment presentation used by editor and diagnostic viewports. Values
+    /// are part of the CPU/GPU frame contract and must remain stable.
+    enum class ViewportShadingMode : std::uint32_t
+    {
+        Lit = 0u,
+        Unlit = 1u,
+        Normals = 2u,
+        Lighting = 3u
+    };
+
+    [[nodiscard]] constexpr std::string_view Name(ViewportShadingMode mode) noexcept
+    {
+        switch (mode)
+        {
+            case ViewportShadingMode::Lit: return "Lit";
+            case ViewportShadingMode::Unlit: return "Unlit";
+            case ViewportShadingMode::Normals: return "Normals";
+            case ViewportShadingMode::Lighting: return "Lighting";
+        }
+        return "Unknown";
+    }
+
     /// Input: window/application configuration.
     /// Output: deterministic native-window creation settings.
     /// Task: keep editor, samples, and future EngineCore applications on one

@@ -33,6 +33,14 @@ TEST_CASE("Viewport captures reject uniform and malformed pixel evidence", "[Kai
     CHECK_FALSE(capture.IsVisuallyNonUniform());
 }
 
+TEST_CASE("Viewport shading modes expose stable diagnostic names", "[KairoRenderer][Viewport]")
+{
+    CHECK(Name(ViewportShadingMode::Lit) == "Lit");
+    CHECK(Name(ViewportShadingMode::Unlit) == "Unlit");
+    CHECK(Name(ViewportShadingMode::Normals) == "Normals");
+    CHECK(Name(ViewportShadingMode::Lighting) == "Lighting");
+}
+
 TEST_CASE("Directional shadow settings reject unsafe runtime tuning", "[KairoRenderer][Shadow]")
 {
     DirectionalShadowSettings settings;

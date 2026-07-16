@@ -232,6 +232,19 @@ export namespace kairo::renderer
             return m_Triangle.DirectionalShadows();
         }
 
+        /// Input: one diagnostic shading policy.
+        /// Task: switch the sampled editor viewport without rebuilding Vulkan
+        /// pipelines or changing the submitted scene.
+        void SetViewportShadingMode(ViewportShadingMode mode) noexcept
+        {
+            m_Triangle.SetViewportShadingMode(mode);
+        }
+
+        [[nodiscard]] ViewportShadingMode ViewportShading() const noexcept
+        {
+            return m_Triangle.ViewportShading();
+        }
+
         /// Output: borrowed sampled scene texture for native editor backends.
         /// The generation changes after ResizeViewport replaces image views.
         [[nodiscard]] VulkanViewportTexture ViewportTexture() const noexcept

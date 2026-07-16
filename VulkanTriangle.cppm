@@ -23,6 +23,7 @@ import Kairo.Renderer.Camera;
 import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.Mesh;
 import Kairo.Renderer.RenderScene;
+import Kairo.Renderer.Types;
 import Kairo.Renderer.ShadowSettings;
 import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.VulkanCommand;
@@ -139,6 +140,9 @@ export namespace kairo::renderer
             return m_ShadowSettings;
         }
 
+        void SetViewportShadingMode(ViewportShadingMode mode) noexcept { m_ShadingMode = mode; }
+        [[nodiscard]] ViewportShadingMode ViewportShading() const noexcept { return m_ShadingMode; }
+
         /// Precondition: imageIndex belongs to the current swapchain and the
         /// caller has waited for this command buffer's completion fence.
         /// Task: render the scene into the sampled editor viewport, then record
@@ -243,7 +247,7 @@ export namespace kairo::renderer
 
     private:
         /// std140-compatible view/projection plus directional-light data.
-        struct CameraUniform final { std::array<float, 64> Values{}; };
+        struct CameraUniform final { std::array<float, 68> Values{}; };
         /// 64-byte model + three padded normal columns + 16-byte tint exactly
         /// fit Vulkan's guaranteed minimum 128-byte push-constant capacity.
         struct MeshPushConstants final { std::array<float, 32> Values{}; };
@@ -272,6 +276,7 @@ export namespace kairo::renderer
         VulkanViewportTarget m_Viewport;
         ShowcaseCamera m_Camera;
         DirectionalShadowSettings m_ShadowSettings;
+        ViewportShadingMode m_ShadingMode = ViewportShadingMode::Lit;
         std::vector<VkFramebuffer> m_Framebuffers;
         std::unordered_map<MeshHandle, GpuMesh> m_Meshes;
         std::vector<MeshDraw> m_Draws;
@@ -611,6 +616,7 @@ export namespace kairo::renderer
             uniform.Values[61u] = m_ShadowSettings.Strength;
             uniform.Values[62u] = 1.0f / static_cast<float>(m_ShadowMap.Resolution());
             uniform.Values[63u] = m_ShadowSettings.ReceiverBias;
+            uniform.Values[64u] = static_cast<float>(m_ShadingMode);
             m_UniformBuffer.Write(&uniform, sizeof(uniform));
         }
 

@@ -15,6 +15,7 @@ layout(set = 0, binding = 0) uniform CameraMatrices {
     vec4 cameraPosition;
     mat4 lightViewProjection;
     vec4 shadowParameters;
+    vec4 viewportParameters;
 } camera;
 
 layout(set = 0, binding = 1) uniform sampler2D shadowMap;
@@ -97,6 +98,26 @@ void main()
     const vec3 diffuseWeight = (vec3(1.0) - fresnel) * (1.0 - metallic);
     const vec3 radiance = vec3(camera.lightDirectionAndIntensity.w);
     const float shadowVisibility = DirectionalShadowVisibility(normal, lightDirection);
+    const int shadingMode = int(camera.viewportParameters.x + 0.5);
+    if (shadingMode == 1)
+    {
+        outColor = vec4(clamp(baseColor, vec3(0.0), vec3(1.0)), 1.0);
+        outObjectID = floatBitsToUint(draw.tint.a);
+        return;
+    }
+    if (shadingMode == 2)
+    {
+        outColor = vec4(normal * 0.5 + 0.5, 1.0);
+        outObjectID = floatBitsToUint(draw.tint.a);
+        return;
+    }
+    if (shadingMode == 3)
+    {
+        const float illumination = clamp(nDotL * shadowVisibility, 0.0, 1.0);
+        outColor = vec4(vec3(illumination), 1.0);
+        outObjectID = floatBitsToUint(draw.tint.a);
+        return;
+    }
     const vec3 direct = (diffuseWeight * baseColor / Pi + specular) * radiance * nDotL * shadowVisibility;
     const vec3 ambient = camera.ambient.rgb * baseColor * ambientOcclusion;
     const vec3 hdrColor = ambient + direct;
