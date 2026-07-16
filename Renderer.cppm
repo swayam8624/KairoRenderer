@@ -20,6 +20,7 @@ import Kairo.Renderer.VulkanSwapchain;
 import Kairo.Renderer.VulkanCommand;
 import Kairo.Renderer.VulkanSync;
 import Kairo.Renderer.VulkanTriangle;
+import Kairo.Renderer.VulkanViewportTarget;
 import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.VulkanBackendContext;
 import Kairo.Renderer.Mesh;
@@ -190,6 +191,26 @@ export namespace kairo::renderer
         [[nodiscard]] const DirectionalShadowSettings& DirectionalShadows() const noexcept
         {
             return m_Triangle.DirectionalShadows();
+        }
+
+        /// Output: borrowed sampled scene texture for native editor backends.
+        /// The generation changes after ResizeViewport replaces image views.
+        [[nodiscard]] VulkanViewportTexture ViewportTexture() const noexcept
+        {
+            return m_Triangle.ViewportTexture();
+        }
+
+        /// Input: physical-pixel dimensions requested by the editor panel.
+        /// Task: resize only the offscreen scene target. One frame in flight
+        /// makes a device idle point simple and correct for this boundary.
+        void ResizeViewport(std::uint32_t width, std::uint32_t height)
+        {
+            const auto current = m_Triangle.ViewportTexture().Extent;
+            if (current.width == width && current.height == height) return;
+            if (width == 0u || height == 0u) return;
+            if (vkDeviceWaitIdle(m_Device.Handle()) != VK_SUCCESS)
+                throw std::runtime_error("vkDeviceWaitIdle failed before editor viewport resize.");
+            m_Triangle.ResizeViewport({ width, height });
         }
 
         /// Input: renderer-neutral owner supplies a callback that records only

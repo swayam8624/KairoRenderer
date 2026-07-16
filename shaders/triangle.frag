@@ -5,6 +5,7 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec3 inWorldPosition;
 layout(location = 3) in vec4 inLightClipPosition;
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out uint outObjectID;
 
 layout(set = 0, binding = 0) uniform CameraMatrices {
     mat4 view;
@@ -100,4 +101,5 @@ void main()
     const vec3 ambient = camera.ambient.rgb * baseColor * ambientOcclusion;
     const vec3 hdrColor = ambient + direct;
     outColor = vec4(hdrColor / (hdrColor + vec3(1.0)), 1.0);
+    outObjectID = floatBitsToUint(draw.tint.a);
 }

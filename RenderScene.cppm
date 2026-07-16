@@ -29,6 +29,9 @@ export namespace kairo::renderer
         MeshHandle Mesh = InvalidMeshHandle;
         kairo::foundation::math::Mat4f Model = kairo::foundation::math::Mat4f::Identity();
         PBRMaterial Material{};
+        /// Zero means non-pickable. Editor scene extraction supplies stable
+        /// scene entity IDs; runtime-only draws may deliberately leave it zero.
+        std::uint32_t ObjectID = 0u;
     };
 
     /// Input: finite object-to-world matrix with a non-singular linear part.

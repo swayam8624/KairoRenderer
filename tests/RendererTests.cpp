@@ -131,8 +131,11 @@ TEST_CASE("Renderer mesh consumes the shared portable asset contract", "[KairoRe
 TEST_CASE("Render scenes validate draw handles transforms and tints", "[KairoRenderer][Scene]")
 {
     RenderScene scene;
-    scene.Add({ 1u });
+    MeshDraw identifiedDraw{ 1u };
+    identifiedDraw.ObjectID = 42u;
+    scene.Add(identifiedDraw);
     REQUIRE(scene.Draws().size() == 1u);
+    CHECK(scene.Draws().front().ObjectID == 42u);
     REQUIRE_THROWS(scene.Add({ InvalidMeshHandle }));
 
     MeshDraw invalidMatrix{ 1u };

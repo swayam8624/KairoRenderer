@@ -149,6 +149,7 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     VulkanBuffer.cppm
     VulkanDescriptor.cppm
     VulkanDepth.cppm
+    VulkanViewportTarget.cppm
     VulkanShadowMap.cppm
     VulkanBackendContext.cppm
     VulkanTriangle.cppm

@@ -16,6 +16,7 @@ export import Kairo.Renderer.VulkanSync;
 export import Kairo.Renderer.VulkanBuffer;
 export import Kairo.Renderer.VulkanDescriptor;
 export import Kairo.Renderer.VulkanDepth;
+export import Kairo.Renderer.VulkanViewportTarget;
 export import Kairo.Renderer.VulkanShadowMap;
 export import Kairo.Renderer.VulkanBackendContext;
 export import Kairo.Renderer.VulkanTriangle;

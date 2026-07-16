@@ -4,6 +4,7 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -24,11 +25,11 @@ import Kairo.Renderer.RenderScene;
 import Kairo.Renderer.ShadowSettings;
 import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.VulkanCommand;
-import Kairo.Renderer.VulkanDepth;
 import Kairo.Renderer.VulkanDescriptor;
 import Kairo.Renderer.VulkanDevice;
 import Kairo.Renderer.VulkanSwapchain;
 import Kairo.Renderer.VulkanShadowMap;
+import Kairo.Renderer.VulkanViewportTarget;
 import Kairo.Renderer.VulkanBackendContext;
 import Kairo.Foundation.Math;
 
@@ -45,7 +46,7 @@ export namespace kairo::renderer
               m_UniformBuffer(device, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
               m_ShadowMap(device, 2048u),
               m_UniformDescriptor(device, m_UniformBuffer, sizeof(CameraUniform), m_ShadowMap.View(), m_ShadowMap.Sampler()),
-              m_Depth(device, swapchain.Extent())
+              m_Viewport(device, swapchain.Extent())
         {
             Create(swapchain);
         }
@@ -105,7 +106,6 @@ export namespace kairo::renderer
         void Recreate(const VulkanSwapchain& swapchain)
         {
             Destroy();
-            m_Depth.Recreate(swapchain.Extent());
             Create(swapchain);
         }
 
@@ -113,6 +113,16 @@ export namespace kairo::renderer
         void ReleaseSwapchainResources() noexcept { Destroy(); }
 
         [[nodiscard]] VkRenderPass RenderPass() const noexcept { return m_RenderPass; }
+
+        [[nodiscard]] VulkanViewportTexture ViewportTexture() const noexcept
+        {
+            return m_Viewport.Texture();
+        }
+
+        /// Precondition: the renderer has idled the device. Scene pipelines are
+        /// render-pass compatible across viewport sizes, so only attachment
+        /// storage and the framebuffer are rebuilt.
+        void ResizeViewport(VkExtent2D extent) { m_Viewport.Resize(extent); }
 
         /// Input: validated user-facing directional shadow controls.
         /// Task: update bias and visibility policy without rebuilding GPU
@@ -130,12 +140,12 @@ export namespace kairo::renderer
 
         /// Precondition: imageIndex belongs to the current swapchain and the
         /// caller has waited for this command buffer's completion fence.
-        /// Task: render submitted mesh draws, debug lines, and an optional
-        /// tooling overlay into one depth-capable presentation pass.
+        /// Task: render the scene into the sampled editor viewport, then record
+        /// tooling UI into the swapchain presentation pass.
         void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent,
             const VulkanOverlayRecorder& overlayRecorder)
         {
-            UpdateUniform(extent);
+            UpdateUniform(m_Viewport.Extent());
             UploadDebugVertices();
 
             command.Begin();
@@ -143,28 +153,48 @@ export namespace kairo::renderer
             // pass can consume its descriptor. Enabled controls attenuation,
             // not resource validity, so toggling it before frame one is safe.
             if (!m_Draws.empty()) DrawDirectionalShadowMap(command);
-            const std::array<VkClearValue, 2> clear{ VkClearValue{ { { 0.025f, 0.055f, 0.11f, 1.0f } } }, VkClearValue{ { 1.0f, 0u } } };
+            VkClearValue colorClear{};
+            colorClear.color = { { 0.035f, 0.055f, 0.075f, 1.0f } };
+            VkClearValue objectClear{};
+            objectClear.color.uint32[0] = 0u;
+            VkClearValue depthClear{};
+            depthClear.depthStencil = { 1.0f, 0u };
+            const std::array sceneClear{ colorClear, objectClear, depthClear };
             VkRenderPassBeginInfo begin{};
             begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            begin.renderPass = m_RenderPass;
-            begin.framebuffer = m_Framebuffers.at(imageIndex);
-            begin.renderArea.extent = extent;
-            begin.clearValueCount = static_cast<std::uint32_t>(clear.size());
-            begin.pClearValues = clear.data();
+            begin.renderPass = m_Viewport.RenderPass();
+            begin.framebuffer = m_Viewport.Framebuffer();
+            begin.renderArea.extent = m_Viewport.Extent();
+            begin.clearValueCount = static_cast<std::uint32_t>(sceneClear.size());
+            begin.pClearValues = sceneClear.data();
             vkCmdBeginRenderPass(command.Handle(), &begin, VK_SUBPASS_CONTENTS_INLINE);
 
             VkViewport viewport{};
-            viewport.width = static_cast<float>(extent.width);
-            viewport.height = static_cast<float>(extent.height);
+            viewport.width = static_cast<float>(m_Viewport.Extent().width);
+            viewport.height = static_cast<float>(m_Viewport.Extent().height);
             viewport.minDepth = 0.0f;
             viewport.maxDepth = 1.0f;
             VkRect2D scissor{};
-            scissor.extent = extent;
+            scissor.extent = m_Viewport.Extent();
             vkCmdSetViewport(command.Handle(), 0u, 1u, &viewport);
             vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
 
             DrawMeshes(command);
             DrawDebugLines(command);
+            vkCmdEndRenderPass(command.Handle());
+
+            const VkClearValue presentationClear{ { { 0.018f, 0.021f, 0.027f, 1.0f } } };
+            begin.renderPass = m_RenderPass;
+            begin.framebuffer = m_Framebuffers.at(imageIndex);
+            begin.renderArea.extent = extent;
+            begin.clearValueCount = 1u;
+            begin.pClearValues = &presentationClear;
+            vkCmdBeginRenderPass(command.Handle(), &begin, VK_SUBPASS_CONTENTS_INLINE);
+            viewport.width = static_cast<float>(extent.width);
+            viewport.height = static_cast<float>(extent.height);
+            scissor.extent = extent;
+            vkCmdSetViewport(command.Handle(), 0u, 1u, &viewport);
+            vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
             if (overlayRecorder) overlayRecorder(command.Handle());
             vkCmdEndRenderPass(command.Handle());
             command.End();
@@ -198,7 +228,7 @@ export namespace kairo::renderer
         VulkanHostBuffer m_UniformBuffer;
         VulkanDirectionalShadowMap m_ShadowMap;
         VulkanUniformDescriptor m_UniformDescriptor;
-        VulkanDepthAttachment m_Depth;
+        VulkanViewportTarget m_Viewport;
         ShowcaseCamera m_Camera;
         DirectionalShadowSettings m_ShadowSettings;
         std::vector<VkFramebuffer> m_Framebuffers;
@@ -225,24 +255,18 @@ export namespace kairo::renderer
             VkAttachmentDescription color{};
             color.format = format; color.samples = VK_SAMPLE_COUNT_1_BIT; color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
             color.storeOp = VK_ATTACHMENT_STORE_OP_STORE; color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-            VkAttachmentDescription depth{};
-            depth.format = m_Depth.Format(); depth.samples = VK_SAMPLE_COUNT_1_BIT; depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE; depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             VkAttachmentReference colorReference{ 0u, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
-            VkAttachmentReference depthReference{ 1u, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
             VkSubpassDescription subpass{};
             subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; subpass.colorAttachmentCount = 1u;
-            subpass.pColorAttachments = &colorReference; subpass.pDepthStencilAttachment = &depthReference;
+            subpass.pColorAttachments = &colorReference;
             VkSubpassDependency dependency{};
             dependency.srcSubpass = VK_SUBPASS_EXTERNAL; dependency.dstSubpass = 0u;
             dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            const std::array attachments{ color, depth };
             VkRenderPassCreateInfo create{};
-            create.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO; create.attachmentCount = static_cast<std::uint32_t>(attachments.size());
-            create.pAttachments = attachments.data(); create.subpassCount = 1u; create.pSubpasses = &subpass;
+            create.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO; create.attachmentCount = 1u;
+            create.pAttachments = &color; create.subpassCount = 1u; create.pSubpasses = &subpass;
             create.dependencyCount = 1u; create.pDependencies = &dependency;
             if (vkCreateRenderPass(m_Device, &create, nullptr, &m_RenderPass) != VK_SUCCESS) throw std::runtime_error("vkCreateRenderPass failed.");
         }
@@ -251,10 +275,9 @@ export namespace kairo::renderer
         {
             for (const VkImageView imageView : swapchain.ImageViews())
             {
-                const std::array attachments{ imageView, m_Depth.View() };
                 VkFramebufferCreateInfo create{};
                 create.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO; create.renderPass = m_RenderPass;
-                create.attachmentCount = static_cast<std::uint32_t>(attachments.size()); create.pAttachments = attachments.data();
+                create.attachmentCount = 1u; create.pAttachments = &imageView;
                 create.width = swapchain.Extent().width; create.height = swapchain.Extent().height; create.layers = 1u;
                 VkFramebuffer framebuffer = VK_NULL_HANDLE;
                 if (vkCreateFramebuffer(m_Device, &create, nullptr, &framebuffer) != VK_SUCCESS) throw std::runtime_error("vkCreateFramebuffer failed.");
@@ -400,7 +423,9 @@ export namespace kairo::renderer
             VkPipelineColorBlendAttachmentState attachment{};
             attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
             VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-            blend.attachmentCount = 1u; blend.pAttachments = &attachment;
+            const std::array blendAttachments{ attachment, attachment };
+            blend.attachmentCount = static_cast<std::uint32_t>(blendAttachments.size());
+            blend.pAttachments = blendAttachments.data();
             const std::array dynamicStates{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
             VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
             dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size()); dynamic.pDynamicStates = dynamicStates.data();
@@ -408,7 +433,7 @@ export namespace kairo::renderer
             create.stageCount = static_cast<std::uint32_t>(stages.size()); create.pStages = stages.data(); create.pVertexInputState = &vertexInput;
             create.pInputAssemblyState = &assembly; create.pViewportState = &viewport; create.pRasterizationState = &rasterizer;
             create.pMultisampleState = &multisampling; create.pDepthStencilState = &depth; create.pColorBlendState = &blend;
-            create.pDynamicState = &dynamic; create.layout = m_Layout; create.renderPass = m_RenderPass;
+            create.pDynamicState = &dynamic; create.layout = m_Layout; create.renderPass = m_Viewport.RenderPass();
             VkPipeline pipeline = VK_NULL_HANDLE;
             if (vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1u, &create, nullptr, &pipeline) != VK_SUCCESS) throw std::runtime_error("vkCreateGraphicsPipelines failed.");
             return pipeline;
@@ -488,7 +513,7 @@ export namespace kairo::renderer
                 push.Values[28u] = draw.Material.BaseColor.x;
                 push.Values[29u] = draw.Material.BaseColor.y;
                 push.Values[30u] = draw.Material.BaseColor.z;
-                push.Values[31u] = 1.0f;
+                push.Values[31u] = std::bit_cast<float>(draw.ObjectID);
                 vkCmdPushConstants(command.Handle(), m_Layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                     0u, sizeof(push), &push);
                 const VkBuffer vertexBuffer = mesh.Vertices->Handle();
