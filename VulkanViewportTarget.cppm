@@ -67,6 +67,7 @@ export namespace kairo::renderer
         [[nodiscard]] VkFramebuffer Framebuffer() const noexcept { return m_Framebuffer; }
         [[nodiscard]] VkExtent2D Extent() const noexcept { return m_Extent; }
         [[nodiscard]] VkImage ObjectIDImage() const noexcept { return m_ObjectID.Image; }
+        [[nodiscard]] VkImage ColorImage() const noexcept { return m_Color.Image; }
         [[nodiscard]] static constexpr VkFormat ColorFormat() noexcept { return VK_FORMAT_R16G16B16A16_SFLOAT; }
         [[nodiscard]] static constexpr VkFormat ObjectIDFormat() noexcept { return VK_FORMAT_R32_UINT; }
         [[nodiscard]] static constexpr VkFormat DepthFormat() noexcept { return VK_FORMAT_D32_SFLOAT; }
@@ -209,7 +210,8 @@ export namespace kairo::renderer
         {
             m_Extent = extent;
             CreateAttachment(m_Color, ColorFormat(), VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
             CreateAttachment(m_ObjectID, ObjectIDFormat(), VK_IMAGE_ASPECT_COLOR_BIT,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
             CreateAttachment(m_Depth, DepthFormat(), VK_IMAGE_ASPECT_DEPTH_BIT,

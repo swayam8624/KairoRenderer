@@ -146,7 +146,8 @@ export namespace kairo::renderer
         void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent,
             const VulkanOverlayRecorder& overlayRecorder,
             VkBuffer pickDestination = VK_NULL_HANDLE,
-            std::optional<VkOffset2D> pickPixel = std::nullopt)
+            std::optional<VkOffset2D> pickPixel = std::nullopt,
+            VkBuffer captureDestination = VK_NULL_HANDLE)
         {
             UpdateUniform(m_Viewport.Extent());
             UploadDebugVertices();
@@ -194,6 +195,33 @@ export namespace kairo::renderer
                 copy.imageExtent = { 1u, 1u, 1u };
                 vkCmdCopyImageToBuffer(command.Handle(), m_Viewport.ObjectIDImage(),
                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pickDestination, 1u, &copy);
+            }
+            if (captureDestination != VK_NULL_HANDLE)
+            {
+                VkImageMemoryBarrier toTransfer{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+                toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                toTransfer.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                toTransfer.image = m_Viewport.ColorImage();
+                toTransfer.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u };
+                vkCmdPipelineBarrier(command.Handle(), VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0u, 0u, nullptr, 0u, nullptr, 1u, &toTransfer);
+
+                VkBufferImageCopy copy{};
+                copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u };
+                copy.imageExtent = { m_Viewport.Extent().width, m_Viewport.Extent().height, 1u };
+                vkCmdCopyImageToBuffer(command.Handle(), m_Viewport.ColorImage(),
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, captureDestination, 1u, &copy);
+
+                toTransfer.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                toTransfer.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                toTransfer.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                toTransfer.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                vkCmdPipelineBarrier(command.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0u, 0u, nullptr, 0u, nullptr, 1u, &toTransfer);
             }
 
             const VkClearValue presentationClear{ { { 0.018f, 0.021f, 0.027f, 1.0f } } };

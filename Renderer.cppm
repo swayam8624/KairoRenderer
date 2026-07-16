@@ -3,10 +3,14 @@ module;
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
+#include <memory>
 #include <optional>
-#include <utility>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 export module Kairo.Renderer.Runtime;
@@ -39,6 +43,27 @@ export namespace kairo::renderer
     {
     public:
         using std::runtime_error::runtime_error;
+    };
+
+    struct ViewportCapture final
+    {
+        std::uint32_t Width = 0u;
+        std::uint32_t Height = 0u;
+        std::vector<std::uint8_t> RGBA;
+
+        [[nodiscard]] bool IsVisuallyNonUniform(std::uint8_t minimumRange = 4u) const noexcept
+        {
+            if (RGBA.size() != static_cast<std::size_t>(Width) * Height * 4u || RGBA.empty()) return false;
+            std::uint8_t minimum = 255u;
+            std::uint8_t maximum = 0u;
+            for (std::size_t index = 0u; index < RGBA.size(); index += 4u)
+                for (std::size_t channel = 0u; channel < 3u; ++channel)
+                {
+                    minimum = std::min(minimum, RGBA[index + channel]);
+                    maximum = std::max(maximum, RGBA[index + channel]);
+                }
+            return static_cast<unsigned>(maximum) - minimum >= minimumRange;
+        }
     };
 
     /// Input: native window description.
@@ -75,6 +100,7 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkWaitForFences failed.");
             }
             CompleteViewportPick();
+            CompleteViewportCapture();
 
             std::uint32_t imageIndex = 0;
             const VkResult acquire = vkAcquireNextImageKHR(
@@ -119,6 +145,11 @@ export namespace kairo::renderer
             {
                 m_PickInFlight = true;
                 m_PickRequested.reset();
+            }
+            if (m_CaptureRequested)
+            {
+                m_CaptureRequested = false;
+                m_CaptureInFlight = true;
             }
 
             const VkSwapchainKHR swapchain = m_Swapchain.Handle();
@@ -238,6 +269,25 @@ export namespace kairo::renderer
             return std::exchange(m_PickResult, std::nullopt);
         }
 
+        /// Task: queue one complete HDR viewport readback without stalling the
+        /// current frame. Completion is available after the next fence wait.
+        void RequestViewportCapture()
+        {
+            if (m_CaptureRequested || m_CaptureInFlight)
+                throw std::logic_error("A viewport capture is already pending.");
+            const VkExtent2D extent = m_Triangle.ViewportTexture().Extent;
+            const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 8u;
+            m_CaptureReadback = std::make_unique<VulkanHostBuffer>(
+                m_Device, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            m_CaptureExtent = extent;
+            m_CaptureRequested = true;
+        }
+
+        [[nodiscard]] std::optional<ViewportCapture> TakeViewportCapture() noexcept
+        {
+            return std::exchange(m_CaptureResult, std::nullopt);
+        }
+
         /// Input: renderer-neutral owner supplies a callback that records only
         /// overlay draw commands. Passing an empty callback disables overlays.
         /// Task: integrate tooling UI into the existing scene pass and command
@@ -272,13 +322,19 @@ export namespace kairo::renderer
         std::optional<VkOffset2D> m_PickRequested;
         std::optional<std::uint32_t> m_PickResult;
         bool m_PickInFlight = false;
+        std::unique_ptr<VulkanHostBuffer> m_CaptureReadback;
+        VkExtent2D m_CaptureExtent{};
+        std::optional<ViewportCapture> m_CaptureResult;
+        bool m_CaptureRequested = false;
+        bool m_CaptureInFlight = false;
 
         /// Task: record the complete mesh and debug-line render pass.
         void RecordFrameCommands(std::uint32_t imageIndex)
         {
             m_Triangle.Record(m_Command, imageIndex, m_Swapchain.Extent(), m_OverlayRecorder,
                 m_PickRequested.has_value() ? m_PickReadback.Handle() : VK_NULL_HANDLE,
-                m_PickRequested);
+                m_PickRequested,
+                m_CaptureRequested ? m_CaptureReadback->Handle() : VK_NULL_HANDLE);
         }
 
         void CompleteViewportPick()
@@ -288,6 +344,45 @@ export namespace kairo::renderer
             m_PickReadback.Read(&id, sizeof(id));
             m_PickResult = id;
             m_PickInFlight = false;
+        }
+
+        [[nodiscard]] static float HalfToFloat(std::uint16_t half) noexcept
+        {
+            const bool negative = (half & 0x8000u) != 0u;
+            const std::uint16_t exponent = (half >> 10u) & 0x1fu;
+            const std::uint16_t mantissa = half & 0x03ffu;
+            float value = 0.0f;
+            if (exponent == 0u) value = std::ldexp(static_cast<float>(mantissa), -24);
+            else if (exponent == 31u) value = mantissa == 0u
+                ? std::numeric_limits<float>::infinity() : std::numeric_limits<float>::quiet_NaN();
+            else value = std::ldexp(1.0f + static_cast<float>(mantissa) / 1024.0f,
+                static_cast<int>(exponent) - 15);
+            return negative ? -value : value;
+        }
+
+        void CompleteViewportCapture()
+        {
+            if (!m_CaptureInFlight) return;
+            const std::size_t pixelCount = static_cast<std::size_t>(m_CaptureExtent.width) * m_CaptureExtent.height;
+            std::vector<std::uint16_t> source(pixelCount * 4u);
+            m_CaptureReadback->Read(source.data(), source.size() * sizeof(std::uint16_t));
+            ViewportCapture capture{ m_CaptureExtent.width, m_CaptureExtent.height,
+                std::vector<std::uint8_t>(pixelCount * 4u) };
+            for (std::size_t index = 0u; index < pixelCount; ++index)
+            {
+                for (std::size_t channel = 0u; channel < 3u; ++channel)
+                {
+                    float linear = HalfToFloat(source[index * 4u + channel]);
+                    if (!std::isfinite(linear)) linear = 0.0f;
+                    linear = std::clamp(linear, 0.0f, 1.0f);
+                    capture.RGBA[index * 4u + channel] = static_cast<std::uint8_t>(
+                        std::lround(std::pow(linear, 1.0f / 2.2f) * 255.0f));
+                }
+                capture.RGBA[index * 4u + 3u] = 255u;
+            }
+            m_CaptureResult = std::move(capture);
+            m_CaptureReadback.reset();
+            m_CaptureInFlight = false;
         }
 
         void RecreateSwapchain()

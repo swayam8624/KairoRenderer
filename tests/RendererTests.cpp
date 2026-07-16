@@ -23,6 +23,16 @@ TEST_CASE("Vulkan backend snapshots reject incomplete integration handles", "[Ka
     CHECK_FALSE(static_cast<bool>(recorder));
 }
 
+TEST_CASE("Viewport captures reject uniform and malformed pixel evidence", "[KairoRenderer][Viewport]")
+{
+    ViewportCapture capture{ 2u, 1u, { 10u, 10u, 10u, 255u, 40u, 10u, 10u, 255u } };
+    CHECK(capture.IsVisuallyNonUniform());
+    capture.RGBA = { 10u, 10u, 10u, 255u, 10u, 10u, 10u, 255u };
+    CHECK_FALSE(capture.IsVisuallyNonUniform());
+    capture.RGBA.pop_back();
+    CHECK_FALSE(capture.IsVisuallyNonUniform());
+}
+
 TEST_CASE("Directional shadow settings reject unsafe runtime tuning", "[KairoRenderer][Shadow]")
 {
     DirectionalShadowSettings settings;
