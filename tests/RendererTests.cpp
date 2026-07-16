@@ -87,6 +87,20 @@ TEST_CASE("Indexed mesh validates topology and exposes a complete cube", "[Kairo
     REQUIRE_THROWS(Mesh({ {{ 0.0f, 0.0f, 0.0f }, {} } }, { 0u, 1u, 0u }));
 }
 
+TEST_CASE("Renderer primitive mesh factories expose valid blockout geometry", "[KairoRenderer][Mesh]")
+{
+    const Mesh plane = Mesh::MakePlane();
+    const Mesh sphere = Mesh::MakeUVSphere(8u, 12u);
+    const Mesh cylinder = Mesh::MakeCylinder(12u);
+    CHECK(plane.Indices().size() == 6u);
+    CHECK_FALSE(sphere.Vertices().empty());
+    CHECK(sphere.Indices().size() == 8u * 12u * 6u);
+    CHECK_FALSE(cylinder.Vertices().empty());
+    CHECK(cylinder.Indices().size() == 12u * 12u);
+    REQUIRE_THROWS_AS(Mesh::MakeUVSphere(2u, 12u), std::invalid_argument);
+    REQUIRE_THROWS_AS(Mesh::MakeCylinder(2u), std::invalid_argument);
+}
+
 TEST_CASE("Renderer mesh consumes the shared portable asset contract", "[KairoRenderer][Mesh][Assets]")
 {
     kairo::assets::MeshArtifactData artifact;
