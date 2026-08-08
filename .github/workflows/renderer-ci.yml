@@ -1,0 +1,71 @@
+name: KairoRenderer CI
+
+on:
+  push:
+    branches: [main, agent/complete-roadmap]
+  pull_request:
+
+jobs:
+  ubuntu:
+    name: Ubuntu Clang
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain and Vulkan dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build libglfw3-dev libvulkan-dev glslang-tools
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=OFF
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  macos:
+    name: macOS LLVM
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install toolchain and Vulkan dependencies
+        run: brew install llvm ninja glfw vulkan-loader vulkan-headers glslang molten-vk
+      - name: Configure
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          export CC="$(brew --prefix llvm)/bin/clang"
+          export CXX="$(brew --prefix llvm)/bin/clang++"
+          export CMAKE_PREFIX_PATH="$(brew --prefix glfw);$(brew --prefix vulkan-loader);$(brew --prefix molten-vk)"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=OFF
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        env:
+          VK_ICD_FILENAMES: /opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows MSVC
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          vcpkg install glfw3:x64-windows
+          choco install vulkan-sdk --yes --no-progress
+          "VCPKG_ROOT=$env:VCPKG_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=OFF
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --parallel 2
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir build --output-on-failure
