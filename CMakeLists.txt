@@ -135,6 +135,8 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     RendererTypes.cppm
     Camera.cppm
     Mesh.cppm
+    Texture.cppm
+    AssetAdapters.cppm
     Material.cppm
     ShadowSettings.cppm
     RenderScene.cppm
@@ -147,6 +149,7 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     VulkanCommand.cppm
     VulkanSync.cppm
     VulkanBuffer.cppm
+    VulkanTexture.cppm
     VulkanDescriptor.cppm
     VulkanDepth.cppm
     VulkanViewportTarget.cppm

@@ -37,7 +37,10 @@ export namespace kairo::renderer
             for (const VkPhysicalDevice candidate : devices)
             {
                 const auto queues = FindQueues(candidate, surface.Handle());
-                if (queues && HasExtension(candidate, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+                VkPhysicalDeviceFeatures supportedFeatures{};
+                vkGetPhysicalDeviceFeatures(candidate, &supportedFeatures);
+                if (queues && HasExtension(candidate, VK_KHR_SWAPCHAIN_EXTENSION_NAME) &&
+                    supportedFeatures.independentBlend == VK_TRUE)
                 {
                     m_PhysicalDevice = candidate;
                     m_GraphicsFamily = queues->Graphics;
@@ -47,7 +50,9 @@ export namespace kairo::renderer
             }
             if (m_PhysicalDevice == VK_NULL_HANDLE)
             {
-                throw std::runtime_error("No Vulkan device supports graphics, presentation, and VK_KHR_swapchain.");
+                throw std::runtime_error(
+                    "No Vulkan device supports graphics, presentation, VK_KHR_swapchain, "
+                    "and independent color-attachment blending.");
             }
 
             const float priority = 1.0f;
@@ -68,6 +73,9 @@ export namespace kairo::renderer
                 extensions.push_back(VulkanPortabilitySubsetExtension);
             }
             VkPhysicalDeviceFeatures features{};
+            // The viewport writes shaded color and integer object IDs in one
+            // subpass. Transparent color must blend while IDs remain exact.
+            features.independentBlend = VK_TRUE;
             VkDeviceCreateInfo create{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
             create.queueCreateInfoCount = static_cast<std::uint32_t>(queueInfos.size());
             create.pQueueCreateInfos = queueInfos.data();

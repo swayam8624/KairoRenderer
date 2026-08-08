@@ -3,6 +3,8 @@ export import Kairo.Renderer.Types;
 export import Kairo.Renderer.Camera;
 export import Kairo.Renderer.Mesh;
 export import Kairo.Renderer.Material;
+export import Kairo.Renderer.Texture;
+export import Kairo.Renderer.AssetAdapters;
 export import Kairo.Renderer.ShadowSettings;
 export import Kairo.Renderer.RenderScene;
 export import Kairo.Renderer.DebugDraw;

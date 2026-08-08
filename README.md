@@ -7,21 +7,36 @@ debug draw, and later editor rendering.
 
 ## Current milestone
 
-M10 directional shadows are complete: GLFW window ownership, Vulkan instance and surface creation,
+M13 shared authored content is complete: GLFW window ownership, Vulkan instance and surface creation,
 device/queue selection, swapchain presentation, synchronization, shader
 compilation, uniform descriptors, a D32 depth attachment, a camera-driven
 indexed-mesh handle registry, validated multi-object draw extraction, per-draw
 model/normal/material push constants, a Cook-Torrance GGX metallic-roughness
-directional-light pass, tone mapping, a persistent sampled D32 directional
+multi-light pass, tone mapping, a persistent sampled D32 directional
 shadow map with slope/constant depth bias and 3x3 PCF, and a
 dynamic world-space debug-line pipeline. `KairoRendererClear` presents two
 independently transformed depth-tested mesh instances casting shadows onto a
 receiver with world axes in a real native window.
 
-`PBRMaterial` validates linear base color, metallic, perceptual roughness, and
-ambient-occlusion factors. Its scalar factors occupy padding already reserved
-inside the portable 128-byte per-draw push block; the material milestone does
-not raise Vulkan's minimum push-constant requirement.
+`PBRMaterial` validates base color, metallic-roughness, normal, occlusion,
+emissive, alpha-mask, and alpha-blend channels. Vulkan images preserve imported
+sRGB/linear semantics, authored mip chains, sampler filtering, and lifetime.
+Opaque draws precede stable back-to-front transparent draws; object IDs remain
+unblended for exact editor picking. Directional, point, spot, and center-sampled
+rectangular-area emitters come from the scene rather than a hardcoded light.
+
+## Textures and glTF scenes
+
+`CreateTexture` uploads validated `TextureArtifactData` and returns an opaque
+handle. Material descriptor sets bind five typed channels with neutral fallback
+textures, so an absent channel is deterministic while an unresolved authored
+reference fails. Imported mesh UVs are consumed by the shader path.
+
+`MakeGltfRenderAsset` is the shared Editor/Player conversion boundary. It
+composes node hierarchies, retains one material per primitive, and resolves
+external image URIs through registered KairoAssets texture identities. The
+current `kairo.gltf.scene` artifact does not extract images embedded inside a
+GLB; those materials retain scalar factors and empty texture bindings.
 
 ## Directional Shadows
 
@@ -117,7 +132,7 @@ KairoAssets owns source parsing, topology validation, portable serialization,
 and the derived-data format. KairoRenderer performs only the final CPU-to-GPU
 vertex adaptation. The forward shader currently requires imported normals and
 fails clearly when they are absent; imported UVs remain preserved in the asset
-artifact for the future texture/material upload path.
+artifact and feed the texture/material upload path.
 
 Submission rejects unknown handles, non-finite or singular transforms, and
 invalid linear RGB tints before command recording. Normal transforms use a
@@ -172,4 +187,7 @@ M7 indexed mesh registry + multi-draw submission complete
 M8 directional lighting                         complete
 M9 validated metallic-roughness PBR materials     complete
 M10 directional shadow map + bias + 3x3 PCF        complete
+M11 Vulkan textures + PBR channel descriptors       complete
+M12 scene-authored multi-light and environment data complete
+M13 hierarchy/material preserving glTF adapter      complete
 ```

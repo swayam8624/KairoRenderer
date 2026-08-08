@@ -22,6 +22,7 @@ export namespace kairo::renderer
         kairo::foundation::math::Vec3f Position{};
         kairo::foundation::math::Vec3f Color{ 1.0f, 1.0f, 1.0f };
         kairo::foundation::math::Vec3f Normal{ 0.0f, 1.0f, 0.0f };
+        kairo::foundation::math::Vec2f TexCoord{};
     };
 
     /// Indexed triangle mesh with explicit ownership of CPU geometry.
@@ -49,8 +50,8 @@ export namespace kairo::renderer
         /// Task: keep source parsing and derived-data layout in KairoAssets
         /// while adapting that canonical representation exactly once at the
         /// renderer boundary. The current forward shader requires normals;
-        /// UVs remain in the artifact until the renderer texture path consumes
-        /// them instead of being duplicated in an ad-hoc renderer asset type.
+        /// UVs cross this adapter unchanged so every material texture channel
+        /// samples the same authored TEXCOORD_0 domain.
         [[nodiscard]] static Mesh FromArtifact(
             const kairo::assets::MeshArtifactData& artifact,
             const kairo::foundation::math::Vec3f& color = { 1.0f, 1.0f, 1.0f })
@@ -69,7 +70,11 @@ export namespace kairo::renderer
                 vertices.push_back({
                     { source.Position[0], source.Position[1], source.Position[2] },
                     color,
-                    { source.Normal[0], source.Normal[1], source.Normal[2] }
+                    { source.Normal[0], source.Normal[1], source.Normal[2] },
+                    artifact.HasTexCoords
+                        ? kairo::foundation::math::Vec2f{
+                            source.TexCoord[0], source.TexCoord[1] }
+                        : kairo::foundation::math::Vec2f{}
                 });
             }
             return Mesh(std::move(vertices), artifact.Indices);

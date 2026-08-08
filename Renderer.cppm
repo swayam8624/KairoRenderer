@@ -30,8 +30,10 @@ import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.VulkanBackendContext;
 import Kairo.Renderer.Mesh;
+import Kairo.Renderer.Texture;
 import Kairo.Renderer.RenderScene;
 import Kairo.Renderer.ShadowSettings;
+import Kairo.Assets.TextureArtifact;
 
 export namespace kairo::renderer
 {
@@ -201,6 +203,27 @@ export namespace kairo::renderer
         {
             if (vkDeviceWaitIdle(m_Device.Handle()) != VK_SUCCESS) throw std::runtime_error("vkDeviceWaitIdle failed before mesh destruction.");
             m_Triangle.DestroyMesh(mesh);
+        }
+
+        /// Input: a validated canonical KairoAssets texture artifact and
+        /// sampler addressing. Output: a process-local sampled-image handle.
+        /// Task: keep decoding/mip generation in KairoAssets and GPU ownership
+        /// in KairoRenderer.
+        [[nodiscard]] TextureHandle CreateTexture(
+            const kairo::assets::TextureArtifactData& texture,
+            TextureSampler sampling = {})
+        {
+            return m_Triangle.CreateTexture(texture, sampling);
+        }
+
+        /// Preconditions: the handle belongs to this runtime and is not used
+        /// by the currently submitted scene.
+        void DestroyTexture(TextureHandle texture)
+        {
+            if (vkDeviceWaitIdle(m_Device.Handle()) != VK_SUCCESS)
+                throw std::runtime_error(
+                    "vkDeviceWaitIdle failed before texture destruction.");
+            m_Triangle.DestroyTexture(texture);
         }
 
         /// Input: renderer-neutral mesh draws for the next and subsequent

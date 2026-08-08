@@ -5,6 +5,7 @@ module;
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -21,19 +22,23 @@ export module Kairo.Renderer.VulkanTriangle;
 
 import Kairo.Renderer.Camera;
 import Kairo.Renderer.DebugDraw;
+import Kairo.Renderer.Material;
 import Kairo.Renderer.Mesh;
 import Kairo.Renderer.RenderScene;
+import Kairo.Renderer.Texture;
 import Kairo.Renderer.Types;
 import Kairo.Renderer.ShadowSettings;
 import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.VulkanCommand;
 import Kairo.Renderer.VulkanDescriptor;
 import Kairo.Renderer.VulkanDevice;
+import Kairo.Renderer.VulkanTexture;
 import Kairo.Renderer.VulkanSwapchain;
 import Kairo.Renderer.VulkanShadowMap;
 import Kairo.Renderer.VulkanViewportTarget;
 import Kairo.Renderer.VulkanBackendContext;
 import Kairo.Foundation.Math;
+import Kairo.Assets.TextureArtifact;
 
 export namespace kairo::renderer
 {
@@ -47,9 +52,15 @@ export namespace kairo::renderer
             : m_VulkanDevice(device), m_Device(device.Handle()),
               m_UniformBuffer(device, sizeof(CameraUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
               m_ShadowMap(device, 2048u),
-              m_UniformDescriptor(device, m_UniformBuffer, sizeof(CameraUniform), m_ShadowMap.View(), m_ShadowMap.Sampler()),
+              m_MaterialDescriptors(device),
               m_Viewport(device, swapchain.Extent())
         {
+            m_FallbackWhite = std::make_unique<VulkanTexture2D>(device,
+                SolidTexture(255u, 255u, 255u, 255u));
+            m_FallbackNormal = std::make_unique<VulkanTexture2D>(device,
+                SolidTexture(128u, 128u, 255u, 255u));
+            m_FallbackBlack = std::make_unique<VulkanTexture2D>(device,
+                SolidTexture(0u, 0u, 0u, 255u));
             Create(swapchain);
         }
 
@@ -84,6 +95,39 @@ export namespace kairo::renderer
             return handle;
         }
 
+        [[nodiscard]] TextureHandle CreateTexture(
+            const kairo::assets::TextureArtifactData& texture,
+            TextureSampler sampling = {})
+        {
+            if (m_NextTexture == InvalidTextureHandle)
+                throw std::overflow_error("Renderer texture handle space is exhausted.");
+            const TextureHandle handle = m_NextTexture++;
+            m_Textures.emplace(handle,
+                std::make_unique<VulkanTexture2D>(m_VulkanDevice, texture, sampling));
+            return handle;
+        }
+
+        void DestroyTexture(TextureHandle texture)
+        {
+            if (texture == InvalidTextureHandle || !m_Textures.contains(texture))
+                throw std::out_of_range("Renderer does not own this texture handle.");
+            const auto uses = [texture](const PBRMaterial& material)
+            {
+                return material.BaseColorTexture == texture ||
+                    material.NormalTexture == texture ||
+                    material.MetallicRoughnessTexture == texture ||
+                    material.EmissiveTexture == texture ||
+                    material.OcclusionTexture == texture;
+            };
+            if (std::ranges::any_of(m_Draws,
+                [&](const MeshDraw& draw) { return uses(draw.Material); }) ||
+                m_Environment.EnvironmentTexture == texture)
+                throw std::logic_error(
+                    "Cannot destroy a texture referenced by the submitted render scene.");
+            m_Textures.erase(texture);
+            m_DescriptorsDirty = true;
+        }
+
         void DestroyMesh(MeshHandle mesh)
         {
             if (mesh == InvalidMeshHandle || m_Meshes.erase(mesh) == 0u) throw std::out_of_range("Renderer does not own this mesh handle.");
@@ -92,12 +136,27 @@ export namespace kairo::renderer
 
         void SetRenderScene(const RenderScene& scene)
         {
+            const auto validateTexture = [this](TextureHandle texture)
+            {
+                if (texture != InvalidTextureHandle && !m_Textures.contains(texture))
+                    throw std::out_of_range(
+                        "RenderScene material references an unknown texture handle.");
+            };
             for (const MeshDraw& draw : scene.Draws())
             {
                 RenderScene::Validate(draw);
                 if (!m_Meshes.contains(draw.Mesh)) throw std::out_of_range("RenderScene references an unknown mesh handle.");
+                validateTexture(draw.Material.BaseColorTexture);
+                validateTexture(draw.Material.NormalTexture);
+                validateTexture(draw.Material.MetallicRoughnessTexture);
+                validateTexture(draw.Material.EmissiveTexture);
+                validateTexture(draw.Material.OcclusionTexture);
             }
+            validateTexture(scene.Environment().EnvironmentTexture);
             m_Draws = scene.Draws();
+            m_Lights = scene.Lights();
+            m_Environment = scene.Environment();
+            m_DescriptorsDirty = true;
         }
 
         /// Task: accept a host-controlled scene camera while retaining matrix
@@ -153,6 +212,7 @@ export namespace kairo::renderer
             std::optional<VkOffset2D> pickPixel = std::nullopt,
             VkBuffer captureDestination = VK_NULL_HANDLE)
         {
+            RebuildMaterialDescriptors();
             UpdateUniform(m_Viewport.Extent());
             UploadDebugVertices();
 
@@ -160,9 +220,12 @@ export namespace kairo::renderer
             // Populate and transition the sampled depth image whenever a mesh
             // pass can consume its descriptor. Enabled controls attenuation,
             // not resource validity, so toggling it before frame one is safe.
-            if (!m_Draws.empty()) DrawDirectionalShadowMap(command);
+            if (!m_Draws.empty() && ShadowLightIndex().has_value())
+                DrawDirectionalShadowMap(command);
             VkClearValue colorClear{};
-            colorClear.color = { { 0.035f, 0.055f, 0.075f, 1.0f } };
+            colorClear.color = { { m_Environment.BackgroundColor.x,
+                m_Environment.BackgroundColor.y,
+                m_Environment.BackgroundColor.z, 1.0f } };
             VkClearValue objectClear{};
             objectClear.color.uint32[0] = 0u;
             VkClearValue depthClear{};
@@ -247,7 +310,7 @@ export namespace kairo::renderer
 
     private:
         /// std140-compatible view/projection plus directional-light data.
-        struct CameraUniform final { std::array<float, 68> Values{}; };
+        struct CameraUniform final { std::array<float, 332> Values{}; };
         /// 64-byte model + three padded normal columns + 16-byte tint exactly
         /// fit Vulkan's guaranteed minimum 128-byte push-constant capacity.
         struct MeshPushConstants final { std::array<float, 32> Values{}; };
@@ -268,19 +331,28 @@ export namespace kairo::renderer
         VkRenderPass m_RenderPass = VK_NULL_HANDLE;
         VkPipelineLayout m_Layout = VK_NULL_HANDLE;
         VkPipeline m_MeshPipeline = VK_NULL_HANDLE;
+        VkPipeline m_TransparentPipeline = VK_NULL_HANDLE;
         VkPipeline m_DebugLinePipeline = VK_NULL_HANDLE;
         VkPipeline m_ShadowPipeline = VK_NULL_HANDLE;
         VulkanHostBuffer m_UniformBuffer;
         VulkanDirectionalShadowMap m_ShadowMap;
-        VulkanUniformDescriptor m_UniformDescriptor;
+        std::unique_ptr<VulkanTexture2D> m_FallbackWhite;
+        std::unique_ptr<VulkanTexture2D> m_FallbackNormal;
+        std::unique_ptr<VulkanTexture2D> m_FallbackBlack;
+        VulkanMaterialDescriptors m_MaterialDescriptors;
         VulkanViewportTarget m_Viewport;
         ShowcaseCamera m_Camera;
         DirectionalShadowSettings m_ShadowSettings;
         ViewportShadingMode m_ShadingMode = ViewportShadingMode::Lit;
         std::vector<VkFramebuffer> m_Framebuffers;
         std::unordered_map<MeshHandle, GpuMesh> m_Meshes;
+        std::unordered_map<TextureHandle, std::unique_ptr<VulkanTexture2D>> m_Textures;
         std::vector<MeshDraw> m_Draws;
+        std::vector<RenderLight> m_Lights;
+        RenderEnvironment m_Environment;
         MeshHandle m_NextMesh = 1u;
+        TextureHandle m_NextTexture = 1u;
+        bool m_DescriptorsDirty = true;
         std::vector<DebugVertex> m_DebugVertices;
         std::unique_ptr<VulkanHostBuffer> m_DebugVertexBuffer;
         VkDeviceSize m_DebugVertexCapacity = 0u;
@@ -335,7 +407,7 @@ export namespace kairo::renderer
         {
             VkPipelineLayoutCreateInfo layout{};
             layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO; layout.setLayoutCount = 1u;
-            const VkDescriptorSetLayout descriptorLayout = m_UniformDescriptor.Layout(); layout.pSetLayouts = &descriptorLayout;
+            const VkDescriptorSetLayout descriptorLayout = m_MaterialDescriptors.Layout(); layout.pSetLayouts = &descriptorLayout;
             const VkPushConstantRange pushConstants{ VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0u, sizeof(MeshPushConstants) };
             layout.pushConstantRangeCount = 1u; layout.pPushConstantRanges = &pushConstants;
             if (vkCreatePipelineLayout(m_Device, &layout, nullptr, &m_Layout) != VK_SUCCESS) throw std::runtime_error("vkCreatePipelineLayout failed.");
@@ -345,13 +417,17 @@ export namespace kairo::renderer
             const std::array meshAttributes{
                 VkVertexInputAttributeDescription{ 0u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Position) },
                 VkVertexInputAttributeDescription{ 1u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Color) },
-                VkVertexInputAttributeDescription{ 2u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Normal) }
+                VkVertexInputAttributeDescription{ 2u, 0u, VK_FORMAT_R32G32B32_SFLOAT, offsetof(MeshVertex, Normal) },
+                VkVertexInputAttributeDescription{ 3u, 0u, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, TexCoord) }
             };
             VkPipelineVertexInputStateCreateInfo meshInput{};
             meshInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
             meshInput.vertexBindingDescriptionCount = 1u; meshInput.pVertexBindingDescriptions = &meshBinding;
             meshInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(meshAttributes.size()); meshInput.pVertexAttributeDescriptions = meshAttributes.data();
-            m_MeshPipeline = CreatePipeline("triangle.vert.spv", "triangle.frag.spv", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, meshInput, VK_TRUE);
+            m_MeshPipeline = CreatePipeline("triangle.vert.spv", "triangle.frag.spv",
+                VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, meshInput, VK_TRUE, false);
+            m_TransparentPipeline = CreatePipeline("triangle.vert.spv", "triangle.frag.spv",
+                VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, meshInput, VK_FALSE, true);
             m_ShadowPipeline = CreateShadowPipeline(meshInput);
 
             VkVertexInputBindingDescription binding{};
@@ -364,7 +440,8 @@ export namespace kairo::renderer
             lineInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO; lineInput.vertexBindingDescriptionCount = 1u;
             lineInput.pVertexBindingDescriptions = &binding; lineInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
             lineInput.pVertexAttributeDescriptions = attributes.data();
-            m_DebugLinePipeline = CreatePipeline("debug_line.vert.spv", "debug_line.frag.spv", VK_PRIMITIVE_TOPOLOGY_LINE_LIST, lineInput, VK_FALSE);
+            m_DebugLinePipeline = CreatePipeline("debug_line.vert.spv", "debug_line.frag.spv",
+                VK_PRIMITIVE_TOPOLOGY_LINE_LIST, lineInput, VK_FALSE, false);
         }
 
         /// Output: a vertex-only depth pipeline compatible with the persistent
@@ -432,13 +509,15 @@ export namespace kairo::renderer
         }
 
         [[nodiscard]] VkPipeline CreatePipeline(const std::string& vertexName, const std::string& fragmentName,
-            VkPrimitiveTopology topology, const VkPipelineVertexInputStateCreateInfo& vertexInput, VkBool32 depthWrite) const
+            VkPrimitiveTopology topology, const VkPipelineVertexInputStateCreateInfo& vertexInput,
+            VkBool32 depthWrite, bool alphaBlend) const
         {
             const VkShaderModule vertex = CreateShaderModule(ReadSpirv(vertexName));
             const VkShaderModule fragment = CreateShaderModule(ReadSpirv(fragmentName));
             try
             {
-                const VkPipeline pipeline = CreateGraphicsPipeline(vertex, fragment, topology, vertexInput, depthWrite);
+                const VkPipeline pipeline = CreateGraphicsPipeline(vertex, fragment, topology,
+                    vertexInput, depthWrite, alphaBlend);
                 vkDestroyShaderModule(m_Device, fragment, nullptr); vkDestroyShaderModule(m_Device, vertex, nullptr);
                 return pipeline;
             }
@@ -449,7 +528,8 @@ export namespace kairo::renderer
         }
 
         [[nodiscard]] VkPipeline CreateGraphicsPipeline(VkShaderModule vertex, VkShaderModule fragment, VkPrimitiveTopology topology,
-            const VkPipelineVertexInputStateCreateInfo& vertexInput, VkBool32 depthWrite) const
+            const VkPipelineVertexInputStateCreateInfo& vertexInput, VkBool32 depthWrite,
+            bool alphaBlend) const
         {
             VkPipelineShaderStageCreateInfo vertexStage{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
             vertexStage.stage = VK_SHADER_STAGE_VERTEX_BIT; vertexStage.module = vertex; vertexStage.pName = "main";
@@ -468,8 +548,22 @@ export namespace kairo::renderer
             depth.depthTestEnable = VK_TRUE; depth.depthWriteEnable = depthWrite; depth.depthCompareOp = VK_COMPARE_OP_LESS;
             VkPipelineColorBlendAttachmentState attachment{};
             attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            if (alphaBlend)
+            {
+                attachment.blendEnable = VK_TRUE;
+                attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+                attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                attachment.colorBlendOp = VK_BLEND_OP_ADD;
+                attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+            }
+            VkPipelineColorBlendAttachmentState objectAttachment{};
+            objectAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                VK_COLOR_COMPONENT_A_BIT;
             VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-            const std::array blendAttachments{ attachment, attachment };
+            const std::array blendAttachments{ attachment, objectAttachment };
             blend.attachmentCount = static_cast<std::uint32_t>(blendAttachments.size());
             blend.pAttachments = blendAttachments.data();
             const std::array dynamicStates{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -485,9 +579,9 @@ export namespace kairo::renderer
             return pipeline;
         }
 
-        void BindCamera(const VulkanCommandBuffer& command) const
+        void BindMaterial(const VulkanCommandBuffer& command, std::size_t index) const
         {
-            const VkDescriptorSet descriptor = m_UniformDescriptor.Set();
+            const VkDescriptorSet descriptor = m_MaterialDescriptors.Set(index);
             vkCmdBindDescriptorSets(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout, 0u, 1u, &descriptor, 0u, nullptr);
         }
 
@@ -515,12 +609,14 @@ export namespace kairo::renderer
             vkCmdSetViewport(command.Handle(), 0u, 1u, &viewport);
             vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
             vkCmdSetDepthBias(command.Handle(), m_ShadowSettings.ConstantDepthBias, 0.0f, m_ShadowSettings.SlopeDepthBias);
-            BindCamera(command);
+            BindMaterial(command, 0u);
             vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_ShadowPipeline);
 
             constexpr VkDeviceSize offset = 0u;
             for (const MeshDraw& draw : m_Draws)
             {
+                if (!draw.CastShadows ||
+                    draw.Material.AlphaMode == MaterialAlphaMode::Blend) continue;
                 const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
                 MeshPushConstants push{};
                 CopyTranspose(draw.Model, push.Values.data());
@@ -541,11 +637,11 @@ export namespace kairo::renderer
         void DrawMeshes(const VulkanCommandBuffer& command) const
         {
             if (m_Draws.empty()) return;
-            BindCamera(command);
-            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_MeshPipeline);
             constexpr VkDeviceSize offset = 0u;
-            for (const MeshDraw& draw : m_Draws)
+            const auto drawOne = [&](std::size_t drawIndex)
             {
+                const MeshDraw& draw = m_Draws[drawIndex];
+                BindMaterial(command, drawIndex);
                 const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
                 MeshPushConstants push{};
                 CopyTranspose(draw.Model, push.Values.data());
@@ -553,20 +649,94 @@ export namespace kairo::renderer
                 for (std::size_t column = 0u; column < 3u; ++column)
                     for (std::size_t row = 0u; row < 3u; ++row)
                         push.Values[16u + column * 4u + row] = normal(row, column);
-                push.Values[19u] = draw.Material.Metallic;
-                push.Values[23u] = draw.Material.Roughness;
-                push.Values[27u] = draw.Material.AmbientOcclusion;
-                push.Values[28u] = draw.Material.BaseColor.x;
-                push.Values[29u] = draw.Material.BaseColor.y;
-                push.Values[30u] = draw.Material.BaseColor.z;
+                push.Values[30u] = draw.ReceiveShadows ? 1.0f : 0.0f;
                 push.Values[31u] = std::bit_cast<float>(draw.ObjectID);
-                vkCmdPushConstants(command.Handle(), m_Layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                vkCmdPushConstants(command.Handle(), m_Layout,
+                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                     0u, sizeof(push), &push);
                 const VkBuffer vertexBuffer = mesh.Vertices->Handle();
                 vkCmdBindVertexBuffers(command.Handle(), 0u, 1u, &vertexBuffer, &offset);
-                vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u, VK_INDEX_TYPE_UINT32);
+                vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u,
+                    VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, 1u, 0u, 0, 0u);
+            };
+
+            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_MeshPipeline);
+            for (std::size_t index = 0u; index < m_Draws.size(); ++index)
+                if (m_Draws[index].Material.AlphaMode != MaterialAlphaMode::Blend)
+                    drawOne(index);
+
+            std::vector<std::size_t> transparentDraws;
+            transparentDraws.reserve(m_Draws.size());
+            for (std::size_t index = 0u; index < m_Draws.size(); ++index)
+                if (m_Draws[index].Material.AlphaMode == MaterialAlphaMode::Blend)
+                    transparentDraws.push_back(index);
+            using kairo::foundation::math::Dot;
+            using kairo::foundation::math::ExtractTranslation;
+            using kairo::foundation::math::Vec3f;
+            const Vec3f cameraPosition = m_Camera.Position();
+            std::stable_sort(transparentDraws.begin(), transparentDraws.end(),
+                [&](std::size_t left, std::size_t right)
+                {
+                    const Vec3f leftOffset = ExtractTranslation(m_Draws[left].Model) -
+                        cameraPosition;
+                    const Vec3f rightOffset = ExtractTranslation(m_Draws[right].Model) -
+                        cameraPosition;
+                    return Dot(leftOffset, leftOffset) > Dot(rightOffset, rightOffset);
+                });
+            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_TransparentPipeline);
+            for (const std::size_t index : transparentDraws) drawOne(index);
+        }
+
+        [[nodiscard]] static kairo::assets::TextureArtifactData SolidTexture(
+            std::uint8_t red, std::uint8_t green, std::uint8_t blue,
+            std::uint8_t alpha)
+        {
+            kairo::assets::TextureArtifactData texture;
+            texture.Format = kairo::assets::TexturePixelFormat::RGBA8;
+            texture.ColorSpace = kairo::assets::TextureColorSpace::Linear;
+            texture.Semantic = kairo::assets::TextureSemantic::Data;
+            texture.Mips.push_back({ 1u, 1u, {
+                std::byte{ red }, std::byte{ green }, std::byte{ blue },
+                std::byte{ alpha } } });
+            return texture;
+        }
+
+        [[nodiscard]] const VulkanTexture2D& TextureOr(
+            TextureHandle handle, const VulkanTexture2D& fallback) const
+        {
+            if (handle == InvalidTextureHandle) return fallback;
+            return *m_Textures.at(handle);
+        }
+
+        void RebuildMaterialDescriptors()
+        {
+            if (!m_DescriptorsDirty) return;
+            std::vector<VulkanMaterialImages> bindings;
+            bindings.reserve(m_Draws.size());
+            for (const MeshDraw& draw : m_Draws)
+            {
+                const std::array<const VulkanTexture2D*, 5u> textures{
+                    &TextureOr(draw.Material.BaseColorTexture, *m_FallbackWhite),
+                    &TextureOr(draw.Material.NormalTexture, *m_FallbackNormal),
+                    &TextureOr(draw.Material.MetallicRoughnessTexture, *m_FallbackWhite),
+                    &TextureOr(draw.Material.EmissiveTexture, *m_FallbackWhite),
+                    &TextureOr(draw.Material.OcclusionTexture, *m_FallbackWhite)
+                };
+                VulkanMaterialImages binding;
+                binding.Material = draw.Material;
+                for (std::size_t channel = 0u; channel < textures.size(); ++channel)
+                {
+                    binding.Views[channel] = textures[channel]->View();
+                    binding.Samplers[channel] = textures[channel]->Sampler();
+                }
+                bindings.push_back(binding);
             }
+            m_MaterialDescriptors.Rebuild(m_UniformBuffer, sizeof(CameraUniform),
+                m_ShadowMap.View(), m_ShadowMap.Sampler(), bindings);
+            m_DescriptorsDirty = false;
         }
 
         void UploadDebugVertices()
@@ -599,12 +769,18 @@ export namespace kairo::renderer
             CameraUniform uniform{};
             CopyTranspose(m_Camera.View(), uniform.Values.data());
             CopyTranspose(m_Camera.Projection(extent.width, extent.height), uniform.Values.data() + 16u);
-            // Direction points from the shaded surface toward the light. The
-            // w components are reserved for intensity/ambient strength.
-            const Vec3f lightDirection = SafeNormalize(Vec3f{ -0.45f, 0.8f, 0.35f }, Vec3f::Up());
+            const auto shadowIndex = ShadowLightIndex();
+            const Vec3f lightDirection = shadowIndex.has_value()
+                ? SafeNormalize(m_Lights[*shadowIndex].Direction, Vec3f::Up())
+                : Vec3f::Up();
             uniform.Values[32u] = lightDirection.x; uniform.Values[33u] = lightDirection.y;
-            uniform.Values[34u] = lightDirection.z; uniform.Values[35u] = 4.0f;
-            uniform.Values[36u] = 0.075f; uniform.Values[37u] = 0.09f; uniform.Values[38u] = 0.13f; uniform.Values[39u] = 1.0f;
+            uniform.Values[34u] = lightDirection.z;
+            uniform.Values[35u] = shadowIndex.has_value()
+                ? m_Lights[*shadowIndex].Intensity : 0.0f;
+            uniform.Values[36u] = m_Environment.AmbientColor.x * m_Environment.AmbientIntensity;
+            uniform.Values[37u] = m_Environment.AmbientColor.y * m_Environment.AmbientIntensity;
+            uniform.Values[38u] = m_Environment.AmbientColor.z * m_Environment.AmbientIntensity;
+            uniform.Values[39u] = 1.0f;
             const auto cameraPosition = m_Camera.Position();
             uniform.Values[40u] = cameraPosition.x; uniform.Values[41u] = cameraPosition.y;
             uniform.Values[42u] = cameraPosition.z; uniform.Values[43u] = 1.0f;
@@ -612,12 +788,55 @@ export namespace kairo::renderer
             Mat4f lightProjection = Orthographic(-8.0f, 8.0f, -8.0f, 8.0f, 0.1f, 30.0f);
             lightProjection(1u, 1u) *= -1.0f;
             CopyTranspose(lightProjection * lightView, uniform.Values.data() + 44u);
-            uniform.Values[60u] = m_ShadowSettings.Enabled ? 1.0f : 0.0f;
+            uniform.Values[60u] = m_ShadowSettings.Enabled && shadowIndex.has_value()
+                ? 1.0f : 0.0f;
             uniform.Values[61u] = m_ShadowSettings.Strength;
             uniform.Values[62u] = 1.0f / static_cast<float>(m_ShadowMap.Resolution());
             uniform.Values[63u] = m_ShadowSettings.ReceiverBias;
             uniform.Values[64u] = static_cast<float>(m_ShadingMode);
+            uniform.Values[65u] = m_Environment.ExposureEV100;
+            uniform.Values[68u] = static_cast<float>(m_Lights.size());
+            uniform.Values[69u] = shadowIndex.has_value()
+                ? static_cast<float>(*shadowIndex) : -1.0f;
+            uniform.Values[72u] = m_Environment.BackgroundColor.x;
+            uniform.Values[73u] = m_Environment.BackgroundColor.y;
+            uniform.Values[74u] = m_Environment.BackgroundColor.z;
+            uniform.Values[75u] = 1.0f;
+            for (std::size_t index = 0u; index < m_Lights.size(); ++index)
+            {
+                const RenderLight& light = m_Lights[index];
+                const std::size_t position = 76u + index * 4u;
+                const std::size_t direction = 140u + index * 4u;
+                const std::size_t color = 204u + index * 4u;
+                const std::size_t spot = 268u + index * 4u;
+                uniform.Values[position] = light.Position.x;
+                uniform.Values[position + 1u] = light.Position.y;
+                uniform.Values[position + 2u] = light.Position.z;
+                uniform.Values[position + 3u] = static_cast<float>(light.Type);
+                const Vec3f normalized = SafeNormalize(light.Direction, Vec3f::Up());
+                uniform.Values[direction] = normalized.x;
+                uniform.Values[direction + 1u] = normalized.y;
+                uniform.Values[direction + 2u] = normalized.z;
+                uniform.Values[direction + 3u] = light.Range;
+                uniform.Values[color] = light.Color.x;
+                uniform.Values[color + 1u] = light.Color.y;
+                uniform.Values[color + 2u] = light.Color.z;
+                uniform.Values[color + 3u] = light.Intensity;
+                uniform.Values[spot] = std::cos(light.InnerConeRadians);
+                uniform.Values[spot + 1u] = std::cos(light.OuterConeRadians);
+                uniform.Values[spot + 2u] = light.AreaWidth;
+                uniform.Values[spot + 3u] = light.AreaHeight;
+            }
             m_UniformBuffer.Write(&uniform, sizeof(uniform));
+        }
+
+        [[nodiscard]] std::optional<std::size_t> ShadowLightIndex() const noexcept
+        {
+            for (std::size_t index = 0u; index < m_Lights.size(); ++index)
+                if (m_Lights[index].Type == RenderLightType::Directional &&
+                    m_Lights[index].CastShadows)
+                    return index;
+            return std::nullopt;
         }
 
         static void CopyTranspose(const kairo::foundation::math::Mat4f& matrix, float* destination) noexcept
@@ -652,11 +871,14 @@ export namespace kairo::renderer
             m_Framebuffers.clear();
             if (m_ShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_ShadowPipeline, nullptr);
             if (m_DebugLinePipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_DebugLinePipeline, nullptr);
+            if (m_TransparentPipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(m_Device, m_TransparentPipeline, nullptr);
             if (m_MeshPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_MeshPipeline, nullptr);
             if (m_Layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(m_Device, m_Layout, nullptr);
             if (m_RenderPass != VK_NULL_HANDLE) vkDestroyRenderPass(m_Device, m_RenderPass, nullptr);
             m_ShadowPipeline = VK_NULL_HANDLE; m_DebugLinePipeline = VK_NULL_HANDLE;
-            m_MeshPipeline = VK_NULL_HANDLE; m_Layout = VK_NULL_HANDLE; m_RenderPass = VK_NULL_HANDLE;
+            m_MeshPipeline = VK_NULL_HANDLE; m_TransparentPipeline = VK_NULL_HANDLE;
+            m_Layout = VK_NULL_HANDLE; m_RenderPass = VK_NULL_HANDLE;
         }
     };
 }

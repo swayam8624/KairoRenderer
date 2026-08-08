@@ -63,9 +63,12 @@ export namespace kairo::renderer
             return LookAt(m_Pose.Position, m_Pose.Target, m_Pose.Up);
         }
 
-        [[nodiscard]] static constexpr kairo::foundation::math::Vec3f Position() noexcept
+        /// Output: world-space position of the active camera pose.
+        /// Task: keep lighting and depth-ordered rendering aligned with the
+        /// same host-authored pose used to build View().
+        [[nodiscard]] constexpr kairo::foundation::math::Vec3f Position() const noexcept
         {
-            return { 2.6f, 1.9f, 3.8f };
+            return m_Pose.Position;
         }
 
         /// Input: a validated editor/game camera pose.
