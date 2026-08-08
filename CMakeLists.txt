@@ -25,13 +25,13 @@ if(APPLE)
             COMMAND "${KAIRO_RENDERER_BREW_EXECUTABLE}" --prefix molten-vk
             OUTPUT_VARIABLE KAIRO_RENDERER_MOLTENVK_PREFIX
             OUTPUT_STRIP_TRAILING_WHITESPACE
-            RESULT_VARIABLE KAIRO_RENDERER_MOLTENVK_RESULT
             ERROR_QUIET)
     endif()
-    find_file(KAIRO_MOLTENVK_ICD_FILE MoltenVK_icd.json
+    find_library(KAIRO_RENDERER_MOLTENVK_LIBRARY
+        NAMES MoltenVK libMoltenVK
         HINTS
-            "${KAIRO_RENDERER_MOLTENVK_PREFIX}/etc/vulkan/icd.d"
-            "$ENV{VULKAN_SDK}/etc/vulkan/icd.d"
+            "${KAIRO_RENDERER_MOLTENVK_PREFIX}/lib"
+            "$ENV{VULKAN_SDK}/lib"
         REQUIRED)
 endif()
 
@@ -41,7 +41,7 @@ endif()
 # happens to exist when CMake configures.
 set(KAIRO_RENDERER_MATH_REVISION e12778734a8e8ffe060255a9c03683ad6c4b1a92)
 set(KAIRO_RENDERER_GEOMETRY_REVISION d570c91eaddf5c40e05b5a22cea6db78177e7fd0)
-set(KAIRO_RENDERER_ASSETS_REVISION a50d801796b69f4ee98f43ecfea0fd6cdd66de85)
+set(KAIRO_RENDERER_ASSETS_REVISION ad3d8e80f2bab0cab751817ecce82a0c972e8d46)
 set(KAIRO_RENDERER_PHYSICS_REVISION 0c2a4c43a65f828a6bc7766c470db82bb3a58a13)
 
 if(NOT TARGET KairoMath)
@@ -92,125 +92,47 @@ if(NOT TARGET KairoAssets)
     endif()
 endif()
 
-set(KAIRO_RENDERER_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
-add_custom_command(
-    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
-    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.vert"
-    VERBATIM)
-add_custom_command(
-    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
-    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag"
-    VERBATIM)
-add_custom_command(
-    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
-    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.vert"
-    VERBATIM)
-add_custom_command(
-    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
-    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.frag" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug_line.frag"
-    VERBATIM)
-add_custom_command(
-    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
-    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert"
-    VERBATIM)
-add_custom_target(KairoRendererShaders DEPENDS
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv")
+if(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE AND NOT TARGET KairoPhysicsEngine)
+    set(KAIRO_PHYSICS_ENGINE_SOURCE_DIR "" CACHE PATH "Path to a local KairoPhysicsEngine checkout")
+    if(KAIRO_PHYSICS_ENGINE_SOURCE_DIR AND EXISTS "${KAIRO_PHYSICS_ENGINE_SOURCE_DIR}/CMakeLists.txt")
+        add_subdirectory("${KAIRO_PHYSICS_ENGINE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoPhysicsEngine")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoPhysicsEngine/CMakeLists.txt")
+        add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoPhysicsEngine" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoPhysicsEngine")
+    else()
+        include(FetchContent)
+        FetchContent_Declare(KairoPhysicsEngine
+            GIT_REPOSITORY https://github.com/swayam8624/KairoPhysicsEngine.git
+            GIT_TAG ${KAIRO_RENDERER_PHYSICS_REVISION}
+            GIT_SHALLOW TRUE)
+        FetchContent_MakeAvailable(KairoPhysicsEngine)
+    endif()
+endif()
 
 add_library(KairoRenderer)
 target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
-    RendererTypes.cppm
-    Camera.cppm
-    Mesh.cppm
-    Texture.cppm
-    AssetAdapters.cppm
-    Material.cppm
-    ShadowSettings.cppm
-    RenderScene.cppm
-    DebugDraw.cppm
-    Window.cppm
-    VulkanInstance.cppm
-    VulkanSurface.cppm
-    VulkanDevice.cppm
-    VulkanSwapchain.cppm
-    VulkanCommand.cppm
-    VulkanSync.cppm
-    VulkanBuffer.cppm
-    VulkanTexture.cppm
-    VulkanDescriptor.cppm
-    VulkanDepth.cppm
-    VulkanViewportTarget.cppm
-    VulkanShadowMap.cppm
-    VulkanBackendContext.cppm
-    VulkanTriangle.cppm
-    Renderer.cppm
-    KairoRenderer.cppm)
-add_dependencies(KairoRenderer KairoRendererShaders)
-target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_SHADER_DIR="${KAIRO_RENDERER_SHADER_OUTPUT_DIR}")
-if(APPLE)
-    target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_MOLTENVK_ICD_FILE="${KAIRO_MOLTENVK_ICD_FILE}")
-endif()
-target_compile_definitions(KairoRenderer PUBLIC $<$<BOOL:${KAIRO_RENDERER_ENABLE_VALIDATION}>:KAIRO_RENDERER_ENABLE_VALIDATION=1>)
+    RendererTypes.cppm Renderer.cppm RenderGraph.cppm Mesh.cppm Texture.cppm Material.cppm AssetAdapters.cppm
+    ShaderCompiler.cppm VulkanContext.cppm VulkanMesh.cppm VulkanTexture.cppm VulkanPipeline.cppm
+    VulkanRenderer.cppm KairoRenderer.cppm)
 target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry KairoAssets glfw Vulkan::Vulkan)
 if(APPLE)
-    target_link_libraries(KairoRenderer PUBLIC
-        "-framework Metal"
-        "-framework QuartzCore"
-        "-framework CoreFoundation"
-        "-framework IOKit"
-        "-framework IOSurface")
+    target_link_libraries(KairoRenderer PUBLIC "${KAIRO_RENDERER_MOLTENVK_LIBRARY}")
 endif()
+add_library(Kairo::Renderer ALIAS KairoRenderer)
 
 if(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE)
-    if(NOT TARGET KairoPhysicsEngine)
-        set(KAIRO_PHYSICS_ENGINE_SOURCE_DIR "" CACHE PATH "Path to a local KairoPhysicsEngine checkout")
-        if(KAIRO_PHYSICS_ENGINE_SOURCE_DIR AND EXISTS "${KAIRO_PHYSICS_ENGINE_SOURCE_DIR}/CMakeLists.txt")
-            add_subdirectory("${KAIRO_PHYSICS_ENGINE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoPhysicsEngine")
-        elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoPhysicsEngine/CMakeLists.txt")
-            add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoPhysicsEngine" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoPhysicsEngine")
-        else()
-            include(FetchContent)
-            FetchContent_Declare(KairoPhysicsEngine
-                GIT_REPOSITORY https://github.com/swayam8624/KairoPhysicsEngine.git
-                GIT_TAG ${KAIRO_RENDERER_PHYSICS_REVISION}
-                GIT_SHALLOW TRUE)
-            FetchContent_MakeAvailable(KairoPhysicsEngine)
-        endif()
-    endif()
-
-    add_library(KairoRendererPhysicsDebug)
-    target_sources(KairoRendererPhysicsDebug PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
-        PhysicsDebugBridge.cppm)
-    target_link_libraries(KairoRendererPhysicsDebug PUBLIC KairoRenderer KairoPhysicsEngine)
+    add_library(KairoRendererPhysicsBridge)
+    target_sources(KairoRendererPhysicsBridge PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES PhysicsDebugAdapter.cppm)
+    target_link_libraries(KairoRendererPhysicsBridge PUBLIC KairoRenderer KairoPhysicsEngine)
+    add_library(Kairo::RendererPhysicsBridge ALIAS KairoRendererPhysicsBridge)
 endif()
 
-add_executable(KairoRendererClear examples/clear_window.cpp)
-target_link_libraries(KairoRendererClear PRIVATE KairoRenderer)
-
 if(KAIRO_RENDERER_BUILD_TESTS)
+    include(CTest)
     include(FetchContent)
     FetchContent_Declare(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG v3.5.4)
     FetchContent_MakeAvailable(Catch2)
-    add_executable(KairoRendererTests tests/RendererTests.cpp)
+    add_executable(KairoRendererTests tests/RendererTests.cpp tests/AssetAdapterTests.cpp)
     target_link_libraries(KairoRendererTests PRIVATE KairoRenderer Catch2::Catch2WithMain)
     enable_testing()
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
-    if(TARGET KairoRendererPhysicsDebug)
-        add_executable(KairoRendererPhysicsDebugTests tests/PhysicsDebugBridgeTests.cpp)
-        target_link_libraries(KairoRendererPhysicsDebugTests PRIVATE KairoRendererPhysicsDebug Catch2::Catch2WithMain)
-        add_test(NAME KairoRendererPhysicsDebugTests COMMAND KairoRendererPhysicsDebugTests)
-    endif()
 endif()
