@@ -220,7 +220,7 @@ export namespace kairo::renderer
             // Populate and transition the sampled depth image whenever a mesh
             // pass can consume its descriptor. Enabled controls attenuation,
             // not resource validity, so toggling it before frame one is safe.
-            if (!m_Draws.empty() && ShadowLightIndex().has_value())
+            if (!m_Draws.empty())
                 DrawDirectionalShadowMap(command);
             VkClearValue colorClear{};
             colorClear.color = { { m_Environment.BackgroundColor.x,
@@ -732,6 +732,10 @@ export namespace kairo::renderer
                     binding.Views[channel] = textures[channel]->View();
                     binding.Samplers[channel] = textures[channel]->Sampler();
                 }
+                const VulkanTexture2D& environment = TextureOr(
+                    m_Environment.EnvironmentTexture, *m_FallbackBlack);
+                binding.EnvironmentView = environment.View();
+                binding.EnvironmentSampler = environment.Sampler();
                 bindings.push_back(binding);
             }
             m_MaterialDescriptors.Rebuild(m_UniformBuffer, sizeof(CameraUniform),
@@ -798,6 +802,7 @@ export namespace kairo::renderer
             uniform.Values[68u] = static_cast<float>(m_Lights.size());
             uniform.Values[69u] = shadowIndex.has_value()
                 ? static_cast<float>(*shadowIndex) : -1.0f;
+            uniform.Values[70u] = m_Environment.EnvironmentIntensity;
             uniform.Values[72u] = m_Environment.BackgroundColor.x;
             uniform.Values[73u] = m_Environment.BackgroundColor.y;
             uniform.Values[74u] = m_Environment.BackgroundColor.z;

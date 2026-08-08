@@ -69,6 +69,13 @@ export namespace kairo::renderer
         [[nodiscard]] bool ShouldClose() const noexcept { return glfwWindowShouldClose(m_Handle) == GLFW_TRUE; }
         void PollEvents() const noexcept { glfwPollEvents(); }
         void RequestClose() const noexcept { glfwSetWindowShouldClose(m_Handle, GLFW_TRUE); }
+        /// Task: lock and hide the native cursor for editor fly navigation,
+        /// then restore the normal cursor when the gesture ends or is cancelled.
+        void SetCursorCaptured(bool captured) const noexcept
+        {
+            glfwSetInputMode(m_Handle, GLFW_CURSOR,
+                captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+        }
         [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> FramebufferExtent() const noexcept
         {
             int width = 0;

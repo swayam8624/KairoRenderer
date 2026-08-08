@@ -133,6 +133,8 @@ export namespace kairo::renderer
     {
         std::array<VkImageView, 5u> Views{};
         std::array<VkSampler, 5u> Samplers{};
+        VkImageView EnvironmentView = VK_NULL_HANDLE;
+        VkSampler EnvironmentSampler = VK_NULL_HANDLE;
         PBRMaterial Material;
     };
 
@@ -145,7 +147,7 @@ export namespace kairo::renderer
         explicit VulkanMaterialDescriptors(const VulkanDevice& device)
             : m_DeviceObject(device), m_Device(device.Handle())
         {
-            std::array<VkDescriptorSetLayoutBinding, 8u> bindings{};
+            std::array<VkDescriptorSetLayoutBinding, 9u> bindings{};
             bindings[0] = { 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1u,
                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
             for (std::uint32_t binding = 1u; binding <= 6u; ++binding)
@@ -153,6 +155,8 @@ export namespace kairo::renderer
                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1u,
                     VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
             bindings[7] = { 7u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1u,
+                VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
+            bindings[8] = { 8u, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1u,
                 VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
             VkDescriptorSetLayoutCreateInfo create{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
             create.bindingCount = static_cast<std::uint32_t>(bindings.size());
@@ -195,7 +199,7 @@ export namespace kairo::renderer
             const std::uint32_t count = static_cast<std::uint32_t>(materials.size());
             const std::array poolSizes{
                 VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count * 2u },
-                VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count * 6u }
+                VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count * 7u }
             };
             VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
             pool.maxSets = count;
@@ -225,6 +229,10 @@ export namespace kairo::renderer
                     if (source.Views[channel] == VK_NULL_HANDLE ||
                         source.Samplers[channel] == VK_NULL_HANDLE)
                         throw std::invalid_argument("PBR material descriptors require five valid sampled images.");
+                if (source.EnvironmentView == VK_NULL_HANDLE ||
+                    source.EnvironmentSampler == VK_NULL_HANDLE)
+                    throw std::invalid_argument(
+                        "PBR material descriptors require a valid environment fallback image.");
 
                 MaterialUniform uniform{};
                 uniform.Values[0] = source.Material.BaseColor.x;
@@ -254,7 +262,9 @@ export namespace kairo::renderer
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
                 const VkDescriptorBufferInfo materialInfo{ buffer->Handle(), 0u,
                     sizeof(MaterialUniform) };
-                std::array<VkWriteDescriptorSet, 8u> writes{};
+                const VkDescriptorImageInfo environmentInfo{ source.EnvironmentSampler,
+                    source.EnvironmentView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+                std::array<VkWriteDescriptorSet, 9u> writes{};
                 writes[0] = Write(m_Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                 writes[0].pBufferInfo = &cameraInfo;
                 writes[1] = Write(m_Sets[index], 1u,
@@ -268,6 +278,9 @@ export namespace kairo::renderer
                 }
                 writes[7] = Write(m_Sets[index], 7u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                 writes[7].pBufferInfo = &materialInfo;
+                writes[8] = Write(m_Sets[index], 8u,
+                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                writes[8].pImageInfo = &environmentInfo;
                 vkUpdateDescriptorSets(m_Device,
                     static_cast<std::uint32_t>(writes.size()), writes.data(), 0u, nullptr);
                 m_MaterialBuffers.push_back(std::move(buffer));

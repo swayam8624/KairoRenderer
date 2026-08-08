@@ -294,15 +294,20 @@ TEST_CASE("Render scenes validate authored lights and environment bounds",
     RenderEnvironment environment;
     environment.BackgroundColor = { 0.02f, 0.03f, 0.05f };
     environment.AmbientIntensity = 0.2f;
+    environment.EnvironmentIntensity = 1.5f;
     environment.ExposureEV100 = 1.0f;
     scene.SetEnvironment(environment);
     CHECK(scene.Environment().ExposureEV100 == 1.0f);
+    CHECK(scene.Environment().EnvironmentIntensity == 1.5f);
 
     point.Direction = {};
     REQUIRE_THROWS_AS(point.Validate(), std::invalid_argument);
     area.AreaWidth = 0.0f;
     REQUIRE_THROWS_AS(area.Validate(), std::invalid_argument);
     environment.ExposureEV100 = 33.0f;
+    REQUIRE_THROWS_AS(scene.SetEnvironment(environment), std::invalid_argument);
+    environment.ExposureEV100 = 0.0f;
+    environment.EnvironmentIntensity = -1.0f;
     REQUIRE_THROWS_AS(scene.SetEnvironment(environment), std::invalid_argument);
 }
 

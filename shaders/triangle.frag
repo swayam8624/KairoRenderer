@@ -37,6 +37,7 @@ layout(set = 0, binding = 7) uniform MaterialData {
     vec4 factors;
     vec4 flags;
 } material;
+layout(set = 0, binding = 8) uniform sampler2D environmentMap;
 
 layout(push_constant) uniform DrawData {
     mat4 model;
@@ -47,6 +48,13 @@ layout(push_constant) uniform DrawData {
 } draw;
 
 const float Pi = 3.14159265359;
+
+vec2 EquirectangularUV(vec3 direction)
+{
+    const vec3 normalized = normalize(direction);
+    return vec2(atan(normalized.z, normalized.x) / (2.0 * Pi) + 0.5,
+        asin(clamp(normalized.y, -1.0, 1.0)) / Pi + 0.5);
+}
 
 float DistributionGGX(vec3 normal, vec3 halfVector, float roughness)
 {
@@ -234,7 +242,17 @@ void main()
         direct += (diffuseWeight * baseColor / Pi + specular) * radiance *
             nDotL * visibility;
     }
-    const vec3 ambient = camera.ambient.rgb * baseColor * ambientOcclusion;
+    const vec3 reflectionDirection = reflect(-viewDirection, normal);
+    const float environmentLod = roughness *
+        float(max(textureQueryLevels(environmentMap) - 1, 0));
+    const vec3 environmentRadiance = textureLod(environmentMap,
+        EquirectangularUV(reflectionDirection), environmentLod).rgb *
+        camera.sceneParameters.z;
+    const vec3 diffuseEnvironment = environmentRadiance * baseColor * (1.0 - metallic);
+    const vec3 specularEnvironment = environmentRadiance *
+        FresnelSchlick(nDotV, f0) * (1.0 - roughness * 0.65);
+    const vec3 ambient = (camera.ambient.rgb * baseColor +
+        diffuseEnvironment + specularEnvironment) * ambientOcclusion;
     const vec3 emissive = material.emissiveAndNormalScale.rgb *
         texture(emissiveMap, inTexCoord).rgb;
     const vec3 hdrColor = (ambient + direct + emissive) *

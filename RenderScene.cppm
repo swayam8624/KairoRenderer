@@ -60,6 +60,7 @@ export namespace kairo::renderer
         kairo::foundation::math::Vec3f BackgroundColor{ 0.035f, 0.055f, 0.075f };
         kairo::foundation::math::Vec3f AmbientColor{ 1.0f, 1.0f, 1.0f };
         float AmbientIntensity = 0.08f;
+        float EnvironmentIntensity = 1.0f;
         float ExposureEV100 = 0.0f;
         TextureHandle EnvironmentTexture = InvalidTextureHandle;
 
@@ -197,6 +198,7 @@ export namespace kairo::renderer
         };
         if (!validColor(BackgroundColor) || !validColor(AmbientColor) ||
             !std::isfinite(AmbientIntensity) || AmbientIntensity < 0.0f ||
+            !std::isfinite(EnvironmentIntensity) || EnvironmentIntensity < 0.0f ||
             !std::isfinite(ExposureEV100) || ExposureEV100 < -32.0f ||
             ExposureEV100 > 32.0f)
             throw std::invalid_argument("Render environment values must be finite and within supported ranges.");
