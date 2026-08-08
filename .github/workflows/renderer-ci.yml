@@ -1,0 +1,82 @@
+name: KairoRenderer CI
+
+on:
+  push:
+    branches: [main, agent/phase1-5-cross-platform-ci]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu Clang
+            os: ubuntu-latest
+            platform: linux
+          - name: macOS LLVM
+            os: macos-14
+            platform: macos
+          - name: Windows MSVC
+            os: windows-2022
+            platform: windows
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Activate MSVC
+        if: matrix.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build libglfw3-dev libvulkan-dev glslang-tools xvfb
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
+
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          brew install cmake ninja llvm glfw vulkan-headers vulkan-loader molten-vk glslang
+          echo "CC=$(brew --prefix llvm)/bin/clang" >> "$GITHUB_ENV"
+          echo "CXX=$(brew --prefix llvm)/bin/clang++" >> "$GITHUB_ENV"
+
+      - name: Install Windows dependencies
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          choco install ninja vulkan-sdk -y --no-progress
+          $vcpkg = "$env:VCPKG_INSTALLATION_ROOT"
+          if (-not $vcpkg) { $vcpkg = "C:\vcpkg" }
+          & "$vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          & "$vcpkg\vcpkg.exe" install glfw3 vulkan-headers vulkan-loader --triplet x64-windows
+          "CMAKE_PREFIX_PATH=$vcpkg\installed\x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$vcpkg\installed\x64-windows\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          $validator = Get-ChildItem C:\VulkanSDK -Filter glslangValidator.exe -Recurse | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $validator) { throw "glslangValidator.exe not found" }
+          $validator.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test on Linux virtual display
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" ctest --test-dir build --output-on-failure
+
+      - name: Test
+        if: matrix.platform != 'linux'
+        run: ctest --test-dir build --output-on-failure
