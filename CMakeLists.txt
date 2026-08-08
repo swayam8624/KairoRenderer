@@ -54,8 +54,7 @@ if(NOT TARGET KairoMath)
         include(FetchContent)
         FetchContent_Declare(KairoMath
             GIT_REPOSITORY https://github.com/swayam8624/KairoMath.git
-            GIT_TAG ${KAIRO_RENDERER_MATH_REVISION}
-            GIT_SHALLOW TRUE)
+            GIT_TAG ${KAIRO_RENDERER_MATH_REVISION})
         FetchContent_MakeAvailable(KairoMath)
     endif()
 endif()
@@ -70,8 +69,7 @@ if(NOT TARGET KairoGeometry)
         include(FetchContent)
         FetchContent_Declare(KairoGeometry
             GIT_REPOSITORY https://github.com/swayam8624/KairoGeometry.git
-            GIT_TAG ${KAIRO_RENDERER_GEOMETRY_REVISION}
-            GIT_SHALLOW TRUE)
+            GIT_TAG ${KAIRO_RENDERER_GEOMETRY_REVISION})
         FetchContent_MakeAvailable(KairoGeometry)
     endif()
 endif()
@@ -86,8 +84,7 @@ if(NOT TARGET KairoAssets)
         include(FetchContent)
         FetchContent_Declare(KairoAssets
             GIT_REPOSITORY https://github.com/swayam8624/KairoAssets.git
-            GIT_TAG ${KAIRO_RENDERER_ASSETS_REVISION}
-            GIT_SHALLOW TRUE)
+            GIT_TAG ${KAIRO_RENDERER_ASSETS_REVISION})
         FetchContent_MakeAvailable(KairoAssets)
     endif()
 endif()
