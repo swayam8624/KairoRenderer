@@ -19,7 +19,12 @@ TEST_CASE("Physics debug bridge translates every collider vocabulary", "[KairoRe
     DebugShape box; box.Kind = DebugShapeKind::Box; box.HalfExtents = { 1.0f, 1.0f, 1.0f };
     box.Rotation = kairo::foundation::math::AxisAngle(Vec3f::Up(), 0.5f); box.IsTrigger = true;
     DebugShape plane; plane.Kind = DebugShapeKind::Plane; plane.PlaneNormal = Vec3f::Up();
-    shapes = { sphere, capsule, aabb, box, plane };
+    DebugShape hull; hull.Kind = DebugShapeKind::ConvexHull;
+    hull.Vertices = { { 0.0f, 1.0f, 0.0f }, { -1.0f, -1.0f, -1.0f },
+        { 1.0f, -1.0f, -1.0f }, { 0.0f, -1.0f, 1.0f } };
+    hull.Faces = { { 0u, 1u, 2u }, { 0u, 2u, 3u },
+        { 0u, 3u, 1u }, { 1u, 3u, 2u } };
+    shapes = { sphere, capsule, aabb, box, plane, hull };
 
     PhysicsDebugDrawOptions options;
     options.CurvedShapeSegments = 4u;
@@ -27,8 +32,8 @@ TEST_CASE("Physics debug bridge translates every collider vocabulary", "[KairoRe
     options.PlaneGridSpacing = 1.0f;
     const auto draw = BuildPhysicsDebugDraw(shapes, {}, {}, options);
 
-    // sphere 12 + capsule 28 + AABB 12 + OBB 12 + three plane rows/columns 6
-    CHECK(draw.Lines().size() == 70u);
+    // sphere 12 + capsule 28 + AABB 12 + OBB 12 + plane 6 + hull edges 6
+    CHECK(draw.Lines().size() == 76u);
     CHECK(draw.Lines()[0].Color.G == 0.95f);
     CHECK(draw.Lines()[12].Color.R == 0.48f);
     CHECK(draw.Lines()[52].Color.B == 1.0f);

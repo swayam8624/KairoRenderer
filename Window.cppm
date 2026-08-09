@@ -10,6 +10,7 @@ module;
 export module Kairo.Renderer.Window;
 
 import Kairo.Renderer.Types;
+import Kairo.Renderer.GraphicsBackend;
 
 export namespace kairo::renderer
 {
@@ -50,10 +51,24 @@ export namespace kairo::renderer
     class Window final
     {
     public:
-        explicit Window(const WindowDesc& desc)
+        explicit Window(const WindowDesc& desc, GraphicsBackend backend)
         {
             ValidateWindowDesc(desc);
-            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+            if (backend == GraphicsBackend::OpenGL)
+            {
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+                glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+                glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
+#if defined(__APPLE__)
+                glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+#endif
+            }
+            else
+            {
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+            }
             glfwWindowHint(GLFW_RESIZABLE, desc.Resizable ? GLFW_TRUE : GLFW_FALSE);
             m_Handle = glfwCreateWindow(
                 static_cast<int>(desc.Width), static_cast<int>(desc.Height), desc.Title.c_str(), nullptr, nullptr);

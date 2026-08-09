@@ -1,6 +1,9 @@
 # KairoRenderer
 
-`KairoRenderer` is Kairo's real-time Vulkan renderer. It is deliberately
+`KairoRenderer` is Kairo's multi-backend real-time rendering boundary. Vulkan,
+OpenGL 4.1, and native Metal are complete runtime implementations in the
+current checkout. A Windows-gated Direct3D 12 implementation and native smoke
+registrations are present; Windows CI is its required execution gate. It is deliberately
 separate from `KairoRayTracer`: the ray tracer produces offline CPU images,
 while this repository owns an interactive window, GPU device path, viewport,
 debug draw, and later editor rendering.
@@ -17,6 +20,32 @@ shadow map with slope/constant depth bias and 3x3 PCF, and a
 dynamic world-space debug-line pipeline. `KairoRendererClear` presents two
 independently transformed depth-tested mesh instances casting shadows onto a
 receiver with world axes in a real native window.
+
+## Graphics backend selection
+
+Hosts select a graphics API through `WindowDesc::Backend` or
+`--renderer auto|vulkan|metal|d3d12|opengl`. Selection happens before GLFW,
+window, or device creation. Explicit requests never silently change APIs.
+
+Automatic policy is deterministic:
+
+| Platform | Preferred | Fallback order | Implemented now |
+| --- | --- | --- | --- |
+| macOS | Metal | Vulkan, OpenGL | Metal, Vulkan through MoltenVK, OpenGL 4.1 |
+| Windows | Direct3D 12 | Vulkan, OpenGL | Direct3D 12, Vulkan, OpenGL 4.1 |
+| Linux | Vulkan | OpenGL | Vulkan; OpenGL 4.1 |
+
+Metal implements the same scene, resource, shadow, debug, picking, capture,
+presentation, and Editor overlay contract as Vulkan and is covered by native
+macOS Editor/Player smoke tests. Direct3D 12 owns a DXGI swap chain, native
+resource uploads, PBR/shadow pipelines, readback/picking, presentation, and
+Dear ImGui overlay bridge behind `WIN32`; it cannot be executed by a macOS
+build, so the Windows CI lane is its authoritative runtime gate. OpenGL is
+compiled on all three desktop hosts and implements the same scene,
+material, texture, shadow, debug-draw, picking, capture, and Editor overlay
+surface as Vulkan. `CompiledGraphicsBackends()` is the authoritative runtime
+capability snapshot; `SelectGraphicsBackend()` is covered by a synthetic
+cross-platform policy matrix in `KairoRendererTests`.
 
 `PBRMaterial` validates base color, metallic-roughness, normal, occlusion,
 emissive, alpha-mask, and alpha-blend channels. Vulkan images preserve imported
@@ -58,8 +87,27 @@ runtime.SetDirectionalShadowSettings(shadows);
 `Enabled` disables attenuation but the renderer still establishes a valid
 sampled-image layout when meshes are submitted. This avoids an invalid first
 frame when tools toggle shadows before rendering. M10 intentionally covers one
-directional light; cascades, point-light cube maps, atlases, and render-graph
-scheduling are later milestones rather than hidden partial implementations.
+directional light; cascades, point-light cube maps, and atlases are later
+milestones rather than hidden partial implementations.
+
+## Render Graph And Frame Lifetime
+
+`RenderGraph` is the backend-neutral scheduling substrate. It validates reads
+before writes, derives resource hazards, merges explicit dependencies, rejects
+cycles, emits deterministic state transitions, computes transient lifetimes and
+alias slots, and records CPU pass timings. `RendererRuntime::DrawFrame()` routes
+every backend frame through this measured schedule and exposes the latest
+`RenderGraphExecutionProfile`.
+
+The graph currently treats each native backend frame as one envelope pass.
+Moving shadow, scene, tooling, readback, and presentation recording into common
+logical passes is the next migration; the documentation does not claim native
+barriers or physical transient allocations before that work lands.
+
+Metal tracks its last submitted command buffer. Normal frames remain
+asynchronous, while capture, picking, target rebuild, resource destruction, and
+shutdown wait for completion before CPU access or native-object release. A
+command-buffer execution error is surfaced rather than returning stale pixels.
 
 ## Build
 
@@ -71,7 +119,7 @@ ctest --test-dir build --output-on-failure
 ./build/KairoRendererClear
 ```
 
-The sample creates a native Vulkan window and continuously presents submitted
+The sample creates a native renderer window and continuously presents submitted
 mesh instances plus debug geometry until the window is closed. Resizing recreates
 color/depth framebuffers; minimizing pauses submission until the framebuffer
 is restored.
@@ -141,8 +189,9 @@ than inverted in the vertex shader.
 
 ## Tooling Overlay Contract
 
-`RendererRuntime::BackendContext()` returns a non-owning Vulkan handle snapshot
-for editor/tool backends. `SetOverlayRecorder()` installs a callback invoked
+Vulkan, OpenGL, Metal, and Direct3D 12 each expose a narrow native tooling
+adapter through `RendererRuntime`; the Editor selects only the adapter matching
+the active backend. Each callback is invoked
 inside the active scene render pass. The callback may record overlay draw calls
 but never owns command-buffer reset, render-pass begin/end, queue submission,
 or presentation. This is the integration boundary used by KairoEditor; the
@@ -158,7 +207,7 @@ KairoGeometry  ../Foundation/KairoGeometry -> GitHub fallback
 KairoAssets    ../KairoAssets -> GitHub fallback
 ```
 
-On macOS, the project links GLFW and the Vulkan loader; the loader discovers
+On macOS, the project links GLFW, OpenGL, and the Vulkan loader; the loader discovers
 MoltenVK as the installed Vulkan ICD. The Homebrew headers and loader are
 required for compilation and GLFW surface discovery:
 
@@ -170,7 +219,9 @@ When configured on macOS, `KairoRenderer` selects Homebrew's MoltenVK ICD only
 if `VK_ICD_FILENAMES` is unset. An explicit environment value is preserved for
 driver debugging or a custom Vulkan setup.
 
-The renderer uses Vulkan API design with MoltenVK as the macOS implementation.
+The Vulkan backend uses MoltenVK on macOS. The OpenGL backend uses a pinned,
+generated GLAD 4.1-core loader and embedded GLSL so clean runtime deployments do
+not depend on source-tree shader files.
 Physics remains independent: renderer examples may consume physics debug data,
 but `KairoPhysicsEngine` never imports this repository.
 
@@ -190,4 +241,6 @@ M10 directional shadow map + bias + 3x3 PCF        complete
 M11 Vulkan textures + PBR channel descriptors       complete
 M12 scene-authored multi-light and environment data complete
 M13 hierarchy/material preserving glTF adapter      complete
+M14 native-first Vulkan/Metal/D3D12/OpenGL façade   complete
+M15 render-graph validation/lifetimes/profiling     complete (native pass migration next)
 ```

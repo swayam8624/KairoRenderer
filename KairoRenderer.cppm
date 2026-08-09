@@ -1,5 +1,7 @@
 export module Kairo.Renderer;
+export import Kairo.Renderer.GraphicsBackend;
 export import Kairo.Renderer.Types;
+export import Kairo.Renderer.RenderGraph;
 export import Kairo.Renderer.Camera;
 export import Kairo.Renderer.Mesh;
 export import Kairo.Renderer.Material;
@@ -22,4 +24,13 @@ export import Kairo.Renderer.VulkanViewportTarget;
 export import Kairo.Renderer.VulkanShadowMap;
 export import Kairo.Renderer.VulkanBackendContext;
 export import Kairo.Renderer.VulkanTriangle;
+#if defined(KAIRO_RENDERER_HAS_OPENGL_BACKEND)
+export import Kairo.Renderer.OpenGLRuntime;
+#endif
+#if defined(KAIRO_RENDERER_HAS_METAL_BACKEND)
+export import Kairo.Renderer.MetalRuntime;
+#endif
+#if defined(KAIRO_RENDERER_HAS_D3D12_BACKEND)
+export import Kairo.Renderer.Direct3D12Runtime;
+#endif
 export import Kairo.Renderer.Runtime;

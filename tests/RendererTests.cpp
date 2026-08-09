@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <limits>
+#include <vector>
 
 import Kairo.Renderer;
 import Kairo.Foundation.Math;
@@ -12,6 +13,127 @@ import Kairo.Assets.GltfSceneArtifact;
 import Kairo.Assets.TextureArtifact;
 
 using namespace kairo::renderer;
+
+TEST_CASE("Render graph compiles hazards transitions and transient aliases",
+    "[KairoRenderer][RenderGraph]")
+{
+    RenderGraph graph;
+    const auto shadow = graph.AddResource({ "Shadow", RenderResourceKind::Texture,
+        4096u, true });
+    const auto intermediate = graph.AddResource({ "Intermediate",
+        RenderResourceKind::Texture, 4096u, true });
+    const auto post = graph.AddResource({ "Post", RenderResourceKind::Texture,
+        4096u, true });
+    const auto swapchain = graph.AddResource({ "Swapchain",
+        RenderResourceKind::External, 0u, false, RenderResourceState::Present });
+    std::vector<int> execution;
+    graph.AddPass("Shadow", { { shadow, RenderAccessMode::Write,
+        RenderResourceState::DepthAttachment } }, [&] { execution.push_back(1); });
+    graph.AddPass("Lighting", {
+        { shadow, RenderAccessMode::Read, RenderResourceState::ShaderRead },
+        { intermediate, RenderAccessMode::Write,
+            RenderResourceState::ColorAttachment } },
+        [&] { execution.push_back(2); });
+    graph.AddPass("Post", {
+        { intermediate, RenderAccessMode::Read, RenderResourceState::ShaderRead },
+        { post, RenderAccessMode::Write, RenderResourceState::ColorAttachment } },
+        [&] { execution.push_back(3); });
+    graph.AddPass("Present", {
+        { post, RenderAccessMode::Read, RenderResourceState::ShaderRead },
+        { swapchain, RenderAccessMode::Write, RenderResourceState::Present } },
+        [&] { execution.push_back(4); });
+
+    const auto compiled = graph.Compile();
+    REQUIRE(compiled.PassCount() == 4u);
+    CHECK(compiled.PassName(0u) == "Shadow");
+    CHECK(compiled.PassName(3u) == "Present");
+    REQUIRE(compiled.Transitions(1u).size() == 2u);
+    CHECK(compiled.Transitions(1u)[0].Before ==
+        RenderResourceState::DepthAttachment);
+    const auto profile = compiled.Execute();
+    CHECK(execution == std::vector<int>{ 1, 2, 3, 4 });
+    REQUIRE(profile.Passes.size() == 4u);
+    CHECK(profile.TotalMilliseconds >= 0.0);
+    REQUIRE(compiled.Lifetimes().size() == 4u);
+    CHECK(compiled.Lifetimes()[shadow.Value].AliasSlot ==
+        compiled.Lifetimes()[post.Value].AliasSlot);
+    CHECK(compiled.Lifetimes()[shadow.Value].AliasSlot !=
+        compiled.Lifetimes()[intermediate.Value].AliasSlot);
+}
+
+TEST_CASE("Render graph rejects invalid reads and dependency cycles",
+    "[KairoRenderer][RenderGraph]")
+{
+    RenderGraph uninitialized;
+    const auto resource = uninitialized.AddResource({ "Transient",
+        RenderResourceKind::Buffer, 64u, true });
+    uninitialized.AddPass("Read", { { resource, RenderAccessMode::Read,
+        RenderResourceState::ShaderRead } });
+    REQUIRE_THROWS_AS(uninitialized.Compile(), std::logic_error);
+
+    RenderGraph cyclic;
+    const auto external = cyclic.AddResource({ "External",
+        RenderResourceKind::External, 0u, false,
+        RenderResourceState::ShaderRead });
+    const auto first = cyclic.AddPass("First", { { external,
+        RenderAccessMode::Read, RenderResourceState::ShaderRead } });
+    const auto second = cyclic.AddPass("Second", { { external,
+        RenderAccessMode::Read, RenderResourceState::ShaderRead } });
+    cyclic.DependsOn(first, second);
+    cyclic.DependsOn(second, first);
+    REQUIRE_THROWS_AS(cyclic.Compile(), std::logic_error);
+}
+
+TEST_CASE("Graphics backend selection is deterministic across desktop platforms",
+    "[KairoRenderer][Backend]")
+{
+    const GraphicsBackendAvailability all{ true, true, true, true };
+    CHECK(SelectGraphicsBackend(GraphicsBackend::Automatic, all, HostPlatform::MacOS) ==
+        GraphicsBackend::Metal);
+    CHECK(SelectGraphicsBackend(GraphicsBackend::Automatic, all, HostPlatform::Windows) ==
+        GraphicsBackend::Direct3D12);
+    CHECK(SelectGraphicsBackend(GraphicsBackend::Automatic, all, HostPlatform::Linux) ==
+        GraphicsBackend::Vulkan);
+
+    const GraphicsBackendAvailability portable{ true, false, false, true };
+    CHECK(SelectGraphicsBackend(GraphicsBackend::Automatic, portable, HostPlatform::MacOS) ==
+        GraphicsBackend::Vulkan);
+    CHECK(SelectGraphicsBackend(GraphicsBackend::Automatic,
+        { false, false, false, true }, HostPlatform::Windows) == GraphicsBackend::OpenGL);
+}
+
+TEST_CASE("Graphics backend requests reject unavailable or incompatible APIs",
+    "[KairoRenderer][Backend]")
+{
+    CHECK(ParseGraphicsBackend("auto") == GraphicsBackend::Automatic);
+    CHECK(ParseGraphicsBackend("d3d12") == GraphicsBackend::Direct3D12);
+    CHECK(ParseGraphicsBackend("opengl") == GraphicsBackend::OpenGL);
+    REQUIRE_THROWS_AS(ParseGraphicsBackend("software"), std::invalid_argument);
+    REQUIRE_THROWS_AS(SelectGraphicsBackend(GraphicsBackend::Metal,
+        { true, true, true, true }, HostPlatform::Windows), std::invalid_argument);
+    REQUIRE_THROWS_AS(SelectGraphicsBackend(GraphicsBackend::Direct3D12,
+        { true, true, false, true }, HostPlatform::Windows), std::runtime_error);
+    REQUIRE_THROWS_AS(SelectGraphicsBackend(GraphicsBackend::Automatic,
+        {}, HostPlatform::Linux), std::runtime_error);
+}
+
+TEST_CASE("Compiled graphics backend availability matches the host build",
+    "[KairoRenderer][Backend]")
+{
+    const GraphicsBackendAvailability available = CompiledGraphicsBackends();
+    CHECK(available.Vulkan);
+    CHECK(available.OpenGL);
+#if defined(__APPLE__)
+    CHECK(available.Metal);
+#else
+    CHECK_FALSE(available.Metal);
+#endif
+#if defined(_WIN32)
+    CHECK(available.Direct3D12);
+#else
+    CHECK_FALSE(available.Direct3D12);
+#endif
+}
 
 TEST_CASE("Renderer window descriptions validate required dimensions", "[KairoRenderer][Types]")
 {

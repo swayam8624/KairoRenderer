@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(KairoRenderer LANGUAGES CXX)
+project(KairoRenderer LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,7 +18,30 @@ endif()
 find_package(glfw3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
 find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED)
+find_package(OpenGL REQUIRED)
+
+# OpenGL symbols above the Windows 1.1 import library must be loaded from the
+# active context. Generate one pinned 4.1-core loader for every host so the
+# backend source and validation behavior are identical on macOS/Linux/Windows.
+# glad 0.1.x carries a dependency-free generator, avoiding pip/Jinja setup on
+# clean engine and CI machines.
+include(FetchContent)
+block()
+    set(GLAD_PROFILE core CACHE STRING "" FORCE)
+    set(GLAD_API "gl=4.1" CACHE STRING "" FORCE)
+    set(GLAD_REPRODUCIBLE ON CACHE BOOL "" FORCE)
+    set(GLAD_INSTALL OFF CACHE BOOL "" FORCE)
+    # CMake 4 removed implicit compatibility below 3.5; glad's small legacy
+    # project is policy-clean at 3.5 and needs this explicit floor.
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    FetchContent_Declare(KairoGlad
+        GIT_REPOSITORY https://github.com/Dav1dde/glad.git
+        GIT_TAG v0.1.36
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(KairoGlad)
+endblock()
 if(APPLE)
+    enable_language(OBJCXX)
     find_program(KAIRO_RENDERER_BREW_EXECUTABLE NAMES brew)
     if(KAIRO_RENDERER_BREW_EXECUTABLE)
         execute_process(
@@ -127,9 +150,10 @@ add_custom_target(KairoRendererShaders DEPENDS
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv")
 
-add_library(KairoRenderer)
-target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
+set(KAIRO_RENDERER_MODULES
+    GraphicsBackend.cppm
     RendererTypes.cppm
+    RenderGraph.cppm
     Camera.cppm
     Mesh.cppm
     Texture.cppm
@@ -153,22 +177,54 @@ target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRE
     VulkanShadowMap.cppm
     VulkanBackendContext.cppm
     VulkanTriangle.cppm
+    VulkanRenderer.cppm
     Renderer.cppm
     KairoRenderer.cppm)
+list(INSERT KAIRO_RENDERER_MODULES -2
+    OpenGLShaders.cppm
+    OpenGLRenderer.cppm)
+if(APPLE)
+    list(INSERT KAIRO_RENDERER_MODULES -2 MetalRenderer.cppm)
+endif()
+if(WIN32)
+    list(INSERT KAIRO_RENDERER_MODULES -2 Direct3D12Renderer.cppm)
+endif()
+
+add_library(KairoRenderer)
+target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
+    ${KAIRO_RENDERER_MODULES})
 add_dependencies(KairoRenderer KairoRendererShaders)
 target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_SHADER_DIR="${KAIRO_RENDERER_SHADER_OUTPUT_DIR}")
+target_compile_definitions(KairoRenderer PUBLIC
+    KAIRO_RENDERER_HAS_VULKAN_BACKEND=1
+    KAIRO_RENDERER_HAS_OPENGL_BACKEND=1)
 if(APPLE)
+    target_sources(KairoRenderer PRIVATE detail/MetalBackend.mm)
+    set_source_files_properties(detail/MetalBackend.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc")
+    target_compile_definitions(KairoRenderer PUBLIC
+        KAIRO_RENDERER_HAS_METAL_BACKEND=1)
     target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_MOLTENVK_ICD_FILE="${KAIRO_MOLTENVK_ICD_FILE}")
 endif()
+if(WIN32)
+    target_sources(KairoRenderer PRIVATE detail/Direct3D12Backend.cpp)
+    target_compile_definitions(KairoRenderer PUBLIC
+        KAIRO_RENDERER_HAS_D3D12_BACKEND=1)
+endif()
 target_compile_definitions(KairoRenderer PUBLIC $<$<BOOL:${KAIRO_RENDERER_ENABLE_VALIDATION}>:KAIRO_RENDERER_ENABLE_VALIDATION=1>)
-target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry KairoAssets glfw Vulkan::Vulkan)
+target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry KairoAssets
+    glfw Vulkan::Vulkan OpenGL::GL glad)
 if(APPLE)
     target_link_libraries(KairoRenderer PUBLIC
         "-framework Metal"
+        "-framework AppKit"
         "-framework QuartzCore"
         "-framework CoreFoundation"
         "-framework IOKit"
         "-framework IOSurface")
+endif()
+if(WIN32)
+    target_link_libraries(KairoRenderer PUBLIC d3d12 dxgi d3dcompiler)
 endif()
 
 if(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE)

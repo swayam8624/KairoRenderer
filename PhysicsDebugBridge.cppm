@@ -1,8 +1,11 @@
 module;
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <set>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 export module Kairo.Renderer.PhysicsDebugBridge;
@@ -115,6 +118,27 @@ export namespace kairo::renderer
                 case DebugShapeKind::Box:
                     result.AddOBB(shape.Center, shape.HalfExtents, shape.Rotation, color);
                     break;
+                case DebugShapeKind::ConvexHull:
+                {
+                    std::set<std::pair<std::uint32_t, std::uint32_t>> edges;
+                    for (const auto& face : shape.Faces)
+                    {
+                        if (face[0] >= shape.Vertices.size() ||
+                            face[1] >= shape.Vertices.size() ||
+                            face[2] >= shape.Vertices.size())
+                            throw std::invalid_argument(
+                                "Convex debug shape contains an invalid face index.");
+                        for (std::size_t edge = 0u; edge < 3u; ++edge)
+                        {
+                            const auto endpoints = std::minmax(
+                                face[edge], face[(edge + 1u) % 3u]);
+                            if (edges.emplace(endpoints.first, endpoints.second).second)
+                                result.AddLine(shape.Vertices[endpoints.first],
+                                    shape.Vertices[endpoints.second], color);
+                        }
+                    }
+                    break;
+                }
                 }
             }
         }
