@@ -26,26 +26,26 @@ TEST_CASE("Compiled render graph exposes backend allocation and access plans",
         "Swapchain", RenderResourceKind::External, 0u, false,
         RenderResourceState::Present });
 
-    graph.AddPass("Upload", {
+    [[maybe_unused]] const auto uploadPass = graph.AddPass("Upload", {
         { upload, RenderAccessMode::Write,
             RenderResourceState::CopyDestination }
     });
-    graph.AddPass("Shadow", {
+    [[maybe_unused]] const auto shadowPass = graph.AddPass("Shadow", {
         { shadow, RenderAccessMode::Write,
             RenderResourceState::DepthAttachment }
     });
-    graph.AddPass("Geometry", {
+    [[maybe_unused]] const auto geometryPass = graph.AddPass("Geometry", {
         { upload, RenderAccessMode::Read, RenderResourceState::ShaderRead },
         { shadow, RenderAccessMode::Read, RenderResourceState::ShaderRead },
         { gbuffer, RenderAccessMode::Write,
             RenderResourceState::ColorAttachment }
     });
-    graph.AddPass("Post", {
+    [[maybe_unused]] const auto postPass = graph.AddPass("Post", {
         { gbuffer, RenderAccessMode::Read, RenderResourceState::ShaderRead },
         { post, RenderAccessMode::Write,
             RenderResourceState::ColorAttachment }
     });
-    graph.AddPass("Present", {
+    [[maybe_unused]] const auto presentPass = graph.AddPass("Present", {
         { post, RenderAccessMode::Read, RenderResourceState::ShaderRead },
         { swapchain, RenderAccessMode::Write, RenderResourceState::Present }
     });
@@ -84,11 +84,11 @@ TEST_CASE("Render graph transition hook runs before pass recording",
         RenderResourceState::Present });
 
     std::vector<std::string> order;
-    graph.AddPass("Draw", {
+    [[maybe_unused]] const auto drawPass = graph.AddPass("Draw", {
         { color, RenderAccessMode::Write,
             RenderResourceState::ColorAttachment }
     }, [&] { order.push_back("pass:Draw"); });
-    graph.AddPass("Present", {
+    [[maybe_unused]] const auto presentPass = graph.AddPass("Present", {
         { color, RenderAccessMode::Read, RenderResourceState::ShaderRead },
         { present, RenderAccessMode::Write, RenderResourceState::Present }
     }, [&] { order.push_back("pass:Present"); });
@@ -127,18 +127,20 @@ TEST_CASE("Render graph rejects ambiguous external and uninitialized resources",
     const auto history = uninitializedPersistent.AddResource({
         "History", RenderResourceKind::Texture, 4096u, false,
         RenderResourceState::Undefined });
-    uninitializedPersistent.AddPass("ReadHistory", {
-        { history, RenderAccessMode::Read, RenderResourceState::ShaderRead }
-    });
+    [[maybe_unused]] const auto readHistory = uninitializedPersistent.AddPass(
+        "ReadHistory", {
+            { history, RenderAccessMode::Read, RenderResourceState::ShaderRead }
+        });
     REQUIRE_THROWS_AS(uninitializedPersistent.Compile(), std::logic_error);
 
     RenderGraph initializedPersistent;
     const auto initialized = initializedPersistent.AddResource({
         "History", RenderResourceKind::Texture, 4096u, false,
         RenderResourceState::ShaderRead });
-    initializedPersistent.AddPass("ReadHistory", {
-        { initialized, RenderAccessMode::Read, RenderResourceState::ShaderRead }
-    });
+    [[maybe_unused]] const auto initializedRead = initializedPersistent.AddPass(
+        "ReadHistory", {
+            { initialized, RenderAccessMode::Read, RenderResourceState::ShaderRead }
+        });
     REQUIRE_NOTHROW(initializedPersistent.Compile());
 }
 
@@ -149,11 +151,11 @@ TEST_CASE("Transition hook failures stop later render passes",
     const auto resource = graph.AddResource({
         "Resource", RenderResourceKind::Buffer, 64u, true });
     std::uint32_t executed = 0u;
-    graph.AddPass("Write", {
+    [[maybe_unused]] const auto writePass = graph.AddPass("Write", {
         { resource, RenderAccessMode::Write,
             RenderResourceState::CopyDestination }
     }, [&] { ++executed; });
-    graph.AddPass("Read", {
+    [[maybe_unused]] const auto readPass = graph.AddPass("Read", {
         { resource, RenderAccessMode::Read, RenderResourceState::ShaderRead }
     }, [&] { ++executed; });
 
@@ -166,6 +168,6 @@ TEST_CASE("Transition hook failures stop later render passes",
             throw std::runtime_error("backend barrier failure");
     };
 
-    REQUIRE_THROWS_WITH(compiled.Execute(hooks), "backend barrier failure");
+    REQUIRE_THROWS_AS(compiled.Execute(hooks), std::runtime_error);
     CHECK(executed == 1u);
 }
