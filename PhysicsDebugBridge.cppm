@@ -3,6 +3,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -78,6 +79,29 @@ export namespace kairo::renderer
                     origin + bitangent * options.PlaneHalfExtent + tangent * offset, color);
             }
         }
+
+        inline void AddIndexedMeshEdges(DebugDrawList& result,
+            const kairo::foundation::physics::DebugShape& shape,
+            DebugColor color)
+        {
+            std::set<std::pair<std::uint32_t, std::uint32_t>> edges;
+            for (const auto& face : shape.Faces)
+            {
+                if (face[0] >= shape.Vertices.size() ||
+                    face[1] >= shape.Vertices.size() ||
+                    face[2] >= shape.Vertices.size())
+                    throw std::invalid_argument(
+                        "Indexed physics debug shape contains an invalid face index.");
+                for (std::size_t edge = 0u; edge < 3u; ++edge)
+                {
+                    const auto endpoints = std::minmax(
+                        face[edge], face[(edge + 1u) % 3u]);
+                    if (edges.emplace(endpoints.first, endpoints.second).second)
+                        result.AddLine(shape.Vertices[endpoints.first],
+                            shape.Vertices[endpoints.second], color);
+                }
+            }
+        }
     }
 
     /// Input: copied PhysicsEngine shape, AABB, and contact records.
@@ -119,26 +143,9 @@ export namespace kairo::renderer
                     result.AddOBB(shape.Center, shape.HalfExtents, shape.Rotation, color);
                     break;
                 case DebugShapeKind::ConvexHull:
-                {
-                    std::set<std::pair<std::uint32_t, std::uint32_t>> edges;
-                    for (const auto& face : shape.Faces)
-                    {
-                        if (face[0] >= shape.Vertices.size() ||
-                            face[1] >= shape.Vertices.size() ||
-                            face[2] >= shape.Vertices.size())
-                            throw std::invalid_argument(
-                                "Convex debug shape contains an invalid face index.");
-                        for (std::size_t edge = 0u; edge < 3u; ++edge)
-                        {
-                            const auto endpoints = std::minmax(
-                                face[edge], face[(edge + 1u) % 3u]);
-                            if (edges.emplace(endpoints.first, endpoints.second).second)
-                                result.AddLine(shape.Vertices[endpoints.first],
-                                    shape.Vertices[endpoints.second], color);
-                        }
-                    }
+                case DebugShapeKind::TriangleMesh:
+                    physics_debug_detail::AddIndexedMeshEdges(result, shape, color);
                     break;
-                }
                 }
             }
         }
