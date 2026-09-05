@@ -93,34 +93,34 @@ export namespace kairo::renderer
 
         void DrawFrame()
         {
-            m_LastFrameProfile = Visit([](auto& runtime)
-                -> RenderGraphExecutionProfile
+#if defined(KAIRO_RENDERER_HAS_OPENGL_BACKEND)
+            // OpenGL is the first backend whose native frame has been migrated
+            // into graph-owned stages. Keep this dispatch explicit while the
+            // remaining backends still use the proven generic BackendFrame
+            // envelope. This avoids constructing std::function callbacks from
+            // lambdas nested inside exported generic module code, which Clang/
+            // libc++ can mis-link on macOS C++ module builds.
+            if (m_Backend == GraphicsBackend::OpenGL)
             {
-                // A backend that has migrated its native frame into graph-owned
-                // stages publishes the resulting profile directly. Backends
-                // still awaiting migration remain inside one explicit envelope
-                // pass, so LastFrameProfile never fabricates pass granularity.
-                if constexpr (requires { runtime.LastFrameProfile(); })
+                OpenGLRendererRuntime& runtime = OpenGL();
+                runtime.DrawFrame();
+                m_LastFrameProfile = runtime.LastFrameProfile();
+                return;
+            }
+#endif
+
+            RenderGraph graph;
+            const auto nativeFrame = graph.AddResource({ "NativeFrame",
+                RenderResourceKind::External, 0u, false,
+                RenderResourceState::Present });
+            (void)graph.AddPass("BackendFrame",
+                { { nativeFrame, RenderAccessMode::ReadWrite,
+                    RenderResourceState::Present } },
+                [this]
                 {
-                    runtime.DrawFrame();
-                    return runtime.LastFrameProfile();
-                }
-                else
-                {
-                    RenderGraph graph;
-                    const auto nativeFrame = graph.AddResource({ "NativeFrame",
-                        RenderResourceKind::External, 0u, false,
-                        RenderResourceState::Present });
-                    (void)graph.AddPass("BackendFrame",
-                        { { nativeFrame, RenderAccessMode::ReadWrite,
-                            RenderResourceState::Present } },
-                        [&runtime]
-                        {
-                            runtime.DrawFrame();
-                        });
-                    return graph.Compile().Execute();
-                }
-            });
+                    Visit([](auto& runtime) { runtime.DrawFrame(); });
+                });
+            m_LastFrameProfile = graph.Compile().Execute();
         }
 
         /// Output: CPU-side pass recording timings for the most recently
