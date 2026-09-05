@@ -24,7 +24,11 @@ TEST_CASE("Physics debug bridge translates every collider vocabulary", "[KairoRe
         { 1.0f, -1.0f, -1.0f }, { 0.0f, -1.0f, 1.0f } };
     hull.Faces = { { 0u, 1u, 2u }, { 0u, 2u, 3u },
         { 0u, 3u, 1u }, { 1u, 3u, 2u } };
-    shapes = { sphere, capsule, aabb, box, plane, hull };
+    DebugShape mesh; mesh.Kind = DebugShapeKind::TriangleMesh;
+    mesh.Vertices = { { -1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f },
+        { 0.0f, 1.0f, 0.0f } };
+    mesh.Faces = { { 0u, 1u, 2u } };
+    shapes = { sphere, capsule, aabb, box, plane, hull, mesh };
 
     PhysicsDebugDrawOptions options;
     options.CurvedShapeSegments = 4u;
@@ -32,11 +36,20 @@ TEST_CASE("Physics debug bridge translates every collider vocabulary", "[KairoRe
     options.PlaneGridSpacing = 1.0f;
     const auto draw = BuildPhysicsDebugDraw(shapes, {}, {}, options);
 
-    // sphere 12 + capsule 28 + AABB 12 + OBB 12 + plane 6 + hull edges 6
-    CHECK(draw.Lines().size() == 76u);
+    // sphere 12 + capsule 28 + AABB 12 + OBB 12 + plane 6 + hull edges 6 + mesh edges 3
+    CHECK(draw.Lines().size() == 79u);
     CHECK(draw.Lines()[0].Color.G == 0.95f);
     CHECK(draw.Lines()[12].Color.R == 0.48f);
     CHECK(draw.Lines()[52].Color.B == 1.0f);
+}
+
+TEST_CASE("Physics debug bridge rejects malformed indexed debug shapes", "[KairoRenderer][PhysicsDebug]")
+{
+    DebugShape mesh;
+    mesh.Kind = DebugShapeKind::TriangleMesh;
+    mesh.Vertices = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    mesh.Faces = { { 0u, 1u, 2u } };
+    REQUIRE_THROWS_AS(BuildPhysicsDebugDraw({ mesh }, {}, {}), std::invalid_argument);
 }
 
 TEST_CASE("Physics debug bridge toggles bounds and contact markers", "[KairoRenderer][PhysicsDebug]")
