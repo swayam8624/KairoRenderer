@@ -186,19 +186,23 @@ TEST_CASE("OpenGL runtime executes real graph-owned native frame stages",
 
     runtime.DrawFrame();
     const auto& baseProfile = runtime.LastFrameProfile();
-    REQUIRE(baseProfile.Passes.size() == 3u);
-    CHECK(baseProfile.Passes[0u].Name == "Viewport");
-    CHECK(baseProfile.Passes[1u].Name == "Blit");
-    CHECK(baseProfile.Passes[2u].Name == "Present");
+    REQUIRE(baseProfile.Passes.size() == 5u);
+    CHECK(baseProfile.Passes[0u].Name == "Opaque");
+    CHECK(baseProfile.Passes[1u].Name == "Transparent");
+    CHECK(baseProfile.Passes[2u].Name == "Debug");
+    CHECK(baseProfile.Passes[3u].Name == "Blit");
+    CHECK(baseProfile.Passes[4u].Name == "Present");
 
     runtime.RequestViewportCapture();
     runtime.DrawFrame();
     const auto& captureProfile = runtime.LastFrameProfile();
-    REQUIRE(captureProfile.Passes.size() == 4u);
-    CHECK(captureProfile.Passes[0u].Name == "Viewport");
-    CHECK(captureProfile.Passes[1u].Name == "Readback");
-    CHECK(captureProfile.Passes[2u].Name == "Blit");
-    CHECK(captureProfile.Passes[3u].Name == "Present");
+    REQUIRE(captureProfile.Passes.size() == 6u);
+    CHECK(captureProfile.Passes[0u].Name == "Opaque");
+    CHECK(captureProfile.Passes[1u].Name == "Transparent");
+    CHECK(captureProfile.Passes[2u].Name == "Debug");
+    CHECK(captureProfile.Passes[3u].Name == "Readback");
+    CHECK(captureProfile.Passes[4u].Name == "Blit");
+    CHECK(captureProfile.Passes[5u].Name == "Present");
     const auto capture = runtime.TakeViewportCapture();
     REQUIRE(capture.has_value());
     CHECK(capture->Width == 64u);
@@ -209,11 +213,13 @@ TEST_CASE("OpenGL runtime executes real graph-owned native frame stages",
     runtime.SetOpenGLOverlayRecorder([&] { overlayRecorded = true; });
     runtime.DrawFrame();
     const auto& toolingProfile = runtime.LastFrameProfile();
-    REQUIRE(toolingProfile.Passes.size() == 4u);
-    CHECK(toolingProfile.Passes[0u].Name == "Viewport");
-    CHECK(toolingProfile.Passes[1u].Name == "Blit");
-    CHECK(toolingProfile.Passes[2u].Name == "Tooling");
-    CHECK(toolingProfile.Passes[3u].Name == "Present");
+    REQUIRE(toolingProfile.Passes.size() == 6u);
+    CHECK(toolingProfile.Passes[0u].Name == "Opaque");
+    CHECK(toolingProfile.Passes[1u].Name == "Transparent");
+    CHECK(toolingProfile.Passes[2u].Name == "Debug");
+    CHECK(toolingProfile.Passes[3u].Name == "Blit");
+    CHECK(toolingProfile.Passes[4u].Name == "Tooling");
+    CHECK(toolingProfile.Passes[5u].Name == "Present");
     CHECK(overlayRecorded);
 }
 #endif
