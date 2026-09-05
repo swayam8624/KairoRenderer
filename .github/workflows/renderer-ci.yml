@@ -30,6 +30,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # GLAD 0.1.36 is the renderer's pinned generator and its packaged XML
+      # currently fails under the hosted Windows Python 3.14 parser. Keep the
+      # generator environment deterministic until the loader is upgraded or
+      # replaced by checked-in generated sources.
+      - name: Use GLAD-compatible Python
+        if: matrix.platform == 'windows'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
       - name: Activate MSVC
         if: matrix.platform == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
