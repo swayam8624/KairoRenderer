@@ -163,11 +163,9 @@ export namespace kairo::renderer
 
         [[nodiscard]] Window& NativeWindow() noexcept { return m_Window; }
 
-        /// Task: execute the OpenGL frame as real graph-owned native stages.
-        /// The viewport draw remains one native stage for now because opaque,
-        /// transparent, and debug rendering share one framebuffer lifetime;
-        /// later migration can split those callbacks without changing the
-        /// backend-neutral graph contract established here.
+        /// Task: execute the OpenGL frame as graph-owned native stages. Each
+        /// viewport phase owns a real callback while sharing the persistent
+        /// framebuffer/depth attachments through explicit graph dependencies.
         void DrawFrame()
         {
             glfwMakeContextCurrent(m_Window.NativeHandle());
@@ -209,16 +207,36 @@ export namespace kairo::renderer
                 });
             }
 
-            const auto viewportPass = graph.AddPass("Viewport", {
+            const auto opaquePass = graph.AddPass("Opaque", {
                 { shadow, RenderAccessMode::Read,
                     RenderResourceState::ShaderRead },
                 { viewport, RenderAccessMode::Write,
                     RenderResourceState::ColorAttachment }
             }, [this, &lightViewProjection, shadowIndex]
             {
-                DrawViewportPass(lightViewProjection, shadowIndex);
+                DrawOpaquePass(lightViewProjection, shadowIndex);
             });
-            if (shadowPass.has_value()) graph.DependsOn(viewportPass, *shadowPass);
+            if (shadowPass.has_value()) graph.DependsOn(opaquePass, *shadowPass);
+
+            const auto transparentPass = graph.AddPass("Transparent", {
+                { shadow, RenderAccessMode::Read,
+                    RenderResourceState::ShaderRead },
+                { viewport, RenderAccessMode::ReadWrite,
+                    RenderResourceState::ColorAttachment }
+            }, [this, &lightViewProjection, shadowIndex]
+            {
+                DrawTransparentPass(lightViewProjection, shadowIndex);
+            });
+            graph.DependsOn(transparentPass, opaquePass);
+
+            const auto debugPass = graph.AddPass("Debug", {
+                { viewport, RenderAccessMode::ReadWrite,
+                    RenderResourceState::ColorAttachment }
+            }, [this]
+            {
+                DrawDebugPass();
+            });
+            graph.DependsOn(debugPass, transparentPass);
 
             std::optional<RenderPassHandle> readbackPass;
             if (readbackRequested)
@@ -230,7 +248,7 @@ export namespace kairo::renderer
                 {
                     CompleteReadbacks();
                 });
-                graph.DependsOn(*readbackPass, viewportPass);
+                graph.DependsOn(*readbackPass, debugPass);
             }
 
             const auto blitPass = graph.AddPass("Blit", {
@@ -243,7 +261,7 @@ export namespace kairo::renderer
                 Present(windowWidth, windowHeight);
             });
             graph.DependsOn(blitPass,
-                readbackPass.has_value() ? *readbackPass : viewportPass);
+                readbackPass.has_value() ? *readbackPass : debugPass);
 
             std::optional<RenderPassHandle> toolingPass;
             if (toolingRequested)
@@ -737,9 +755,9 @@ export namespace kairo::renderer
             glBindFramebuffer(GL_FRAMEBUFFER, 0u);
         }
 
-        void DrawViewportPass(
+        void BeginViewportMeshPass(
             const kairo::foundation::math::Mat4f& lightViewProjection,
-            std::optional<std::size_t> shadowIndex)
+            std::optional<std::size_t> shadowIndex) const
         {
             glBindFramebuffer(GL_FRAMEBUFFER, m_ViewportFramebuffer);
             glViewport(0, 0, CheckedGLDimension(m_ViewportWidth),
@@ -747,6 +765,20 @@ export namespace kairo::renderer
             constexpr GLenum attachments[]{ GL_COLOR_ATTACHMENT0,
                 GL_COLOR_ATTACHMENT1 };
             glDrawBuffers(2, attachments);
+            glEnable(GL_DEPTH_TEST);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+            glUseProgram(m_MeshProgram);
+            UploadFrameUniforms(lightViewProjection, shadowIndex);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, m_ShadowDepth);
+        }
+
+        void DrawOpaquePass(
+            const kairo::foundation::math::Mat4f& lightViewProjection,
+            std::optional<std::size_t> shadowIndex)
+        {
+            BeginViewportMeshPass(lightViewProjection, shadowIndex);
             const GLfloat clearColor[]{ m_Environment.BackgroundColor.x,
                 m_Environment.BackgroundColor.y,
                 m_Environment.BackgroundColor.z, 1.0f };
@@ -755,26 +787,25 @@ export namespace kairo::renderer
             glClearBufferfv(GL_COLOR, 0, clearColor);
             glClearBufferuiv(GL_COLOR, 1, clearID);
             glClearBufferfv(GL_DEPTH, 0, clearDepth);
-            glEnable(GL_DEPTH_TEST);
             glDepthMask(GL_TRUE);
-            glEnable(GL_CULL_FACE);
-            glCullFace(GL_BACK);
             glDisable(GL_BLEND);
-
-            glUseProgram(m_MeshProgram);
-            UploadFrameUniforms(lightViewProjection, shadowIndex);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, m_ShadowDepth);
 
             for (std::size_t index = 0u; index < m_Draws.size(); ++index)
                 if (m_Draws[index].Material.AlphaMode != MaterialAlphaMode::Blend)
                     DrawOne(m_Draws[index]);
+        }
 
+        void DrawTransparentPass(
+            const kairo::foundation::math::Mat4f& lightViewProjection,
+            std::optional<std::size_t> shadowIndex)
+        {
+            BeginViewportMeshPass(lightViewProjection, shadowIndex);
             std::vector<std::size_t> transparent;
             transparent.reserve(m_Draws.size());
             for (std::size_t index = 0u; index < m_Draws.size(); ++index)
                 if (m_Draws[index].Material.AlphaMode == MaterialAlphaMode::Blend)
                     transparent.push_back(index);
+
             using kairo::foundation::math::Dot;
             using kairo::foundation::math::ExtractTranslation;
             const auto cameraPosition = m_Camera.Position();
@@ -795,6 +826,13 @@ export namespace kairo::renderer
                 glDepthMask(GL_TRUE);
                 glDisablei(GL_BLEND, 0u);
             }
+        }
+
+        void DrawDebugPass()
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, m_ViewportFramebuffer);
+            glViewport(0, 0, CheckedGLDimension(m_ViewportWidth),
+                CheckedGLDimension(m_ViewportHeight));
             DrawDebugLines();
             glBindVertexArray(0u);
             glUseProgram(0u);
