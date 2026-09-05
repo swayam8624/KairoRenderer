@@ -18,6 +18,7 @@ export module Kairo.Renderer.MetalRuntime;
 
 import Kairo.Foundation.Math;
 import Kairo.Renderer.Types;
+import Kairo.Renderer.RenderGraph;
 import Kairo.Renderer.GraphicsBackend;
 import Kairo.Renderer.Camera;
 import Kairo.Renderer.Window;
@@ -59,6 +60,7 @@ export namespace kairo::renderer
         std::optional<std::uint32_t> m_PickResult;
         bool m_CaptureRequested = false;
         std::optional<ViewportCapture> m_CaptureResult;
+        RenderGraphExecutionProfile m_LastFrameProfile;
 
     public:
         explicit MetalRendererRuntime(const WindowDesc& desc)
@@ -78,10 +80,18 @@ export namespace kairo::renderer
 
         [[nodiscard]] Window& NativeWindow() noexcept { return m_Window; }
 
+        /// Task: expose the native Metal render/present and readback
+        /// boundaries as real graph callbacks. The detail backend still owns
+        /// command encoding internally; the runtime graph owns when rendering,
+        /// picking, and capture execute relative to one another.
         void DrawFrame()
         {
             const auto [windowWidth, windowHeight] = m_Window.FramebufferExtent();
-            if (windowWidth == 0u || windowHeight == 0u) return;
+            if (windowWidth == 0u || windowHeight == 0u)
+            {
+                m_LastFrameProfile = {};
+                return;
+            }
             m_Backend.SetDrawableSize(windowWidth, windowHeight);
 
             std::vector<detail::MetalDraw> draws;
@@ -98,8 +108,6 @@ export namespace kairo::renderer
             Copy(m_Camera.View(), frame.View);
             auto projection =
                 m_Camera.Projection(m_ViewportWidth, m_ViewportHeight);
-            // ShowcaseCamera stores the Vulkan positive-viewport Y flip.
-            // Metal's viewport transform needs the unflipped clip-space Y.
             projection(1u, 1u) *= -1.0f;
             Copy(projection, frame.Projection);
             Copy(BuildLightViewProjection(), frame.LightViewProjection);
@@ -119,25 +127,71 @@ export namespace kairo::renderer
             frame.ReceiverBias = m_ShadowSettings.ReceiverBias;
             frame.ConstantDepthBias = m_ShadowSettings.ConstantDepthBias;
             frame.SlopeDepthBias = m_ShadowSettings.SlopeDepthBias;
-            m_Backend.Draw(frame);
 
-            if (m_PickRequest)
+            const bool pickRequested = m_PickRequest.has_value();
+            const bool captureRequested = m_CaptureRequested;
+
+            RenderGraph graph;
+            const auto viewport = graph.AddResource({ "MetalViewport",
+                RenderResourceKind::External, 0u, false,
+                RenderResourceState::ShaderRead });
+            const auto nativeFrame = graph.AddResource({ "MetalNativeFrame",
+                RenderResourceKind::External, 0u, false,
+                RenderResourceState::Present });
+
+            const auto renderPass = graph.AddPass("RenderPresent", {
+                { viewport, RenderAccessMode::Write,
+                    RenderResourceState::ColorAttachment },
+                { nativeFrame, RenderAccessMode::ReadWrite,
+                    RenderResourceState::Present }
+            }, [this, &frame]
             {
-                m_PickResult = m_Backend.Pick(
-                    m_PickRequest->first, m_PickRequest->second);
-                m_PickRequest.reset();
-            }
-            if (m_CaptureRequested)
+                m_Backend.Draw(frame);
+            });
+
+            std::optional<RenderPassHandle> tail;
+            if (pickRequested)
             {
-                auto native = m_Backend.Capture();
-                ViewportCapture capture;
-                capture.Width = native.Width;
-                capture.Height = native.Height;
-                capture.RGBA.assign(native.RGBA.get(),
-                    native.RGBA.get() + native.ByteCount);
-                m_CaptureResult = std::move(capture);
-                m_CaptureRequested = false;
+                const auto pickPass = graph.AddPass("PickReadback", {
+                    { viewport, RenderAccessMode::Read,
+                        RenderResourceState::CopySource }
+                }, [this]
+                {
+                    m_PickResult = m_Backend.Pick(
+                        m_PickRequest->first, m_PickRequest->second);
+                    m_PickRequest.reset();
+                });
+                graph.DependsOn(pickPass, renderPass);
+                tail = pickPass;
             }
+
+            if (captureRequested)
+            {
+                const auto capturePass = graph.AddPass("CaptureReadback", {
+                    { viewport, RenderAccessMode::Read,
+                        RenderResourceState::CopySource }
+                }, [this]
+                {
+                    auto native = m_Backend.Capture();
+                    ViewportCapture capture;
+                    capture.Width = native.Width;
+                    capture.Height = native.Height;
+                    capture.RGBA.assign(native.RGBA.get(),
+                        native.RGBA.get() + native.ByteCount);
+                    m_CaptureResult = std::move(capture);
+                    m_CaptureRequested = false;
+                });
+                graph.DependsOn(capturePass,
+                    tail.has_value() ? *tail : renderPass);
+            }
+
+            m_LastFrameProfile = graph.Compile().Execute();
+        }
+
+        [[nodiscard]] const RenderGraphExecutionProfile& LastFrameProfile()
+            const noexcept
+        {
+            return m_LastFrameProfile;
         }
 
         void SubmitDebugDraw(const DebugDrawList& debug)
