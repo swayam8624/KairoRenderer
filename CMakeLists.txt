@@ -24,7 +24,12 @@ find_package(OpenGL REQUIRED)
 # active context. Generate one pinned 4.1-core loader for every host so the
 # backend source and validation behavior are identical on macOS/Linux/Windows.
 # glad 0.1.x carries a dependency-free generator, avoiding pip/Jinja setup on
-# clean engine and CI machines.
+# clean engine and CI machines. The legacy generator is not compatible with
+# Python 3.14 on Windows, so resolve a supported interpreter before glad's own
+# unconstrained FindPython call can select the hosted runner's newest Python.
+if(WIN32)
+    find_package(Python 3.8...<3.14 COMPONENTS Interpreter REQUIRED)
+endif()
 include(FetchContent)
 block()
     set(GLAD_PROFILE core CACHE STRING "" FORCE)
