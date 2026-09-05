@@ -24,6 +24,7 @@ export module Kairo.Renderer.OpenGLRuntime;
 
 import Kairo.Foundation.Math;
 import Kairo.Renderer.Types;
+import Kairo.Renderer.RenderGraph;
 import Kairo.Renderer.GraphicsBackend;
 import Kairo.Renderer.Camera;
 import Kairo.Renderer.Window;
@@ -106,6 +107,7 @@ export namespace kairo::renderer
         std::optional<ViewportCapture> m_CaptureResult;
         OpenGLOverlayRecorder m_OverlayRecorder;
         std::uint64_t m_ViewportGeneration = 1u;
+        RenderGraphExecutionProfile m_LastFrameProfile;
 
     public:
         explicit OpenGLRendererRuntime(const WindowDesc& windowDesc)
@@ -161,24 +163,118 @@ export namespace kairo::renderer
 
         [[nodiscard]] Window& NativeWindow() noexcept { return m_Window; }
 
-        /// Task: render shadows and the complete offscreen scene, resolve any
-        /// synchronous OpenGL readback requests, and scale the target into the
-        /// current native framebuffer. A minimized window performs no work.
+        /// Task: execute the OpenGL frame as real graph-owned native stages.
+        /// The viewport draw remains one native stage for now because opaque,
+        /// transparent, and debug rendering share one framebuffer lifetime;
+        /// later migration can split those callbacks without changing the
+        /// backend-neutral graph contract established here.
         void DrawFrame()
         {
             glfwMakeContextCurrent(m_Window.NativeHandle());
             const auto [windowWidth, windowHeight] = m_Window.FramebufferExtent();
-            if (windowWidth == 0u || windowHeight == 0u) return;
+            if (windowWidth == 0u || windowHeight == 0u)
+            {
+                m_LastFrameProfile = {};
+                return;
+            }
 
             const auto shadowIndex = ShadowLightIndex();
             const auto lightViewProjection = BuildLightViewProjection(shadowIndex);
-            if (shadowIndex.has_value() && m_ShadowSettings.Enabled)
-                DrawShadowPass(lightViewProjection);
-            DrawViewportPass(lightViewProjection, shadowIndex);
-            CompleteReadbacks();
-            Present(windowWidth, windowHeight);
-            if (m_OverlayRecorder) m_OverlayRecorder();
-            glfwSwapBuffers(m_Window.NativeHandle());
+            const bool shadowPassEnabled =
+                shadowIndex.has_value() && m_ShadowSettings.Enabled;
+            const bool readbackRequested =
+                m_PickRequest.has_value() || m_CaptureRequested;
+            const bool toolingRequested = static_cast<bool>(m_OverlayRecorder);
+
+            RenderGraph graph;
+            const auto shadow = graph.AddResource({ "OpenGLShadowDepth",
+                RenderResourceKind::External, 0u, false,
+                RenderResourceState::ShaderRead });
+            const auto viewport = graph.AddResource({ "OpenGLViewport",
+                RenderResourceKind::External, 0u, false,
+                RenderResourceState::ShaderRead });
+            const auto nativeFrame = graph.AddResource({ "OpenGLDefaultFramebuffer",
+                RenderResourceKind::External, 0u, false,
+                RenderResourceState::Present });
+
+            std::optional<RenderPassHandle> shadowPass;
+            if (shadowPassEnabled)
+            {
+                shadowPass = graph.AddPass("Shadow", {
+                    { shadow, RenderAccessMode::Write,
+                        RenderResourceState::DepthAttachment }
+                }, [this, &lightViewProjection]
+                {
+                    DrawShadowPass(lightViewProjection);
+                });
+            }
+
+            const auto viewportPass = graph.AddPass("Viewport", {
+                { shadow, RenderAccessMode::Read,
+                    RenderResourceState::ShaderRead },
+                { viewport, RenderAccessMode::Write,
+                    RenderResourceState::ColorAttachment }
+            }, [this, &lightViewProjection, shadowIndex]
+            {
+                DrawViewportPass(lightViewProjection, shadowIndex);
+            });
+            if (shadowPass.has_value()) graph.DependsOn(viewportPass, *shadowPass);
+
+            std::optional<RenderPassHandle> readbackPass;
+            if (readbackRequested)
+            {
+                readbackPass = graph.AddPass("Readback", {
+                    { viewport, RenderAccessMode::Read,
+                        RenderResourceState::CopySource }
+                }, [this]
+                {
+                    CompleteReadbacks();
+                });
+                graph.DependsOn(*readbackPass, viewportPass);
+            }
+
+            const auto blitPass = graph.AddPass("Blit", {
+                { viewport, RenderAccessMode::Read,
+                    RenderResourceState::CopySource },
+                { nativeFrame, RenderAccessMode::Write,
+                    RenderResourceState::ColorAttachment }
+            }, [this, windowWidth, windowHeight]
+            {
+                Present(windowWidth, windowHeight);
+            });
+            graph.DependsOn(blitPass,
+                readbackPass.has_value() ? *readbackPass : viewportPass);
+
+            std::optional<RenderPassHandle> toolingPass;
+            if (toolingRequested)
+            {
+                toolingPass = graph.AddPass("Tooling", {
+                    { nativeFrame, RenderAccessMode::ReadWrite,
+                        RenderResourceState::ColorAttachment }
+                }, [this]
+                {
+                    m_OverlayRecorder();
+                });
+                graph.DependsOn(*toolingPass, blitPass);
+            }
+
+            const auto presentPass = graph.AddPass("Present", {
+                { nativeFrame, RenderAccessMode::ReadWrite,
+                    RenderResourceState::Present }
+            }, [this]
+            {
+                glfwSwapBuffers(m_Window.NativeHandle());
+            });
+            graph.DependsOn(presentPass,
+                toolingPass.has_value() ? *toolingPass : blitPass);
+
+            m_LastFrameProfile = graph.Compile().Execute();
+        }
+
+        [[nodiscard]] const RenderGraphExecutionProfile& LastFrameProfile()
+            const noexcept
+        {
+            return m_LastFrameProfile;
         }
 
         void SubmitDebugDraw(const DebugDrawList& debug)
