@@ -93,23 +93,40 @@ export namespace kairo::renderer
 
         void DrawFrame()
         {
-            RenderGraph graph;
-            const auto nativeFrame = graph.AddResource({ "NativeFrame",
-                RenderResourceKind::External, 0u, false,
-                RenderResourceState::Present });
-            (void)graph.AddPass("BackendFrame",
-                { { nativeFrame, RenderAccessMode::ReadWrite,
-                    RenderResourceState::Present } },
-                [this]
+            m_LastFrameProfile = Visit([](auto& runtime)
+                -> RenderGraphExecutionProfile
+            {
+                // A backend that has migrated its native frame into graph-owned
+                // stages publishes the resulting profile directly. Backends
+                // still awaiting migration remain inside one explicit envelope
+                // pass, so LastFrameProfile never fabricates pass granularity.
+                if constexpr (requires { runtime.LastFrameProfile(); })
                 {
-                    Visit([](auto& runtime) { runtime.DrawFrame(); });
-                });
-            m_LastFrameProfile = graph.Compile().Execute();
+                    runtime.DrawFrame();
+                    return runtime.LastFrameProfile();
+                }
+                else
+                {
+                    RenderGraph graph;
+                    const auto nativeFrame = graph.AddResource({ "NativeFrame",
+                        RenderResourceKind::External, 0u, false,
+                        RenderResourceState::Present });
+                    (void)graph.AddPass("BackendFrame",
+                        { { nativeFrame, RenderAccessMode::ReadWrite,
+                            RenderResourceState::Present } },
+                        [&runtime]
+                        {
+                            runtime.DrawFrame();
+                        });
+                    return graph.Compile().Execute();
+                }
+            });
         }
 
         /// Output: CPU-side pass recording timings for the most recently
-        /// completed frame. Native GPU timestamp queries are a separate layer;
-        /// this profile is always available on every graphics backend.
+        /// completed frame. Migrated backends report their real graph stages;
+        /// backends awaiting native pass migration report one BackendFrame
+        /// envelope. Native GPU timestamp queries remain a separate layer.
         [[nodiscard]] const RenderGraphExecutionProfile& LastFrameProfile()
             const noexcept
         {
