@@ -171,3 +171,49 @@ TEST_CASE("Transition hook failures stop later render passes",
     REQUIRE_THROWS_AS(compiled.Execute(hooks), std::runtime_error);
     CHECK(executed == 1u);
 }
+
+#if defined(__linux__)
+TEST_CASE("OpenGL runtime executes real graph-owned native frame stages",
+    "[KairoRenderer][RenderGraph][OpenGL][Smoke]")
+{
+    WindowDesc desc;
+    desc.Title = "Kairo OpenGL frame graph smoke";
+    desc.Width = 64u;
+    desc.Height = 64u;
+    desc.Resizable = false;
+    desc.Backend = GraphicsBackend::OpenGL;
+    RendererRuntime runtime(desc);
+
+    runtime.DrawFrame();
+    const auto& baseProfile = runtime.LastFrameProfile();
+    REQUIRE(baseProfile.Passes.size() == 3u);
+    CHECK(baseProfile.Passes[0u].Name == "Viewport");
+    CHECK(baseProfile.Passes[1u].Name == "Blit");
+    CHECK(baseProfile.Passes[2u].Name == "Present");
+
+    runtime.RequestViewportCapture();
+    runtime.DrawFrame();
+    const auto& captureProfile = runtime.LastFrameProfile();
+    REQUIRE(captureProfile.Passes.size() == 4u);
+    CHECK(captureProfile.Passes[0u].Name == "Viewport");
+    CHECK(captureProfile.Passes[1u].Name == "Readback");
+    CHECK(captureProfile.Passes[2u].Name == "Blit");
+    CHECK(captureProfile.Passes[3u].Name == "Present");
+    const auto capture = runtime.TakeViewportCapture();
+    REQUIRE(capture.has_value());
+    CHECK(capture->Width == 64u);
+    CHECK(capture->Height == 64u);
+    CHECK(capture->RGBA.size() == 64u * 64u * 4u);
+
+    bool overlayRecorded = false;
+    runtime.SetOpenGLOverlayRecorder([&] { overlayRecorded = true; });
+    runtime.DrawFrame();
+    const auto& toolingProfile = runtime.LastFrameProfile();
+    REQUIRE(toolingProfile.Passes.size() == 4u);
+    CHECK(toolingProfile.Passes[0u].Name == "Viewport");
+    CHECK(toolingProfile.Passes[1u].Name == "Blit");
+    CHECK(toolingProfile.Passes[2u].Name == "Tooling");
+    CHECK(toolingProfile.Passes[3u].Name == "Present");
+    CHECK(overlayRecorded);
+}
+#endif

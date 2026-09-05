@@ -93,6 +93,22 @@ export namespace kairo::renderer
 
         void DrawFrame()
         {
+#if defined(KAIRO_RENDERER_HAS_OPENGL_BACKEND)
+            // OpenGL is the first backend whose native frame has been migrated
+            // into graph-owned stages. Keep this dispatch explicit while the
+            // remaining backends still use the proven generic BackendFrame
+            // envelope. This avoids constructing std::function callbacks from
+            // lambdas nested inside exported generic module code, which Clang/
+            // libc++ can mis-link on macOS C++ module builds.
+            if (m_Backend == GraphicsBackend::OpenGL)
+            {
+                OpenGLRendererRuntime& runtime = OpenGL();
+                runtime.DrawFrame();
+                m_LastFrameProfile = runtime.LastFrameProfile();
+                return;
+            }
+#endif
+
             RenderGraph graph;
             const auto nativeFrame = graph.AddResource({ "NativeFrame",
                 RenderResourceKind::External, 0u, false,
@@ -108,8 +124,9 @@ export namespace kairo::renderer
         }
 
         /// Output: CPU-side pass recording timings for the most recently
-        /// completed frame. Native GPU timestamp queries are a separate layer;
-        /// this profile is always available on every graphics backend.
+        /// completed frame. Migrated backends report their real graph stages;
+        /// backends awaiting native pass migration report one BackendFrame
+        /// envelope. Native GPU timestamp queries remain a separate layer.
         [[nodiscard]] const RenderGraphExecutionProfile& LastFrameProfile()
             const noexcept
         {
