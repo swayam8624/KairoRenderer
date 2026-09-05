@@ -257,7 +257,9 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     include(FetchContent)
     FetchContent_Declare(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG v3.5.4)
     FetchContent_MakeAvailable(Catch2)
-    add_executable(KairoRendererTests tests/RendererTests.cpp)
+    add_executable(KairoRendererTests
+        tests/RendererTests.cpp
+        tests/RenderGraphExecutionPlanTests.cpp)
     target_link_libraries(KairoRendererTests PRIVATE KairoRenderer Catch2::Catch2WithMain)
     enable_testing()
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
