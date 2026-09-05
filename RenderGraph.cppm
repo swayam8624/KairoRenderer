@@ -86,6 +86,16 @@ export namespace kairo::renderer
         std::uint32_t AliasSlot = std::numeric_limits<std::uint32_t>::max();
     };
 
+    /// Physical reservation required for one class-compatible transient alias
+    /// slot. Backends may bind every non-overlapping resource lifetime assigned
+    /// to this slot to the same native allocation when their API permits it.
+    struct RenderAliasSlotDesc final
+    {
+        std::uint32_t Slot = std::numeric_limits<std::uint32_t>::max();
+        RenderResourceKind Kind = RenderResourceKind::Texture;
+        std::uint64_t CapacityBytes = 0u;
+    };
+
     struct RenderPassProfile final
     {
         std::string Name;
@@ -98,21 +108,54 @@ export namespace kairo::renderer
         double TotalMilliseconds = 0.0;
     };
 
+    /// Optional backend hook executed immediately before a compiled pass callback.
+    /// It receives the exact deterministic state transitions produced by the
+    /// compiler. Vulkan/D3D12/Metal translators can therefore record native
+    /// barriers without re-deriving hazards or mutating the compiled graph.
+    struct RenderGraphExecutionHooks final
+    {
+        std::function<void(std::size_t, std::string_view,
+            const std::vector<RenderResourceTransition>&)> ApplyTransitions;
+    };
+
     class CompiledRenderGraph final
     {
         struct Pass final
         {
             std::string Name;
+            std::vector<RenderResourceAccess> Accesses;
             std::vector<RenderResourceTransition> Transitions;
             std::function<void()> Execute;
         };
 
+        std::vector<RenderResourceDesc> m_Resources;
         std::vector<Pass> m_Passes;
         std::vector<RenderResourceLifetime> m_Lifetimes;
+        std::vector<RenderAliasSlotDesc> m_AliasSlots;
+        std::uint64_t m_TransientAllocationBytes = 0u;
 
         friend class RenderGraph;
 
+        void ValidateResource(RenderResourceHandle handle) const
+        {
+            if (!handle.IsValid() || handle.Value >= m_Resources.size())
+                throw std::out_of_range(
+                    "Compiled render graph resource handle is invalid.");
+        }
+
     public:
+        [[nodiscard]] std::size_t ResourceCount() const noexcept
+        {
+            return m_Resources.size();
+        }
+
+        [[nodiscard]] const RenderResourceDesc& Resource(
+            RenderResourceHandle handle) const
+        {
+            ValidateResource(handle);
+            return m_Resources[handle.Value];
+        }
+
         [[nodiscard]] std::size_t PassCount() const noexcept
         {
             return m_Passes.size();
@@ -123,6 +166,14 @@ export namespace kairo::renderer
             if (index >= m_Passes.size())
                 throw std::out_of_range("Render graph pass index is out of range.");
             return m_Passes[index].Name;
+        }
+
+        [[nodiscard]] const std::vector<RenderResourceAccess>& Accesses(
+            std::size_t passIndex) const
+        {
+            if (passIndex >= m_Passes.size())
+                throw std::out_of_range("Render graph pass index is out of range.");
+            return m_Passes[passIndex].Accesses;
         }
 
         [[nodiscard]] const std::vector<RenderResourceTransition>& Transitions(
@@ -139,17 +190,37 @@ export namespace kairo::renderer
             return m_Lifetimes;
         }
 
-        /// Task: execute the immutable compiled schedule in dependency order
-        /// and measure CPU recording time per pass. A callback exception stops
-        /// execution and propagates unchanged; later passes never run.
-        [[nodiscard]] RenderGraphExecutionProfile Execute() const
+        [[nodiscard]] const std::vector<RenderAliasSlotDesc>& AliasSlots()
+            const noexcept
+        {
+            return m_AliasSlots;
+        }
+
+        /// Total native memory capacity required when every transient alias slot
+        /// receives one allocation. This is not the sum of logical resources;
+        /// non-overlapping lifetimes share the capacity of their selected slot.
+        [[nodiscard]] std::uint64_t TransientAllocationBytes() const noexcept
+        {
+            return m_TransientAllocationBytes;
+        }
+
+        /// Execute the immutable compiled schedule in dependency order and
+        /// measure CPU recording time per pass. Transition hooks execute before
+        /// each pass callback and are included in that pass timing because native
+        /// barrier recording is part of frame command recording. Any exception
+        /// stops execution immediately and propagates unchanged.
+        [[nodiscard]] RenderGraphExecutionProfile Execute(
+            const RenderGraphExecutionHooks& hooks = {}) const
         {
             RenderGraphExecutionProfile profile;
             profile.Passes.reserve(m_Passes.size());
             const auto graphStart = std::chrono::steady_clock::now();
-            for (const Pass& pass : m_Passes)
+            for (std::size_t index = 0u; index < m_Passes.size(); ++index)
             {
+                const Pass& pass = m_Passes[index];
                 const auto start = std::chrono::steady_clock::now();
+                if (hooks.ApplyTransitions)
+                    hooks.ApplyTransitions(index, pass.Name, pass.Transitions);
                 if (pass.Execute) pass.Execute();
                 const auto end = std::chrono::steady_clock::now();
                 profile.Passes.push_back({ pass.Name,
@@ -165,10 +236,9 @@ export namespace kairo::renderer
     ///
     /// Input: logical resources, pass accesses, optional explicit dependencies,
     /// and CPU recording callbacks. Output: one deterministic topological pass
-    /// order, resource transitions, transient lifetimes/alias slots, and an
-    /// executable profiling schedule. Task: centralize hazards and lifetime
-    /// reasoning before Vulkan, Metal, D3D12, or OpenGL translate the plan into
-    /// native barriers and allocations.
+    /// order, resource transitions, transient lifetimes/alias slots, a physical
+    /// transient reservation plan, and an executable profiling schedule.
+    /// Backends consume this immutable plan rather than re-deriving hazards.
     class RenderGraph final
     {
         struct Resource final { RenderResourceDesc Desc; };
@@ -205,6 +275,9 @@ export namespace kairo::renderer
             if (!m_ResourceNames.insert(desc.Name).second)
                 throw std::invalid_argument(
                     "Render graph resource names must be unique: " + desc.Name);
+            if (desc.Kind == RenderResourceKind::External && desc.Transient)
+                throw std::invalid_argument(
+                    "External render graph resources cannot be transient.");
             if (desc.Kind != RenderResourceKind::External &&
                 desc.EstimatedBytes == 0u)
                 throw std::invalid_argument(
@@ -284,7 +357,8 @@ export namespace kairo::renderer
             };
             std::vector<Hazard> hazards(m_Resources.size());
             for (std::size_t resource = 0u; resource < m_Resources.size(); ++resource)
-                hazards[resource].Initialized = !m_Resources[resource].Desc.Transient;
+                hazards[resource].Initialized =
+                    m_Resources[resource].Desc.InitialState != RenderResourceState::Undefined;
             for (std::uint32_t pass = 0u; pass < passCount; ++pass)
             {
                 for (const auto& access : m_Passes[pass].Accesses)
@@ -335,6 +409,10 @@ export namespace kairo::renderer
                 throw std::logic_error("Render graph dependencies contain a cycle.");
 
             CompiledRenderGraph compiled;
+            compiled.m_Resources.reserve(m_Resources.size());
+            for (const auto& resource : m_Resources)
+                compiled.m_Resources.push_back(resource.Desc);
+
             std::vector<RenderResourceState> states;
             states.reserve(m_Resources.size());
             for (const auto& resource : m_Resources)
@@ -344,7 +422,8 @@ export namespace kairo::renderer
             for (std::uint32_t position = 0u; position < order.size(); ++position)
             {
                 const Pass& source = m_Passes[order[position]];
-                CompiledRenderGraph::Pass target{ source.Name, {}, source.Execute };
+                CompiledRenderGraph::Pass target{
+                    source.Name, source.Accesses, {}, source.Execute };
                 for (const auto& access : source.Accesses)
                 {
                     auto& lifetime = lifetimes[access.Resource.Value];
@@ -401,6 +480,20 @@ export namespace kairo::renderer
                 else slots[*selected].LastPass = lifetime.LastPass;
                 lifetime.AliasSlot = *selected;
             }
+
+            compiled.m_AliasSlots.reserve(slots.size());
+            for (std::uint32_t slot = 0u; slot < slots.size(); ++slot)
+            {
+                const AliasSlot& source = slots[slot];
+                if (std::numeric_limits<std::uint64_t>::max() -
+                    compiled.m_TransientAllocationBytes < source.Capacity)
+                    throw std::overflow_error(
+                        "Render graph transient allocation byte count overflowed.");
+                compiled.m_TransientAllocationBytes += source.Capacity;
+                compiled.m_AliasSlots.push_back({ slot, source.Kind,
+                    source.Capacity });
+            }
+
             for (const auto& lifetime : lifetimes)
                 if (lifetime &&
                     !m_Resources[lifetime->Resource.Value].Desc.Transient)
