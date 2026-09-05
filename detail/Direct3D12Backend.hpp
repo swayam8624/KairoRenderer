@@ -154,6 +154,23 @@ namespace kairo::renderer::detail
         [[nodiscard]] void* ShaderResourceHeap() const noexcept;
         [[nodiscard]] Direct3D12Descriptor AllocateToolingDescriptor();
         void FreeToolingDescriptor(Direct3D12Descriptor descriptor);
+
+        // BackendContext() is intentionally a const runtime accessor so Editor
+        // integrations can query stable native handles without gaining general
+        // mutation access to the renderer. Its descriptor callbacks are the one
+        // controlled exception: allocating/freeing tooling descriptors mutates
+        // only allocator bookkeeping, not frame/scene state. Keep that logical
+        // mutability narrowly encapsulated here rather than making the runtime
+        // or the entire backend member mutable.
+        [[nodiscard]] Direct3D12Descriptor AllocateToolingDescriptor() const
+        {
+            return const_cast<Direct3D12Backend*>(this)->AllocateToolingDescriptor();
+        }
+        void FreeToolingDescriptor(Direct3D12Descriptor descriptor) const
+        {
+            const_cast<Direct3D12Backend*>(this)->FreeToolingDescriptor(descriptor);
+        }
+
         [[nodiscard]] std::uint32_t Width() const noexcept;
         [[nodiscard]] std::uint32_t Height() const noexcept;
         void SetOverlayRecorder(Direct3D12OverlayRecorder recorder);

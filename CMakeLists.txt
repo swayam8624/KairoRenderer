@@ -19,12 +19,19 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
 find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED)
 find_package(OpenGL REQUIRED)
+find_package(Git REQUIRED)
 
 # OpenGL symbols above the Windows 1.1 import library must be loaded from the
 # active context. Generate one pinned 4.1-core loader for every host so the
 # backend source and validation behavior are identical on macOS/Linux/Windows.
 # glad 0.1.x carries a dependency-free generator, avoiding pip/Jinja setup on
-# clean engine and CI machines.
+# clean engine and CI machines. Its packaged registry may contain a UTF-8 BOM;
+# the pinned upstream generator opens the XML in text mode, so apply the same
+# utf-8-sig compatibility fix used by downstream package managers before the
+# reproducible generator is configured.
+if(WIN32)
+    find_package(Python 3.8...<3.14 COMPONENTS Interpreter REQUIRED)
+endif()
 include(FetchContent)
 block()
     set(GLAD_PROFILE core CACHE STRING "" FORCE)
@@ -37,7 +44,9 @@ block()
     FetchContent_Declare(KairoGlad
         GIT_REPOSITORY https://github.com/Dav1dde/glad.git
         GIT_TAG v0.1.36
-        GIT_SHALLOW TRUE)
+        GIT_SHALLOW TRUE
+        PATCH_COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply --whitespace=nowarn
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-utf8-sig.patch")
     FetchContent_MakeAvailable(KairoGlad)
 endblock()
 if(APPLE)
@@ -64,7 +73,7 @@ endif()
 # happens to exist when CMake configures.
 set(KAIRO_RENDERER_MATH_REVISION e12778734a8e8ffe060255a9c03683ad6c4b1a92)
 set(KAIRO_RENDERER_GEOMETRY_REVISION d570c91eaddf5c40e05b5a22cea6db78177e7fd0)
-set(KAIRO_RENDERER_ASSETS_REVISION ad3d8e80f2bab0cab751817ecce82a0c972e8d46)
+set(KAIRO_RENDERER_ASSETS_REVISION ad9715df00fffaa8a09f22afc990bde557689f53)
 set(KAIRO_RENDERER_PHYSICS_REVISION 0c2a4c43a65f828a6bc7766c470db82bb3a58a13)
 
 if(NOT TARGET KairoMath)
@@ -257,7 +266,9 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     include(FetchContent)
     FetchContent_Declare(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG v3.5.4)
     FetchContent_MakeAvailable(Catch2)
-    add_executable(KairoRendererTests tests/RendererTests.cpp)
+    add_executable(KairoRendererTests
+        tests/RendererTests.cpp
+        tests/RenderGraphExecutionPlanTests.cpp)
     target_link_libraries(KairoRendererTests PRIVATE KairoRenderer Catch2::Catch2WithMain)
     enable_testing()
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
