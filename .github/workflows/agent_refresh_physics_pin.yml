@@ -6,16 +6,14 @@ on:
     paths: [.github/workflows/agent_refresh_physics_pin.yml]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch-build-commit:
+  validate-physics-bridge:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - name: Install dependencies
         run: |
@@ -23,18 +21,6 @@ jobs:
           sudo apt-get install -y clang ninja-build libglfw3-dev libvulkan-dev glslang-tools xvfb
           echo "CC=clang" >> "$GITHUB_ENV"
           echo "CXX=clang++" >> "$GITHUB_ENV"
-
-      - name: Advance KairoPhysicsEngine fallback pin
-        shell: python
-        run: |
-          from pathlib import Path
-          path = Path("CMakeLists.txt")
-          text = path.read_text()
-          old = "set(KAIRO_RENDERER_PHYSICS_REVISION 0c2a4c43a65f828a6bc7766c470db82bb3a58a13)"
-          new = "set(KAIRO_RENDERER_PHYSICS_REVISION 180016b1c91e7b34731491f2616e64e450ea24e5)"
-          if old not in text:
-              raise SystemExit("stale physics pin anchor not found")
-          path.write_text(text.replace(old, new, 1))
 
       - name: Configure standalone renderer with physics bridge
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=ON
@@ -44,13 +30,3 @@ jobs:
 
       - name: Test
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" ctest --test-dir build --output-on-failure
-
-      - name: Commit validated physics pin
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CMakeLists.txt
-          git diff --cached --check
-          git commit -m "build: advance KairoPhysicsEngine fallback revision"
-          git push origin HEAD:complete/physics-pin-refresh
