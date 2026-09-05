@@ -19,14 +19,16 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(Vulkan REQUIRED)
 find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED)
 find_package(OpenGL REQUIRED)
+find_package(Git REQUIRED)
 
 # OpenGL symbols above the Windows 1.1 import library must be loaded from the
 # active context. Generate one pinned 4.1-core loader for every host so the
 # backend source and validation behavior are identical on macOS/Linux/Windows.
 # glad 0.1.x carries a dependency-free generator, avoiding pip/Jinja setup on
-# clean engine and CI machines. The legacy generator is not compatible with
-# Python 3.14 on Windows, so resolve a supported interpreter before glad's own
-# unconstrained FindPython call can select the hosted runner's newest Python.
+# clean engine and CI machines. Its packaged registry may contain a UTF-8 BOM;
+# the pinned upstream generator opens the XML in text mode, so apply the same
+# utf-8-sig compatibility fix used by downstream package managers before the
+# reproducible generator is configured.
 if(WIN32)
     find_package(Python 3.8...<3.14 COMPONENTS Interpreter REQUIRED)
 endif()
@@ -42,7 +44,9 @@ block()
     FetchContent_Declare(KairoGlad
         GIT_REPOSITORY https://github.com/Dav1dde/glad.git
         GIT_TAG v0.1.36
-        GIT_SHALLOW TRUE)
+        GIT_SHALLOW TRUE
+        PATCH_COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply --whitespace=nowarn
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-utf8-sig.patch")
     FetchContent_MakeAvailable(KairoGlad)
 endblock()
 if(APPLE)
