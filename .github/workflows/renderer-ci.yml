@@ -30,10 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # GLAD 0.1.36 is the renderer's pinned generator and its packaged XML
-      # currently fails under the hosted Windows Python 3.14 parser. Keep the
-      # generator environment deterministic until the loader is upgraded or
-      # replaced by checked-in generated sources.
+      # Keep the pinned GLAD 0.1.36 generator environment deterministic on
+      # Windows. The repository also carries the utf-8-sig registry patch that
+      # handles BOM-prefixed packaged XML; Python 3.13 is a compatibility floor,
+      # not the root-cause fix.
       - name: Use GLAD-compatible Python
         if: matrix.platform == 'windows'
         uses: actions/setup-python@v6
@@ -76,8 +76,10 @@ jobs:
           if (-not $validator) { throw "glslangValidator.exe not found" }
           $validator.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append
 
+      # KairoEditor consumes KairoRendererPhysicsDebug, so the optional bridge is
+      # part of Renderer compatibility CI rather than an untested standalone path.
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=ON
 
       - name: Build
         run: cmake --build build --parallel
