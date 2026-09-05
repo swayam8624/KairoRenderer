@@ -16,6 +16,7 @@ module;
 export module Kairo.Renderer.VulkanRuntime;
 
 import Kairo.Renderer.Types;
+import Kairo.Renderer.RenderGraph;
 import Kairo.Renderer.GraphicsBackend;
 import Kairo.Renderer.Camera;
 import Kairo.Renderer.Window;
@@ -62,95 +63,152 @@ export namespace kairo::renderer
         {
         }
 
-        /// Task: render one complete presentation frame. A minimized window
-        /// has a zero framebuffer extent and therefore deliberately consumes
-        /// no Vulkan work until GLFW restores it. Swapchain invalidation is a
-        /// normal resize event, not a fatal renderer error.
+        /// Task: execute the Vulkan frame lifecycle as real graph-owned native
+        /// stages. The command recorder still owns its internal render-pass
+        /// substructure; this runtime graph owns synchronization, acquire,
+        /// recording, queue submission, and presentation boundaries.
         void DrawFrame()
         {
             const auto [width, height] = m_Window.FramebufferExtent();
             if (width == 0u || height == 0u)
             {
+                m_LastFrameProfile = {};
                 return;
             }
 
             const VkDevice device = m_Device.Handle();
             const VkFence inFlight = m_Sync.InFlight();
-            if (vkWaitForFences(device, 1u, &inFlight, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
-            {
-                throw std::runtime_error("vkWaitForFences failed.");
-            }
-            CompleteViewportPick();
-            CompleteViewportCapture();
+            std::uint32_t imageIndex = 0u;
+            VkResult acquireResult = VK_SUCCESS;
+            bool frameActive = true;
 
-            std::uint32_t imageIndex = 0;
-            const VkResult acquire = vkAcquireNextImageKHR(
-                device, m_Swapchain.Handle(), UINT64_MAX, m_Sync.ImageAvailable(), VK_NULL_HANDLE, &imageIndex);
-            if (acquire == VK_ERROR_OUT_OF_DATE_KHR)
-            {
-                RecreateSwapchain();
-                return;
-            }
-            if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR)
-            {
-                throw std::runtime_error("vkAcquireNextImageKHR failed.");
-            }
-            if (vkResetFences(device, 1u, &inFlight) != VK_SUCCESS)
-            {
-                throw std::runtime_error("vkResetFences failed.");
-            }
+            RenderGraph graph;
+            const auto nativeFrame = graph.AddResource({ "VulkanNativeFrame",
+                RenderResourceKind::External, 0u, false,
+                RenderResourceState::Present });
 
-            RecordFrameCommands(imageIndex);
+            const auto retirePass = graph.AddPass("Retire", {
+                { nativeFrame, RenderAccessMode::Read,
+                    RenderResourceState::Present }
+            }, [this, device, inFlight]
+            {
+                if (vkWaitForFences(
+                    device, 1u, &inFlight, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+                    throw std::runtime_error("vkWaitForFences failed.");
+                CompleteViewportPick();
+                CompleteViewportCapture();
+            });
 
-            // The acquired swapchain image is first accessed as a color
-            // attachment by the render pass; waiting at that stage prevents a
-            // presentation-to-render hazard on strict Vulkan implementations.
-            const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-            const VkCommandBuffer command = m_Command.Handle();
-            const VkSemaphore imageAvailable = m_Sync.ImageAvailable();
-            const VkSemaphore renderFinished = m_Sync.RenderFinished(imageIndex);
-            VkSubmitInfo submit{};
-            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            submit.waitSemaphoreCount = 1u;
-            submit.pWaitSemaphores = &imageAvailable;
-            submit.pWaitDstStageMask = &waitStage;
-            submit.commandBufferCount = 1u;
-            submit.pCommandBuffers = &command;
-            submit.signalSemaphoreCount = 1u;
-            submit.pSignalSemaphores = &renderFinished;
-            if (vkQueueSubmit(m_Device.GraphicsQueue(), 1u, &submit, m_Sync.InFlight()) != VK_SUCCESS)
+            const auto acquirePass = graph.AddPass("Acquire", {
+                { nativeFrame, RenderAccessMode::ReadWrite,
+                    RenderResourceState::Present }
+            }, [this, device, inFlight, &imageIndex, &acquireResult, &frameActive]
             {
-                throw std::runtime_error("vkQueueSubmit failed.");
-            }
-            if (m_PickRequested.has_value())
-            {
-                m_PickInFlight = true;
-                m_PickRequested.reset();
-            }
-            if (m_CaptureRequested)
-            {
-                m_CaptureRequested = false;
-                m_CaptureInFlight = true;
-            }
+                acquireResult = vkAcquireNextImageKHR(
+                    device, m_Swapchain.Handle(), UINT64_MAX,
+                    m_Sync.ImageAvailable(), VK_NULL_HANDLE, &imageIndex);
+                if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+                {
+                    RecreateSwapchain();
+                    frameActive = false;
+                    return;
+                }
+                if (acquireResult != VK_SUCCESS &&
+                    acquireResult != VK_SUBOPTIMAL_KHR)
+                    throw std::runtime_error("vkAcquireNextImageKHR failed.");
+                if (vkResetFences(device, 1u, &inFlight) != VK_SUCCESS)
+                    throw std::runtime_error("vkResetFences failed.");
+            });
+            graph.DependsOn(acquirePass, retirePass);
 
-            const VkSwapchainKHR swapchain = m_Swapchain.Handle();
-            VkPresentInfoKHR present{};
-            present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-            present.waitSemaphoreCount = 1u;
-            present.pWaitSemaphores = &renderFinished;
-            present.swapchainCount = 1u;
-            present.pSwapchains = &swapchain;
-            present.pImageIndices = &imageIndex;
-            const VkResult result = vkQueuePresentKHR(m_Device.PresentQueue(), &present);
-            if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || acquire == VK_SUBOPTIMAL_KHR)
+            const auto recordPass = graph.AddPass("Record", {
+                { nativeFrame, RenderAccessMode::Write,
+                    RenderResourceState::ColorAttachment }
+            }, [this, &imageIndex, &frameActive]
             {
-                RecreateSwapchain();
-                return;
-            }
-            if (result != VK_SUCCESS)
+                if (frameActive) RecordFrameCommands(imageIndex);
+            });
+            graph.DependsOn(recordPass, acquirePass);
+
+            const auto submitPass = graph.AddPass("Submit", {
+                { nativeFrame, RenderAccessMode::Read,
+                    RenderResourceState::ColorAttachment }
+            }, [this, &imageIndex, &frameActive]
             {
-                throw std::runtime_error("vkQueuePresentKHR failed.");
-            }
+                if (!frameActive) return;
+
+                const VkPipelineStageFlags waitStage =
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                const VkCommandBuffer command = m_Command.Handle();
+                const VkSemaphore imageAvailable = m_Sync.ImageAvailable();
+                const VkSemaphore renderFinished =
+                    m_Sync.RenderFinished(imageIndex);
+                VkSubmitInfo submit{};
+                submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                submit.waitSemaphoreCount = 1u;
+                submit.pWaitSemaphores = &imageAvailable;
+                submit.pWaitDstStageMask = &waitStage;
+                submit.commandBufferCount = 1u;
+                submit.pCommandBuffers = &command;
+                submit.signalSemaphoreCount = 1u;
+                submit.pSignalSemaphores = &renderFinished;
+                if (vkQueueSubmit(
+                    m_Device.GraphicsQueue(), 1u, &submit,
+                    m_Sync.InFlight()) != VK_SUCCESS)
+                    throw std::runtime_error("vkQueueSubmit failed.");
+
+                if (m_PickRequested.has_value())
+                {
+                    m_PickInFlight = true;
+                    m_PickRequested.reset();
+                }
+                if (m_CaptureRequested)
+                {
+                    m_CaptureRequested = false;
+                    m_CaptureInFlight = true;
+                }
+            });
+            graph.DependsOn(submitPass, recordPass);
+
+            const auto presentPass = graph.AddPass("Present", {
+                { nativeFrame, RenderAccessMode::ReadWrite,
+                    RenderResourceState::Present }
+            }, [this, &imageIndex, &acquireResult, &frameActive]
+            {
+                if (!frameActive) return;
+
+                const VkSemaphore renderFinished =
+                    m_Sync.RenderFinished(imageIndex);
+                const VkSwapchainKHR swapchain = m_Swapchain.Handle();
+                VkPresentInfoKHR present{};
+                present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+                present.waitSemaphoreCount = 1u;
+                present.pWaitSemaphores = &renderFinished;
+                present.swapchainCount = 1u;
+                present.pSwapchains = &swapchain;
+                present.pImageIndices = &imageIndex;
+                const VkResult result =
+                    vkQueuePresentKHR(m_Device.PresentQueue(), &present);
+                if (result == VK_ERROR_OUT_OF_DATE_KHR ||
+                    result == VK_SUBOPTIMAL_KHR ||
+                    acquireResult == VK_SUBOPTIMAL_KHR)
+                {
+                    RecreateSwapchain();
+                    frameActive = false;
+                    return;
+                }
+                if (result != VK_SUCCESS)
+                    throw std::runtime_error("vkQueuePresentKHR failed.");
+            });
+            graph.DependsOn(presentPass, submitPass);
+
+            m_LastFrameProfile = graph.Compile().Execute();
+        }
+
+        [[nodiscard]] const RenderGraphExecutionProfile& LastFrameProfile()
+            const noexcept
+        {
+            return m_LastFrameProfile;
         }
 
         [[nodiscard]] Window& NativeWindow() noexcept { return m_Window; }
@@ -346,6 +404,7 @@ export namespace kairo::renderer
         std::optional<ViewportCapture> m_CaptureResult;
         bool m_CaptureRequested = false;
         bool m_CaptureInFlight = false;
+        RenderGraphExecutionProfile m_LastFrameProfile;
 
         /// Task: record the complete mesh and debug-line render pass.
         void RecordFrameCommands(std::uint32_t imageIndex)

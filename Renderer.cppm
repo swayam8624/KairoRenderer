@@ -94,12 +94,6 @@ export namespace kairo::renderer
         void DrawFrame()
         {
 #if defined(KAIRO_RENDERER_HAS_OPENGL_BACKEND)
-            // OpenGL is the first backend whose native frame has been migrated
-            // into graph-owned stages. Keep this dispatch explicit while the
-            // remaining backends still use the proven generic BackendFrame
-            // envelope. This avoids constructing std::function callbacks from
-            // lambdas nested inside exported generic module code, which Clang/
-            // libc++ can mis-link on macOS C++ module builds.
             if (m_Backend == GraphicsBackend::OpenGL)
             {
                 OpenGLRendererRuntime& runtime = OpenGL();
@@ -108,25 +102,34 @@ export namespace kairo::renderer
                 return;
             }
 #endif
-
-            RenderGraph graph;
-            const auto nativeFrame = graph.AddResource({ "NativeFrame",
-                RenderResourceKind::External, 0u, false,
-                RenderResourceState::Present });
-            (void)graph.AddPass("BackendFrame",
-                { { nativeFrame, RenderAccessMode::ReadWrite,
-                    RenderResourceState::Present } },
-                [this]
-                {
-                    Visit([](auto& runtime) { runtime.DrawFrame(); });
-                });
-            m_LastFrameProfile = graph.Compile().Execute();
+#if defined(KAIRO_RENDERER_HAS_METAL_BACKEND)
+            if (m_Backend == GraphicsBackend::Metal)
+            {
+                MetalRendererRuntime& runtime = Metal();
+                runtime.DrawFrame();
+                m_LastFrameProfile = runtime.LastFrameProfile();
+                return;
+            }
+#endif
+#if defined(KAIRO_RENDERER_HAS_D3D12_BACKEND)
+            if (m_Backend == GraphicsBackend::Direct3D12)
+            {
+                Direct3D12RendererRuntime& runtime = Direct3D12();
+                runtime.DrawFrame();
+                m_LastFrameProfile = runtime.LastFrameProfile();
+                return;
+            }
+#endif
+            VulkanRendererRuntime& runtime = Vulkan();
+            runtime.DrawFrame();
+            m_LastFrameProfile = runtime.LastFrameProfile();
         }
 
-        /// Output: CPU-side pass recording timings for the most recently
-        /// completed frame. Migrated backends report their real graph stages;
-        /// backends awaiting native pass migration report one BackendFrame
-        /// envelope. Native GPU timestamp queries remain a separate layer.
+        /// Output: CPU-side timings for the real graph-owned stages executed by
+        /// the selected backend. Stage granularity is intentionally backend-
+        /// specific: OpenGL exposes fine render phases, Vulkan exposes queue/
+        /// presentation lifecycle phases, and Metal/D3D12 expose their native
+        /// render-present plus synchronous readback boundaries.
         [[nodiscard]] const RenderGraphExecutionProfile& LastFrameProfile()
             const noexcept
         {
