@@ -30,6 +30,7 @@ namespace kairo::renderer::detail
     using Microsoft::WRL::ComPtr;
 
     static_assert(sizeof(Direct3D12Vertex) == 44u);
+    static_assert(sizeof(Direct3D12SkinInfluence) == 32u);
     static_assert(sizeof(Direct3D12DebugVertex) == 28u);
     static_assert(sizeof(Direct3D12Light) == 80u);
 
@@ -191,6 +192,7 @@ cbuffer Draw : register(b1) {
  float4 baseColor; float4 emissiveNormalScale; float4 factors;
  uint alphaMode; uint objectID; uint receiveShadows; uint drawPadding;
 };
+cbuffer SkinPalette : register(b2) { row_major float4x4 joints[255]; };
 Texture2D baseTex:register(t0); Texture2D normalTex:register(t1); Texture2D mrTex:register(t2);
 Texture2D emissiveTex:register(t3); Texture2D occlusionTex:register(t4); Texture2D environmentTex:register(t5);
 Texture2D<float> shadowTex:register(t6);
@@ -198,8 +200,28 @@ SamplerState baseSampler:register(s0); SamplerState normalSampler:register(s1); 
 SamplerState emissiveSampler:register(s3); SamplerState occlusionSampler:register(s4); SamplerState environmentSampler:register(s5);
 SamplerComparisonState shadowSampler:register(s6);
 struct VertexIn { float3 position:POSITION; float3 color:COLOR; float3 normal:NORMAL; float2 uv:TEXCOORD; };
+struct SkinnedVertexIn { float3 position:POSITION; float3 color:COLOR; float3 normal:NORMAL; float2 uv:TEXCOORD; uint4 jointIndices:JOINTS; float4 weights:WEIGHTS; };
 struct VertexOut { float4 position:SV_Position; float3 world:WORLD; float3 color:COLOR; float3 normal:NORMAL; float2 uv:TEXCOORD; float4 shadow:SHADOW; };
 VertexOut MeshVS(VertexIn i) { VertexOut o; float4 world=mul(float4(i.position,1),model); o.position=mul(mul(world,view),projection); o.world=world.xyz; float3x3 n=float3x3(normal0.xyz,normal1.xyz,normal2.xyz); o.normal=normalize(mul(i.normal,n)); o.color=i.color; o.uv=i.uv; o.shadow=mul(world,lightViewProjection); return o; }
+row_major float4x4 SkinMatrix(SkinnedVertexIn i) {
+ row_major float4x4 result=(float4x4)0.0;
+ if(i.weights.x>0)result+=i.weights.x*joints[i.jointIndices.x];
+ if(i.weights.y>0)result+=i.weights.y*joints[i.jointIndices.y];
+ if(i.weights.z>0)result+=i.weights.z*joints[i.jointIndices.z];
+ if(i.weights.w>0)result+=i.weights.w*joints[i.jointIndices.w];
+ return result;
+}
+VertexOut SkinnedMeshVS(SkinnedVertexIn i) {
+ VertexOut o; row_major float4x4 skin=SkinMatrix(i);
+ float4 asset=mul(float4(i.position,1),skin); float4 world=mul(asset,model);
+ o.position=mul(mul(world,view),projection); o.world=world.xyz;
+ float3 r0=skin[0].xyz,r1=skin[1].xyz,r2=skin[2].xyz;
+ float3 c0=cross(r1,r2),c1=cross(r2,r0),c2=cross(r0,r1); float det=dot(r0,c0);
+ float3x3 skinNormal=abs(det)>1e-8?float3x3(c0,c1,c2)/det:float3x3(r0,r1,r2);
+ float3x3 n=float3x3(normal0.xyz,normal1.xyz,normal2.xyz);
+ o.normal=normalize(mul(mul(i.normal,skinNormal),n)); o.color=i.color; o.uv=i.uv;
+ o.shadow=mul(world,lightViewProjection); return o;
+}
 float3 Fresnel(float c,float3 f0){return f0+(1-f0)*pow(saturate(1-c),5);}
 float2 EnvironmentUV(float3 d){d=normalize(d);return float2(atan2(d.z,d.x)/(2*PI)+.5,asin(clamp(d.y,-1,1))/PI+.5);}
 struct PixelOut { float4 color:SV_Target0; uint id:SV_Target1; };
@@ -219,6 +241,7 @@ PixelOut MeshPS(VertexOut i) {
  float3 color=shadingMode==1?base.rgb+emissive:(shadingMode==3?diagnostic.xxx:ambient+direct+emissive);color*=exp2(ambientExposure.w);color=color/(color+1);o.color=float4(color,alphaMode==3?base.a:1);o.id=objectID;return o;
 }
 float4 ShadowVS(VertexIn i):SV_Position{return mul(mul(float4(i.position,1),model),lightViewProjection);}
+float4 SkinnedShadowVS(SkinnedVertexIn i):SV_Position{return mul(mul(mul(float4(i.position,1),SkinMatrix(i)),model),lightViewProjection);}
 struct DebugIn{float3 position:POSITION;float4 color:COLOR;};struct DebugOut{float4 position:SV_Position;float4 color:COLOR;};
 DebugOut DebugVS(DebugIn i){DebugOut o;o.position=mul(mul(float4(i.position,1),view),projection);o.color=i.color;return o;}float4 DebugPS(DebugOut i):SV_Target{return i.color;}
 struct FullscreenOut{float4 position:SV_Position;float2 uv:TEXCOORD;};
@@ -292,8 +315,10 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
         struct GpuMesh final
         {
             ComPtr<ID3D12Resource> Vertices;
+            ComPtr<ID3D12Resource> Skin;
             ComPtr<ID3D12Resource> Indices;
             D3D12_VERTEX_BUFFER_VIEW VertexView{};
+            D3D12_VERTEX_BUFFER_VIEW SkinView{};
             D3D12_INDEX_BUFFER_VIEW IndexView{};
             UINT IndexCount = 0u;
         };
@@ -338,6 +363,11 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
             std::uint32_t ReceiveShadows = 1u;
             std::uint32_t Padding = 0u;
         };
+
+        struct alignas(256) SkinConstants final
+        {
+            float Joints[255u * 16u]{};
+        };
     }
 
     class Direct3D12Backend::Impl final
@@ -364,7 +394,12 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
         ComPtr<ID3D12PipelineState> BlendPipeline;
         ComPtr<ID3D12PipelineState> DoubleSidedMeshPipeline;
         ComPtr<ID3D12PipelineState> DoubleSidedBlendPipeline;
+        ComPtr<ID3D12PipelineState> SkinnedMeshPipeline;
+        ComPtr<ID3D12PipelineState> SkinnedBlendPipeline;
+        ComPtr<ID3D12PipelineState> SkinnedDoubleSidedMeshPipeline;
+        ComPtr<ID3D12PipelineState> SkinnedDoubleSidedBlendPipeline;
         ComPtr<ID3D12PipelineState> ShadowPipeline;
+        ComPtr<ID3D12PipelineState> SkinnedShadowPipeline;
         ComPtr<ID3D12PipelineState> DebugPipeline;
         ComPtr<ID3D12PipelineState> PresentPipeline;
         ComPtr<ID3D12Resource> ConstantUpload;
@@ -699,7 +734,7 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
         void BuildRootSignatureAndPipelines()
         {
             std::array<D3D12_DESCRIPTOR_RANGE, 14> ranges{};
-            std::array<D3D12_ROOT_PARAMETER, 16> parameters{};
+            std::array<D3D12_ROOT_PARAMETER, 17> parameters{};
             parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
             parameters[0].Descriptor.ShaderRegister = 0u;
             parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -726,6 +761,11 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
                     { 1u, &ranges[7u + index] };
                 parameters[9u + index].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
             }
+            // Append rather than insert so all mature material descriptor root
+            // indices remain stable. One root CBV costs two DWORDs.
+            parameters[16].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+            parameters[16].Descriptor.ShaderRegister = 2u;
+            parameters[16].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
             D3D12_ROOT_SIGNATURE_DESC root{};
             root.NumParameters = static_cast<UINT>(parameters.size());
             root.pParameters = parameters.data();
@@ -781,7 +821,46 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
                 IID_PPV_ARGS(&DoubleSidedMeshPipeline)),
                 "Direct3D 12 double-sided mesh pipeline creation");
 
+            auto skinnedMeshVS = Compile(ShaderSource, "SkinnedMeshVS", "vs_5_1");
+            const D3D12_INPUT_ELEMENT_DESC skinnedInput[]{
+                { "POSITION",0u,DXGI_FORMAT_R32G32B32_FLOAT,0u,0u,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0u },
+                { "COLOR",0u,DXGI_FORMAT_R32G32B32_FLOAT,0u,12u,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0u },
+                { "NORMAL",0u,DXGI_FORMAT_R32G32B32_FLOAT,0u,24u,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0u },
+                { "TEXCOORD",0u,DXGI_FORMAT_R32G32_FLOAT,0u,36u,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0u },
+                { "JOINTS",0u,DXGI_FORMAT_R32G32B32A32_UINT,1u,0u,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0u },
+                { "WEIGHTS",0u,DXGI_FORMAT_R32G32B32A32_FLOAT,1u,16u,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0u }
+            };
+            pipeline.VS = { skinnedMeshVS->GetBufferPointer(), skinnedMeshVS->GetBufferSize() };
+            pipeline.PS = { meshPS->GetBufferPointer(), meshPS->GetBufferSize() };
+            pipeline.InputLayout = { skinnedInput, static_cast<UINT>(std::size(skinnedInput)) };
+            pipeline.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            pipeline.NumRenderTargets = 2u;
+            pipeline.RTVFormats[0] = ColorFormat;
+            pipeline.RTVFormats[1] = ObjectIDFormat;
+            pipeline.DSVFormat = DepthFormat;
+            pipeline.RasterizerState = Rasterizer();
+            pipeline.BlendState = Blend(false);
+            pipeline.DepthStencilState = Depth(true);
+            Require(Device->CreateGraphicsPipelineState(&pipeline,
+                IID_PPV_ARGS(&SkinnedMeshPipeline)),
+                "Direct3D 12 skinned mesh pipeline creation");
+            pipeline.BlendState = Blend(true);
+            pipeline.DepthStencilState = Depth(false);
+            Require(Device->CreateGraphicsPipelineState(&pipeline,
+                IID_PPV_ARGS(&SkinnedBlendPipeline)),
+                "Direct3D 12 skinned blend pipeline creation");
+            pipeline.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+            Require(Device->CreateGraphicsPipelineState(&pipeline,
+                IID_PPV_ARGS(&SkinnedDoubleSidedBlendPipeline)),
+                "Direct3D 12 skinned double-sided blend pipeline creation");
+            pipeline.BlendState = Blend(false);
+            pipeline.DepthStencilState = Depth(true);
+            Require(Device->CreateGraphicsPipelineState(&pipeline,
+                IID_PPV_ARGS(&SkinnedDoubleSidedMeshPipeline)),
+                "Direct3D 12 skinned double-sided mesh pipeline creation");
+
             auto shadowVS = Compile(ShaderSource, "ShadowVS", "vs_5_1");
+            pipeline.InputLayout = { meshInput, static_cast<UINT>(std::size(meshInput)) };
             pipeline.VS = { shadowVS->GetBufferPointer(), shadowVS->GetBufferSize() };
             pipeline.PS = {};
             pipeline.BlendState = Blend(false);
@@ -795,6 +874,12 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
             pipeline.RTVFormats[1] = DXGI_FORMAT_UNKNOWN;
             Require(Device->CreateGraphicsPipelineState(&pipeline,
                 IID_PPV_ARGS(&ShadowPipeline)), "Direct3D 12 shadow pipeline creation");
+            auto skinnedShadowVS = Compile(ShaderSource, "SkinnedShadowVS", "vs_5_1");
+            pipeline.VS = { skinnedShadowVS->GetBufferPointer(), skinnedShadowVS->GetBufferSize() };
+            pipeline.InputLayout = { skinnedInput, static_cast<UINT>(std::size(skinnedInput)) };
+            Require(Device->CreateGraphicsPipelineState(&pipeline,
+                IID_PPV_ARGS(&SkinnedShadowPipeline)),
+                "Direct3D 12 skinned shadow pipeline creation");
 
             auto debugVS = Compile(ShaderSource, "DebugVS", "vs_5_1");
             auto debugPS = Compile(ShaderSource, "DebugPS", "ps_5_1");
@@ -923,6 +1008,28 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
             Commands->SetGraphicsRootDescriptorTable(15u,Samplers.GPU(ShadowSampler));
         }
 
+        [[nodiscard]] bool IsSkinnedMesh(std::uint64_t handle) const
+        {
+            const auto mesh=Meshes.find(handle);
+            if(mesh==Meshes.end())
+                throw std::out_of_range("Direct3D 12 draw references an unknown mesh handle.");
+            return mesh->second.Skin != nullptr;
+        }
+
+        [[nodiscard]] D3D12_GPU_VIRTUAL_ADDRESS UploadSkinPalette(
+            const Direct3D12Draw& draw)
+        {
+            if(draw.SkinMatrices==nullptr || draw.SkinJointCount==0u ||
+                draw.SkinJointCount>255u)
+                throw std::invalid_argument(
+                    "Direct3D 12 skinned draw has an invalid skin palette.");
+            SkinConstants constants{};
+            std::copy_n(draw.SkinMatrices,
+                static_cast<std::size_t>(draw.SkinJointCount) * 16u,
+                constants.Joints);
+            return UploadConstants(&constants,sizeof(constants));
+        }
+
         void DrawMesh(const Direct3D12Draw& draw,
             D3D12_GPU_VIRTUAL_ADDRESS drawConstants)
         {
@@ -930,7 +1037,15 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
             if(mesh==Meshes.end())
                 throw std::out_of_range("Direct3D 12 draw references an unknown mesh handle.");
             Commands->SetGraphicsRootConstantBufferView(1u,drawConstants);
-            Commands->IASetVertexBuffers(0u,1u,&mesh->second.VertexView);
+            if(mesh->second.Skin)
+            {
+                Commands->SetGraphicsRootConstantBufferView(16u,
+                    UploadSkinPalette(draw));
+                const D3D12_VERTEX_BUFFER_VIEW views[]{
+                    mesh->second.VertexView, mesh->second.SkinView };
+                Commands->IASetVertexBuffers(0u,2u,views);
+            }
+            else Commands->IASetVertexBuffers(0u,1u,&mesh->second.VertexView);
             Commands->IASetIndexBuffer(&mesh->second.IndexView);
             Commands->DrawIndexedInstanced(mesh->second.IndexCount,1u,0u,0,0u);
         }
@@ -954,13 +1069,14 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
             Commands->OMSetRenderTargets(0u,nullptr,FALSE,&shadowDepth);
             Commands->ClearDepthStencilView(shadowDepth,D3D12_CLEAR_FLAG_DEPTH,
                 1.0f,0u,0u,nullptr);
-            Commands->SetPipelineState(ShadowPipeline.Get());
             Commands->SetGraphicsRootSignature(RootSignature.Get());
             Commands->SetGraphicsRootConstantBufferView(0u,frameAddress);
             Commands->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             for(const auto& draw:frame.Draws)
             {
                 if(!draw.CastShadows||draw.Material.AlphaMode==3u)continue;
+                Commands->SetPipelineState(IsSkinnedMesh(draw.Mesh)?
+                    SkinnedShadowPipeline.Get():ShadowPipeline.Get());
                 const auto constants=MakeDraw(draw);
                 DrawMesh(draw,UploadConstants(&constants,sizeof(constants)));
             }
@@ -1028,7 +1144,17 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
             for(const auto* draw:ordered)
             {
                 const bool blending=draw->Material.AlphaMode==3u;
-                if(draw->Material.DoubleSided)
+                const bool skinned=IsSkinnedMesh(draw->Mesh);
+                if(skinned)
+                {
+                    if(draw->Material.DoubleSided)
+                        Commands->SetPipelineState(blending?
+                            SkinnedDoubleSidedBlendPipeline.Get():
+                            SkinnedDoubleSidedMeshPipeline.Get());
+                    else Commands->SetPipelineState(blending?
+                        SkinnedBlendPipeline.Get():SkinnedMeshPipeline.Get());
+                }
+                else if(draw->Material.DoubleSided)
                     Commands->SetPipelineState(blending?
                         DoubleSidedBlendPipeline.Get():DoubleSidedMeshPipeline.Get());
                 else Commands->SetPipelineState(blending?
@@ -1304,7 +1430,8 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
 
     std::uint64_t Direct3D12Backend::CreateMesh(
         std::span<const Direct3D12Vertex> vertices,
-        std::span<const std::uint32_t> indices)
+        std::span<const std::uint32_t> indices,
+        std::span<const Direct3D12SkinInfluence> skinning)
     {
         if(vertices.empty()||indices.empty())
             throw std::invalid_argument("Direct3D 12 mesh upload requires vertices and indices.");
@@ -1314,6 +1441,17 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
             D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
         mesh.Indices=m_Impl->UploadBuffer(indices.data(),indices.size_bytes(),
             D3D12_RESOURCE_STATE_INDEX_BUFFER);
+        if(!skinning.empty())
+        {
+            if(skinning.size()!=vertices.size())
+                throw std::invalid_argument(
+                    "Direct3D 12 skin influence count must match vertex count.");
+            mesh.Skin=m_Impl->UploadBuffer(skinning.data(),skinning.size_bytes(),
+                D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+            mesh.SkinView={mesh.Skin->GetGPUVirtualAddress(),
+                static_cast<UINT>(skinning.size_bytes()),
+                sizeof(Direct3D12SkinInfluence)};
+        }
         mesh.VertexView={mesh.Vertices->GetGPUVirtualAddress(),
             static_cast<UINT>(vertices.size_bytes()),sizeof(Direct3D12Vertex)};
         mesh.IndexView={mesh.Indices->GetGPUVirtualAddress(),

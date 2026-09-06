@@ -18,6 +18,12 @@ namespace kairo::renderer::detail
         float TexCoord[2];
     };
 
+    struct Direct3D12SkinInfluence final
+    {
+        std::uint32_t Joints[4]{};
+        float Weights[4]{};
+    };
+
     struct Direct3D12DebugVertex final
     {
         float Position[3];
@@ -77,6 +83,8 @@ namespace kairo::renderer::detail
         float Normal[9]{};
         Direct3D12Material Material{};
         std::uint32_t CastShadows = 1u;
+        const float* SkinMatrices = nullptr;
+        std::uint32_t SkinJointCount = 0u;
     };
 
     struct alignas(16) Direct3D12Light final
@@ -138,7 +146,8 @@ namespace kairo::renderer::detail
 
         [[nodiscard]] std::uint64_t CreateMesh(
             std::span<const Direct3D12Vertex> vertices,
-            std::span<const std::uint32_t> indices);
+            std::span<const std::uint32_t> indices,
+            std::span<const Direct3D12SkinInfluence> skinning = {});
         void DestroyMesh(std::uint64_t handle);
         [[nodiscard]] std::uint64_t CreateTexture(
             const Direct3D12TextureUpload& upload);
