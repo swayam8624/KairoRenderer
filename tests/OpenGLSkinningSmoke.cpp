@@ -1,6 +1,7 @@
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 import Kairo.Renderer;
 import Kairo.Foundation.Math;
@@ -69,7 +70,7 @@ int main()
 
         return 0;
     }
-    catch (const PresentationUnavailableError& error)
+    catch (const kairo::renderer::PresentationUnavailableError& error)
     {
         std::cerr << "OpenGL presentation unavailable: " << error.what() << '\n';
         return 77;
