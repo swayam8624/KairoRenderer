@@ -21,6 +21,7 @@
 namespace kairo::renderer::detail
 {
     static_assert(sizeof(MetalVertex) == 44u);
+    static_assert(sizeof(MetalSkinInfluence) == 32u);
     static_assert(sizeof(MetalDebugVertex) == 28u);
     static_assert(sizeof(MetalLight) == 80u);
 
@@ -34,8 +35,10 @@ namespace kairo::renderer::detail
         struct GpuMesh final
         {
             id<MTLBuffer> Vertices = nil;
+            id<MTLBuffer> Skinning = nil;
             id<MTLBuffer> Indices = nil;
             NSUInteger IndexCount = 0u;
+            std::size_t RequiredJoints = 0u;
         };
 
         struct GpuTexture final
@@ -197,6 +200,43 @@ vertex VertexOut mesh_vertex(uint id [[vertex_id]], const device VertexIn* verti
     output.shadow = frame.lightViewProjection * world; return output;
 }
 
+struct SkinInfluence { uint4 joints; float4 weights; };
+float4x4 skin_matrix(SkinInfluence influence, constant float4x4* joints) {
+    float4x4 result = float4x4(float4(0.0), float4(0.0), float4(0.0), float4(0.0));
+    if (influence.weights.x > 0.0) result += influence.weights.x * joints[influence.joints.x];
+    if (influence.weights.y > 0.0) result += influence.weights.y * joints[influence.joints.y];
+    if (influence.weights.z > 0.0) result += influence.weights.z * joints[influence.joints.z];
+    if (influence.weights.w > 0.0) result += influence.weights.w * joints[influence.joints.w];
+    return result;
+}
+vertex VertexOut skinned_mesh_vertex(uint id [[vertex_id]],
+    const device VertexIn* vertices [[buffer(0)]], constant Frame& frame [[buffer(1)]],
+    constant Draw& draw [[buffer(2)]], const device SkinInfluence* influences [[buffer(3)]],
+    constant float4x4* joints [[buffer(4)]]) {
+    VertexIn input = vertices[id]; VertexOut output;
+    float4x4 skin = skin_matrix(influences[id], joints);
+    float4 assetPosition = skin * float4(float3(input.position), 1.0);
+    float4 world = draw.model * assetPosition;
+    output.position = frame.projection * frame.view * world; output.world = world.xyz;
+    float3x3 normalMatrix = float3x3(draw.normal0.xyz, draw.normal1.xyz, draw.normal2.xyz);
+    float3x3 skinLinear = float3x3(skin[0].xyz, skin[1].xyz, skin[2].xyz);
+    // Metal shading language does not provide GLSL-style inverse(mat3) on all
+    // supported toolchains. Build the inverse-transpose directly from the
+    // column cofactors. For a near-singular blended skin transform, fall back
+    // to the linear skin transform so the normal remains finite.
+    float3 c0 = skinLinear[0], c1 = skinLinear[1], c2 = skinLinear[2];
+    float3 cof0 = cross(c1, c2);
+    float3 cof1 = cross(c2, c0);
+    float3 cof2 = cross(c0, c1);
+    float det = dot(c0, cof0);
+    float3x3 skinNormal = abs(det) > 1.0e-8
+        ? float3x3(cof0, cof1, cof2) / det
+        : skinLinear;
+    output.normal = normalize(normalMatrix * skinNormal * float3(input.normal));
+    output.color = float3(input.color); output.uv = float2(input.uv);
+    output.shadow = frame.lightViewProjection * world; return output;
+}
+
 float3 fresnel(float cosine, float3 f0) { return f0 + (1.0 - f0) * pow(clamp(1.0-cosine,0.0,1.0),5.0); }
 float2 equirectangular_uv(float3 direction) {
     float3 n=normalize(direction);
@@ -274,6 +314,13 @@ vertex float4 shadow_vertex(uint id [[vertex_id]], const device VertexIn* vertic
     return frame.lightViewProjection * draw.model *
         float4(float3(vertices[id].position),1.0);
 }
+vertex float4 skinned_shadow_vertex(uint id [[vertex_id]],
+    const device VertexIn* vertices [[buffer(0)]], constant Frame& frame [[buffer(1)]],
+    constant Draw& draw [[buffer(2)]], const device SkinInfluence* influences [[buffer(3)]],
+    constant float4x4* joints [[buffer(4)]]) {
+    return frame.lightViewProjection * draw.model *
+        skin_matrix(influences[id], joints) * float4(float3(vertices[id].position),1.0);
+}
 struct DebugVertex { packed_float3 position; packed_float4 color; };
 struct DebugOut { float4 position [[position]]; float4 color; };
 vertex DebugOut debug_vertex(uint id [[vertex_id]], const device DebugVertex* vertices [[buffer(0)]], constant Frame& frame [[buffer(1)]]) {
@@ -295,8 +342,11 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
         id<MTLCommandQueue> Queue = nil;
         CAMetalLayer* Layer = nil;
         id<MTLRenderPipelineState> MeshPipeline = nil;
+        id<MTLRenderPipelineState> SkinnedMeshPipeline = nil;
         id<MTLRenderPipelineState> BlendPipeline = nil;
+        id<MTLRenderPipelineState> SkinnedBlendPipeline = nil;
         id<MTLRenderPipelineState> ShadowPipeline = nil;
+        id<MTLRenderPipelineState> SkinnedShadowPipeline = nil;
         id<MTLRenderPipelineState> DebugPipeline = nil;
         id<MTLRenderPipelineState> PresentPipeline = nil;
         id<MTLDepthStencilState> DepthState = nil;
@@ -382,6 +432,11 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             mesh.depthAttachmentPixelFormat = DepthFormat;
             MeshPipeline = [Device newRenderPipelineStateWithDescriptor:mesh error:&error];
             if (MeshPipeline == nil) throw std::runtime_error(ErrorText(@"Metal mesh pipeline creation failed", error));
+            MTLRenderPipelineDescriptor* skinnedMesh = [mesh copy];
+            skinnedMesh.vertexFunction = function(@"skinned_mesh_vertex");
+            SkinnedMeshPipeline = [Device newRenderPipelineStateWithDescriptor:skinnedMesh error:&error];
+            if (SkinnedMeshPipeline == nil)
+                throw std::runtime_error(ErrorText(@"Metal skinned mesh pipeline creation failed", error));
             MTLRenderPipelineDescriptor* blend = [mesh copy];
             blend.colorAttachments[0].blendingEnabled = YES;
             blend.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
@@ -390,10 +445,24 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             blend.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
             BlendPipeline = [Device newRenderPipelineStateWithDescriptor:blend error:&error];
             if (BlendPipeline == nil) throw std::runtime_error(ErrorText(@"Metal blend pipeline creation failed", error));
+            MTLRenderPipelineDescriptor* skinnedBlend = [skinnedMesh copy];
+            skinnedBlend.colorAttachments[0].blendingEnabled = YES;
+            skinnedBlend.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+            skinnedBlend.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+            skinnedBlend.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+            skinnedBlend.colorAttachments[0].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+            SkinnedBlendPipeline = [Device newRenderPipelineStateWithDescriptor:skinnedBlend error:&error];
+            if (SkinnedBlendPipeline == nil)
+                throw std::runtime_error(ErrorText(@"Metal skinned blend pipeline creation failed", error));
             MTLRenderPipelineDescriptor* shadow = [MTLRenderPipelineDescriptor new];
             shadow.vertexFunction = function(@"shadow_vertex"); shadow.depthAttachmentPixelFormat = DepthFormat;
             ShadowPipeline = [Device newRenderPipelineStateWithDescriptor:shadow error:&error];
             if (ShadowPipeline == nil) throw std::runtime_error(ErrorText(@"Metal shadow pipeline creation failed", error));
+            MTLRenderPipelineDescriptor* skinnedShadow = [shadow copy];
+            skinnedShadow.vertexFunction = function(@"skinned_shadow_vertex");
+            SkinnedShadowPipeline = [Device newRenderPipelineStateWithDescriptor:skinnedShadow error:&error];
+            if (SkinnedShadowPipeline == nil)
+                throw std::runtime_error(ErrorText(@"Metal skinned shadow pipeline creation failed", error));
             MTLRenderPipelineDescriptor* debug = [MTLRenderPipelineDescriptor new];
             debug.vertexFunction=function(@"debug_vertex"); debug.fragmentFunction=function(@"debug_fragment");
             debug.colorAttachments[0].pixelFormat=ViewportColorFormat; debug.depthAttachmentPixelFormat=DepthFormat;
@@ -499,6 +568,27 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             return output;
         }
 
+        static void BindSkin(id<MTLRenderCommandEncoder> encoder,
+            const GpuMesh& mesh, const MetalDraw& draw)
+        {
+            if (mesh.Skinning == nil)
+            {
+                if (draw.SkinJointCount != 0u || draw.SkinMatrices != nullptr)
+                    throw std::invalid_argument(
+                        "Metal static mesh draw cannot carry skin palette data.");
+                return;
+            }
+            if (draw.SkinMatrices == nullptr || draw.SkinJointCount < mesh.RequiredJoints)
+                throw std::invalid_argument(
+                    "Metal skinned draw palette does not cover every referenced joint.");
+            if (draw.SkinJointCount > 255u)
+                throw std::length_error("Metal skin palette exceeds 255 joints.");
+            [encoder setVertexBuffer:mesh.Skinning offset:0 atIndex:3];
+            [encoder setVertexBytes:draw.SkinMatrices
+                length:static_cast<NSUInteger>(draw.SkinJointCount) * 16u * sizeof(float)
+                atIndex:4];
+        }
+
         void EncodeShadow(id<MTLCommandBuffer> command,
             const MetalFrame& frame, const FrameUniforms& frameUniforms)
         {
@@ -511,7 +601,6 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             pass.depthAttachment.clearDepth = 1.0;
             id<MTLRenderCommandEncoder> encoder =
                 [command renderCommandEncoderWithDescriptor:pass];
-            [encoder setRenderPipelineState:ShadowPipeline];
             [encoder setDepthStencilState:ShadowDepthState];
             [encoder setFrontFacingWinding:MTLWindingCounterClockwise];
             [encoder setCullMode:MTLCullModeBack];
@@ -526,9 +615,13 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 if (mesh == Meshes.end())
                     throw std::out_of_range(
                         "Metal shadow draw references an unknown mesh handle.");
+                const bool skinned = mesh->second.Skinning != nil;
+                [encoder setRenderPipelineState:
+                    skinned ? SkinnedShadowPipeline : ShadowPipeline];
                 const DrawUniforms uniforms = MakeDraw(draw);
                 [encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];
                 [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];
+                if (skinned) BindSkin(encoder, mesh->second, draw);
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                     indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32
                     indexBuffer:mesh->second.Indices indexBufferOffset:0];
@@ -558,7 +651,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             pass.colorAttachments[1].texture=ViewportID; pass.colorAttachments[1].loadAction=MTLLoadActionClear; pass.colorAttachments[1].storeAction=MTLStoreActionStore; pass.colorAttachments[1].clearColor=MTLClearColorMake(0,0,0,0);
             pass.depthAttachment.texture=ViewportDepth; pass.depthAttachment.loadAction=MTLLoadActionClear; pass.depthAttachment.storeAction=MTLStoreActionDontCare; pass.depthAttachment.clearDepth=1.0;
             id<MTLRenderCommandEncoder> encoder=[command renderCommandEncoderWithDescriptor:pass];
-            [encoder setRenderPipelineState:MeshPipeline];[encoder setDepthStencilState:DepthState];[encoder setCullMode:MTLCullModeBack];[encoder setFrontFacingWinding:MTLWindingCounterClockwise];
+            [encoder setDepthStencilState:DepthState];[encoder setCullMode:MTLCullModeBack];[encoder setFrontFacingWinding:MTLWindingCounterClockwise];
             [encoder setVertexBytes:&frameUniforms length:sizeof(frameUniforms) atIndex:1];[encoder setFragmentBytes:&frameUniforms length:sizeof(frameUniforms) atIndex:1];
             [encoder setFragmentTexture:ShadowDepth atIndex:6];[encoder setFragmentSamplerState:ShadowSampler atIndex:6];
             std::vector<const MetalDraw*> ordered;
@@ -570,9 +663,10 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 const auto distance=[&](const MetalDraw* draw){const float x=draw->Model[3]-frame.CameraPosition[0],y=draw->Model[7]-frame.CameraPosition[1],z=draw->Model[11]-frame.CameraPosition[2];return x*x+y*y+z*z;};
                 return distance(a)>distance(b);});
             ordered.insert(ordered.end(),transparent.begin(),transparent.end());
-            bool blending=false;
-            for(const MetalDraw* drawPointer:ordered){const MetalDraw& draw=*drawPointer;if(draw.Material.AlphaMode==3u&&!blending){[encoder setRenderPipelineState:BlendPipeline];[encoder setDepthStencilState:NoWriteDepthState];blending=true;}const auto mesh=Meshes.find(draw.Mesh);if(mesh==Meshes.end())throw std::out_of_range("Metal draw references an unknown mesh handle.");
-                const DrawUniforms uniforms=MakeDraw(draw);[encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];[encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];[encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:2];
+            for(const MetalDraw* drawPointer:ordered){const MetalDraw& draw=*drawPointer;const bool blend=draw.Material.AlphaMode==3u;const auto mesh=Meshes.find(draw.Mesh);if(mesh==Meshes.end())throw std::out_of_range("Metal draw references an unknown mesh handle.");const bool skinned=mesh->second.Skinning!=nil;
+                [encoder setRenderPipelineState:blend?(skinned?SkinnedBlendPipeline:BlendPipeline):(skinned?SkinnedMeshPipeline:MeshPipeline)];
+                [encoder setDepthStencilState:blend?NoWriteDepthState:DepthState];
+                const DrawUniforms uniforms=MakeDraw(draw);[encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];[encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];[encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:2];if(skinned)BindSkin(encoder,mesh->second,draw);
                 BindTexture(encoder,0,TextureOr(draw.Material.BaseColorTexture,White));BindTexture(encoder,1,TextureOr(draw.Material.NormalTexture,Normal));BindTexture(encoder,2,TextureOr(draw.Material.MetallicRoughnessTexture,White));BindTexture(encoder,3,TextureOr(draw.Material.EmissiveTexture,White));BindTexture(encoder,4,TextureOr(draw.Material.OcclusionTexture,White));BindTexture(encoder,5,TextureOr(frame.EnvironmentTexture,Black));
                 [encoder setCullMode:draw.Material.DoubleSided?MTLCullModeNone:MTLCullModeBack];
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32 indexBuffer:mesh->second.Indices indexBufferOffset:0];}
@@ -594,9 +688,9 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
     MetalBackend::MetalBackend(GLFWwindow* window,std::uint32_t width,std::uint32_t height):m_Impl(std::make_unique<Impl>(window,width,height)){}
     MetalBackend::~MetalBackend()=default;
 
-    std::uint64_t MetalBackend::CreateMesh(std::span<const MetalVertex> vertices,std::span<const std::uint32_t> indices)
-    { if(vertices.empty()||indices.empty())throw std::invalid_argument("Metal mesh upload requires vertices and indices."); const std::uint64_t handle=m_Impl->NextMesh++;
-      GpuMesh mesh;mesh.Vertices=[m_Impl->Device newBufferWithBytes:vertices.data() length:vertices.size_bytes() options:MTLResourceStorageModeShared];mesh.Indices=[m_Impl->Device newBufferWithBytes:indices.data() length:indices.size_bytes() options:MTLResourceStorageModeShared];mesh.IndexCount=indices.size();if(mesh.Vertices==nil||mesh.Indices==nil)throw std::runtime_error("Metal mesh-buffer allocation failed.");m_Impl->Meshes.emplace(handle,std::move(mesh));return handle;}
+    std::uint64_t MetalBackend::CreateMesh(std::span<const MetalVertex> vertices,std::span<const std::uint32_t> indices,std::span<const MetalSkinInfluence> skinning)
+    { if(vertices.empty()||indices.empty())throw std::invalid_argument("Metal mesh upload requires vertices and indices.");if(!skinning.empty()&&skinning.size()!=vertices.size())throw std::invalid_argument("Metal skin stream must match the vertex count."); const std::uint64_t handle=m_Impl->NextMesh++;
+      GpuMesh mesh;mesh.Vertices=[m_Impl->Device newBufferWithBytes:vertices.data() length:vertices.size_bytes() options:MTLResourceStorageModeShared];if(!skinning.empty()){mesh.Skinning=[m_Impl->Device newBufferWithBytes:skinning.data() length:skinning.size_bytes() options:MTLResourceStorageModeShared];for(const auto& influence:skinning)for(std::size_t slot=0u;slot<4u;++slot)if(influence.Weights[slot]>0.0f)mesh.RequiredJoints=std::max(mesh.RequiredJoints,static_cast<std::size_t>(influence.Joints[slot])+1u);}mesh.Indices=[m_Impl->Device newBufferWithBytes:indices.data() length:indices.size_bytes() options:MTLResourceStorageModeShared];mesh.IndexCount=indices.size();if(mesh.Vertices==nil||mesh.Indices==nil||(!skinning.empty()&&mesh.Skinning==nil))throw std::runtime_error("Metal mesh-buffer allocation failed.");if(mesh.RequiredJoints>255u)throw std::length_error("Metal skinned mesh exceeds 255 joints.");m_Impl->Meshes.emplace(handle,std::move(mesh));return handle;}
     void MetalBackend::DestroyMesh(std::uint64_t handle){m_Impl->WaitForLastCommand();if(m_Impl->Meshes.erase(handle)!=1u)throw std::out_of_range("Cannot destroy an unknown Metal mesh handle.");}
     std::uint64_t MetalBackend::CreateTexture(const MetalTextureUpload& upload){if(upload.Width==0u||upload.Height==0u||upload.MipLevels==0u||upload.Bytes==nullptr)throw std::invalid_argument("Metal texture upload is incomplete.");const auto handle=m_Impl->NextTexture++;m_Impl->Textures.emplace(handle,m_Impl->UploadTexture(upload));return handle;}
     void MetalBackend::DestroyTexture(std::uint64_t handle){m_Impl->WaitForLastCommand();if(m_Impl->Textures.erase(handle)!=1u)throw std::out_of_range("Cannot destroy an unknown Metal texture handle.");}

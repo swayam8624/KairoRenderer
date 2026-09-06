@@ -10,6 +10,7 @@ module;
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -23,6 +24,7 @@ import Kairo.Renderer.GraphicsBackend;
 import Kairo.Renderer.Camera;
 import Kairo.Renderer.Window;
 import Kairo.Renderer.Mesh;
+import Kairo.Renderer.Skinning;
 import Kairo.Renderer.Texture;
 import Kairo.Renderer.Material;
 import Kairo.Renderer.RenderScene;
@@ -47,7 +49,7 @@ export namespace kairo::renderer
         ShowcaseCamera m_Camera;
         DirectionalShadowSettings m_ShadowSettings;
         ViewportShadingMode m_ShadingMode = ViewportShadingMode::Lit;
-        std::unordered_set<MeshHandle> m_Meshes;
+        std::unordered_map<MeshHandle, std::size_t> m_Meshes;
         std::unordered_set<TextureHandle> m_Textures;
         std::vector<MeshDraw> m_Draws;
         std::vector<RenderLight> m_Lights;
@@ -96,7 +98,29 @@ export namespace kairo::renderer
 
             std::vector<detail::MetalDraw> draws;
             draws.reserve(m_Draws.size());
-            for (const MeshDraw& draw : m_Draws) draws.push_back(Convert(draw));
+            // Inner vectors own their heap allocations independently, so the
+            // pointers stored in MetalDraw remain stable even if this outer
+            // vector moves while more palettes are appended.
+            std::vector<std::vector<float>> skinPalettes;
+            skinPalettes.reserve(m_Draws.size());
+            for (const MeshDraw& draw : m_Draws)
+            {
+                detail::MetalDraw converted = Convert(draw);
+                if (!draw.Skinning.Empty())
+                {
+                    skinPalettes.emplace_back(draw.Skinning.Size() * 16u, 0.0f);
+                    auto& packed = skinPalettes.back();
+                    for (std::size_t joint = 0u; joint < draw.Skinning.Size(); ++joint)
+                        for (std::size_t row = 0u; row < 4u; ++row)
+                            for (std::size_t column = 0u; column < 4u; ++column)
+                                packed[joint * 16u + column * 4u + row] =
+                                    draw.Skinning.JointMatrices[joint](row, column);
+                    converted.SkinMatrices = packed.data();
+                    converted.SkinJointCount =
+                        static_cast<std::uint32_t>(draw.Skinning.Size());
+                }
+                draws.push_back(converted);
+            }
             std::vector<detail::MetalLight> lights;
             lights.reserve(m_Lights.size());
             for (const RenderLight& light : m_Lights) lights.push_back(Convert(light));
@@ -210,9 +234,9 @@ export namespace kairo::renderer
 
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
-            if (mesh.IsSkinned())
-                throw std::logic_error(
-                    "Skinned mesh upload requires the native GPU skinning path.");
+            if (mesh.RequiredJointCount() > MaximumSkinJoints)
+                throw std::length_error(
+                    "Metal skinned mesh exceeds the portable joint limit.");
             std::vector<detail::MetalVertex> vertices;
             vertices.reserve(mesh.Vertices().size());
             for (const MeshVertex& vertex : mesh.Vertices())
@@ -225,9 +249,21 @@ export namespace kairo::renderer
                 converted.TexCoord[1] = vertex.TexCoord.y;
                 vertices.push_back(converted);
             }
+            std::vector<detail::MetalSkinInfluence> skinning;
+            skinning.reserve(mesh.Skinning().size());
+            for (const SkinVertexInfluence& influence : mesh.Skinning())
+            {
+                detail::MetalSkinInfluence converted{};
+                for (std::size_t slot = 0u; slot < 4u; ++slot)
+                {
+                    converted.Joints[slot] = influence.Joints[slot];
+                    converted.Weights[slot] = influence.Weights[slot];
+                }
+                skinning.push_back(converted);
+            }
             const MeshHandle handle = m_Backend.CreateMesh(
-                vertices, mesh.Indices());
-            m_Meshes.insert(handle);
+                vertices, mesh.Indices(), skinning);
+            m_Meshes.emplace(handle, mesh.RequiredJointCount());
             return handle;
         }
 
@@ -294,6 +330,16 @@ export namespace kairo::renderer
                 if (!m_Meshes.contains(draw.Mesh))
                     throw std::invalid_argument(
                         "RenderScene references a Metal mesh owned by another runtime.");
+                const std::size_t requiredJoints = m_Meshes.at(draw.Mesh);
+                if (requiredJoints > 0u)
+                {
+                    if (draw.Skinning.Size() < requiredJoints)
+                        throw std::invalid_argument(
+                            "Metal skinned draw palette does not cover every referenced joint.");
+                }
+                else if (!draw.Skinning.Empty())
+                    throw std::invalid_argument(
+                        "Metal static mesh draw cannot carry a skin palette.");
                 ValidateTexture(draw.Material.BaseColorTexture);
                 ValidateTexture(draw.Material.NormalTexture);
                 ValidateTexture(draw.Material.MetallicRoughnessTexture);

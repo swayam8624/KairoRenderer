@@ -302,6 +302,14 @@ if(KAIRO_RENDERER_BUILD_TESTS)
         set_tests_properties(KairoRendererVulkanSkinningSmoke PROPERTIES
             SKIP_RETURN_CODE 77)
     endif()
+    if(APPLE)
+        add_executable(KairoRendererMetalSkinningSmoke tests/MetalSkinningSmoke.cpp)
+        target_link_libraries(KairoRendererMetalSkinningSmoke PRIVATE KairoRenderer)
+        add_test(NAME KairoRendererMetalSkinningSmoke
+            COMMAND KairoRendererMetalSkinningSmoke)
+        set_tests_properties(KairoRendererMetalSkinningSmoke PROPERTIES
+            SKIP_RETURN_CODE 77)
+    endif()
     if(TARGET KairoRendererPhysicsDebug)
         add_executable(KairoRendererPhysicsDebugTests tests/PhysicsDebugBridgeTests.cpp)
         target_link_libraries(KairoRendererPhysicsDebugTests PRIVATE KairoRendererPhysicsDebug Catch2::Catch2WithMain)
