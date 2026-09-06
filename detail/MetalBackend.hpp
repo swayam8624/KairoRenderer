@@ -22,6 +22,12 @@ namespace kairo::renderer::detail
         float TexCoord[2];
     };
 
+    struct MetalSkinInfluence final
+    {
+        std::uint32_t Joints[4]{};
+        float Weights[4]{};
+    };
+
     struct MetalDebugVertex final
     {
         float Position[3];
@@ -81,6 +87,11 @@ namespace kairo::renderer::detail
         float Normal[9]{};
         MetalMaterial Material{};
         std::uint32_t CastShadows = 1u;
+        // Borrowed only for the synchronous Draw() encoding call. Matrices are
+        // already column-major and are copied into Metal command data before
+        // Draw returns.
+        const float* SkinMatrices = nullptr;
+        std::uint32_t SkinJointCount = 0u;
     };
 
     struct alignas(16) MetalLight final
@@ -139,7 +150,8 @@ namespace kairo::renderer::detail
         MetalBackend& operator=(const MetalBackend&) = delete;
 
         [[nodiscard]] std::uint64_t CreateMesh(std::span<const MetalVertex> vertices,
-            std::span<const std::uint32_t> indices);
+            std::span<const std::uint32_t> indices,
+            std::span<const MetalSkinInfluence> skinning = {});
         void DestroyMesh(std::uint64_t handle);
         [[nodiscard]] std::uint64_t CreateTexture(const MetalTextureUpload& upload);
         void DestroyTexture(std::uint64_t handle);
