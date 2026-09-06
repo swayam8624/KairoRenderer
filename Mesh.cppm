@@ -59,7 +59,6 @@ export namespace kairo::renderer
             return required;
         }
         [[nodiscard]] std::size_t IndexBytes() const noexcept { return m_Indices.size() * sizeof(std::uint32_t); }
-        [[nodiscard]] std::size_t IndexBytes() const noexcept { return m_Indices.size() * sizeof(std::uint32_t); }
 
         /// Input: a validated, backend-neutral KairoAssets triangle mesh and
         /// a finite non-negative linear-RGB vertex color.

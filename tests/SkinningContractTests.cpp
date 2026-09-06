@@ -3,8 +3,10 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <stdexcept>
 
 import Kairo.Assets;
+import Kairo.Foundation.Math;
 import Kairo.Renderer;
 
 using namespace kairo::assets;
