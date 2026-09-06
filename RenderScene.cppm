@@ -13,6 +13,7 @@ export module Kairo.Renderer.RenderScene;
 import Kairo.Foundation.Math;
 import Kairo.Renderer.Material;
 import Kairo.Renderer.Texture;
+import Kairo.Renderer.Skinning;
 
 export namespace kairo::renderer
 {
@@ -75,6 +76,9 @@ export namespace kairo::renderer
         MeshHandle Mesh = InvalidMeshHandle;
         kairo::foundation::math::Mat4f Model = kairo::foundation::math::Mat4f::Identity();
         PBRMaterial Material{};
+        /// Empty for a static draw. For a skinned draw these matrices are
+        /// already in imported-asset space (jointWorld * inverseBind).
+        SkinPalette Skinning{};
         /// Zero means non-pickable. Editor scene extraction supplies stable
         /// scene entity IDs; runtime-only draws may deliberately leave it zero.
         std::uint32_t ObjectID = 0u;
@@ -149,6 +153,7 @@ export namespace kairo::renderer
             if (draw.Mesh == InvalidMeshHandle) throw std::invalid_argument("MeshDraw requires a valid mesh handle.");
             static_cast<void>(ComputeNormalMatrix(draw.Model));
             draw.Material.Validate();
+            draw.Skinning.Validate();
         }
 
     private:

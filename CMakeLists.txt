@@ -73,7 +73,7 @@ endif()
 # happens to exist when CMake configures.
 set(KAIRO_RENDERER_MATH_REVISION e12778734a8e8ffe060255a9c03683ad6c4b1a92)
 set(KAIRO_RENDERER_GEOMETRY_REVISION d570c91eaddf5c40e05b5a22cea6db78177e7fd0)
-set(KAIRO_RENDERER_ASSETS_REVISION ad9715df00fffaa8a09f22afc990bde557689f53)
+set(KAIRO_RENDERER_ASSETS_REVISION 9e63b89520a053a1144a0350415a9f107b66eafa)
 set(KAIRO_RENDERER_PHYSICS_REVISION 180016b1c91e7b34731491f2616e64e450ea24e5)
 
 if(NOT TARGET KairoMath)
@@ -165,6 +165,7 @@ set(KAIRO_RENDERER_MODULES
     RenderGraph.cppm
     Camera.cppm
     Mesh.cppm
+    Skinning.cppm
     Texture.cppm
     AssetAdapters.cppm
     Material.cppm
@@ -268,7 +269,8 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)
     add_executable(KairoRendererTests
         tests/RendererTests.cpp
-        tests/RenderGraphExecutionPlanTests.cpp)
+        tests/RenderGraphExecutionPlanTests.cpp
+        tests/SkinningContractTests.cpp)
     target_link_libraries(KairoRendererTests PRIVATE KairoRenderer Catch2::Catch2WithMain)
     enable_testing()
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)

@@ -97,6 +97,7 @@ export namespace kairo::renderer
             kairo::foundation::math::Mat4f::Identity();
         std::uint32_t NodeIndex = 0u;
         std::uint32_t PrimitiveIndex = 0u;
+        std::uint32_t SkinIndex = kairo::assets::GltfMissingIndex;
     };
 
     struct GltfRenderAsset final
@@ -216,9 +217,21 @@ export namespace kairo::renderer
                 if (primitive.MaterialIndex != std::numeric_limits<std::uint32_t>::max())
                     material = MakeGltfPBRMaterial(
                         source.Materials[primitive.MaterialIndex], resolveTexture);
-                result.Primitives.push_back({ Mesh::FromArtifact(primitive.Mesh),
-                    material, world[nodeIndex], static_cast<std::uint32_t>(nodeIndex),
-                    primitiveIndex });
+                const bool skinned = source.Nodes[nodeIndex].SkinIndex !=
+                    kairo::assets::GltfMissingIndex;
+                Mesh geometry = skinned
+                    ? Mesh::FromGltfPrimitive(primitive)
+                    : Mesh::FromArtifact(primitive.Mesh);
+                // EngineCore skin palettes are jointWorld * inverseBind in
+                // imported-asset space. Applying the mesh node world again
+                // would double-transform skinned vertices, so only static
+                // primitives retain their hierarchy-composed LocalToAsset.
+                const auto localToAsset = skinned
+                    ? kairo::foundation::math::Mat4f::Identity()
+                    : world[nodeIndex];
+                result.Primitives.push_back({ std::move(geometry), material,
+                    localToAsset, static_cast<std::uint32_t>(nodeIndex),
+                    primitiveIndex, source.Nodes[nodeIndex].SkinIndex });
             }
         }
         if (result.Primitives.empty())
