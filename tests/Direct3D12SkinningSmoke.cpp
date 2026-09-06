@@ -1,6 +1,7 @@
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 import Kairo.Renderer;
 import Kairo.Foundation.Math;
