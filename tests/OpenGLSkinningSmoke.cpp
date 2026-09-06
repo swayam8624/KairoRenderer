@@ -21,7 +21,10 @@ int main()
         primitive.Skinning.resize(3u);
         for (auto& influence : primitive.Skinning)
         {
-            influence.Joints = { 0u, 0u, 0u, 0u };
+            // glTF permits irrelevant joint values in zero-weight slots. This
+            // deliberately uses indices beyond the palette limit so the native
+            // shader smoke test catches accidental unconditional dereferences.
+            influence.Joints = { 0u, 999999u, 70000u, 255u };
             influence.Weights = { 1.0f, 0.0f, 0.0f, 0.0f };
         }
 

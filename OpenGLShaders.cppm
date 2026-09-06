@@ -68,10 +68,15 @@ out vec2 texCoord;
 
 mat4 SkinMatrix()
 {
-    return inWeights.x * uJoints[inJoints.x] +
-           inWeights.y * uJoints[inJoints.y] +
-           inWeights.z * uJoints[inJoints.z] +
-           inWeights.w * uJoints[inJoints.w];
+    mat4 skin = mat4(0.0);
+    // Zero-weight slots are semantically inactive and may contain arbitrary
+    // JOINTS_0 values. Never dereference them: out-of-range uniform-array
+    // indexing is undefined even when the mathematical multiplier is zero.
+    if (inWeights.x > 0.0) skin += inWeights.x * uJoints[inJoints.x];
+    if (inWeights.y > 0.0) skin += inWeights.y * uJoints[inJoints.y];
+    if (inWeights.z > 0.0) skin += inWeights.z * uJoints[inJoints.z];
+    if (inWeights.w > 0.0) skin += inWeights.w * uJoints[inJoints.w];
+    return skin;
 }
 
 void main()
@@ -323,10 +328,15 @@ uniform mat4 uLightViewProjection;
 uniform mat4 uModel;
 mat4 SkinMatrix()
 {
-    return inWeights.x * uJoints[inJoints.x] +
-           inWeights.y * uJoints[inJoints.y] +
-           inWeights.z * uJoints[inJoints.z] +
-           inWeights.w * uJoints[inJoints.w];
+    mat4 skin = mat4(0.0);
+    // Zero-weight slots are semantically inactive and may contain arbitrary
+    // JOINTS_0 values. Never dereference them: out-of-range uniform-array
+    // indexing is undefined even when the mathematical multiplier is zero.
+    if (inWeights.x > 0.0) skin += inWeights.x * uJoints[inJoints.x];
+    if (inWeights.y > 0.0) skin += inWeights.y * uJoints[inJoints.y];
+    if (inWeights.z > 0.0) skin += inWeights.z * uJoints[inJoints.z];
+    if (inWeights.w > 0.0) skin += inWeights.w * uJoints[inJoints.w];
+    return skin;
 }
 void main()
 {
