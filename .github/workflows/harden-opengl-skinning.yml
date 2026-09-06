@@ -1,0 +1,23 @@
+name: Harden OpenGL Skinning Safety
+
+on:
+  push:
+    branches: [feature/native-gpu-skinning]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/native-gpu-skinning
+      - run: python3 .github/scripts/harden_opengl_skinning.py
+      - run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Renderer: harden zero-weight skin influence handling"
+          git push origin HEAD:feature/native-gpu-skinning
