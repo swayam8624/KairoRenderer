@@ -40,6 +40,57 @@ void main()
 }
 )GLSL";
 
+    /// Four-weight GPU skinning variant. The palette is supplied through a
+    /// std140 uniform block rather than ordinary vertex uniforms so the full
+    /// portable 255-joint ceiling fits OpenGL 4.1's guaranteed 16 KiB block.
+    inline constexpr std::string_view SkinnedMeshVertex = R"GLSL(#version 410 core
+layout(location=0) in vec3 inPosition;
+layout(location=1) in vec3 inColor;
+layout(location=2) in vec3 inNormal;
+layout(location=3) in vec2 inTexCoord;
+layout(location=4) in uvec4 inJoints;
+layout(location=5) in vec4 inWeights;
+
+const int MaximumSkinJoints = 255;
+layout(std140) uniform SkinPaletteBlock { mat4 uJoints[MaximumSkinJoints]; };
+
+uniform mat4 uView;
+uniform mat4 uProjection;
+uniform mat4 uModel;
+uniform mat3 uNormalMatrix;
+uniform mat4 uLightViewProjection;
+
+out vec3 vertexColor;
+out vec3 worldNormal;
+out vec3 worldPosition;
+out vec4 lightClipPosition;
+out vec2 texCoord;
+
+mat4 SkinMatrix()
+{
+    return inWeights.x * uJoints[inJoints.x] +
+           inWeights.y * uJoints[inJoints.y] +
+           inWeights.z * uJoints[inJoints.z] +
+           inWeights.w * uJoints[inJoints.w];
+}
+
+void main()
+{
+    mat4 skin = SkinMatrix();
+    vec4 assetPosition = skin * vec4(inPosition, 1.0);
+    vec4 world = uModel * assetPosition;
+    gl_Position = uProjection * uView * world;
+    vertexColor = inColor;
+    // glTF joint transforms are normally rigid/TRS. Using inverse-transpose of
+    // the blended linear transform keeps normals correct under authored scale.
+    vec3 assetNormal = transpose(inverse(mat3(skin))) * inNormal;
+    worldNormal = uNormalMatrix * assetNormal;
+    worldPosition = world.xyz;
+    lightClipPosition = uLightViewProjection * world;
+    texCoord = inTexCoord;
+}
+)GLSL";
+
     /// Metallic-roughness forward shading mirrors the Vulkan renderer's
     /// material and scene semantics. OpenGL 4.1 lacks descriptor sets, so the
     /// same values are explicit uniforms and fixed texture units.
@@ -260,6 +311,28 @@ layout(location=0) in vec3 inPosition;
 uniform mat4 uLightViewProjection;
 uniform mat4 uModel;
 void main() { gl_Position = uLightViewProjection * uModel * vec4(inPosition,1.0); }
+)GLSL";
+
+    inline constexpr std::string_view SkinnedShadowVertex = R"GLSL(#version 410 core
+layout(location=0) in vec3 inPosition;
+layout(location=4) in uvec4 inJoints;
+layout(location=5) in vec4 inWeights;
+const int MaximumSkinJoints = 255;
+layout(std140) uniform SkinPaletteBlock { mat4 uJoints[MaximumSkinJoints]; };
+uniform mat4 uLightViewProjection;
+uniform mat4 uModel;
+mat4 SkinMatrix()
+{
+    return inWeights.x * uJoints[inJoints.x] +
+           inWeights.y * uJoints[inJoints.y] +
+           inWeights.z * uJoints[inJoints.z] +
+           inWeights.w * uJoints[inJoints.w];
+}
+void main()
+{
+    gl_Position = uLightViewProjection * uModel *
+        SkinMatrix() * vec4(inPosition, 1.0);
+}
 )GLSL";
 
     inline constexpr std::string_view ShadowFragment = R"GLSL(#version 410 core

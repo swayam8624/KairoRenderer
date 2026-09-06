@@ -29,6 +29,7 @@ import Kairo.Renderer.GraphicsBackend;
 import Kairo.Renderer.Camera;
 import Kairo.Renderer.Window;
 import Kairo.Renderer.Mesh;
+import Kairo.Renderer.Skinning;
 import Kairo.Renderer.Texture;
 import Kairo.Renderer.Material;
 import Kairo.Renderer.RenderScene;
@@ -55,8 +56,10 @@ export namespace kairo::renderer
         {
             GLuint VertexArray = 0u;
             GLuint VertexBuffer = 0u;
+            GLuint SkinBuffer = 0u;
             GLuint IndexBuffer = 0u;
             GLsizei IndexCount = 0;
+            std::size_t RequiredJoints = 0u;
         };
 
         struct GpuTexture final
@@ -74,8 +77,11 @@ export namespace kairo::renderer
         GlfwRuntime m_Glfw;
         Window m_Window;
         GLuint m_MeshProgram = 0u;
+        GLuint m_SkinnedMeshProgram = 0u;
         GLuint m_ShadowProgram = 0u;
+        GLuint m_SkinnedShadowProgram = 0u;
         GLuint m_DebugProgram = 0u;
+        GLuint m_SkinPaletteBuffer = 0u;
         GLuint m_ViewportFramebuffer = 0u;
         GLuint m_ViewportColor = 0u;
         GLuint m_ViewportObjectID = 0u;
@@ -90,6 +96,7 @@ export namespace kairo::renderer
         std::uint32_t m_ViewportWidth = 1u;
         std::uint32_t m_ViewportHeight = 1u;
         static constexpr std::uint32_t ShadowResolution = 2048u;
+        static constexpr GLuint SkinPaletteBindingPoint = 7u;
         ShowcaseCamera m_Camera;
         DirectionalShadowSettings m_ShadowSettings;
         ViewportShadingMode m_ShadingMode = ViewportShadingMode::Lit;
@@ -126,9 +133,17 @@ export namespace kairo::renderer
                 m_MeshProgram = CreateProgram(
                     opengl_shaders::MeshVertex, opengl_shaders::MeshFragment,
                     "OpenGL mesh program");
+                m_SkinnedMeshProgram = CreateProgram(
+                    opengl_shaders::SkinnedMeshVertex,
+                    opengl_shaders::MeshFragment,
+                    "OpenGL skinned mesh program");
                 m_ShadowProgram = CreateProgram(
                     opengl_shaders::ShadowVertex, opengl_shaders::ShadowFragment,
                     "OpenGL shadow program");
+                m_SkinnedShadowProgram = CreateProgram(
+                    opengl_shaders::SkinnedShadowVertex,
+                    opengl_shaders::ShadowFragment,
+                    "OpenGL skinned shadow program");
                 m_DebugProgram = CreateProgram(
                     opengl_shaders::DebugVertex, opengl_shaders::DebugFragment,
                     "OpenGL debug program");
@@ -138,6 +153,7 @@ export namespace kairo::renderer
                 m_FallbackWhite = CreateSolidTexture(255u, 255u, 255u, 255u);
                 m_FallbackNormal = CreateSolidTexture(128u, 128u, 255u, 255u);
                 m_FallbackBlack = CreateSolidTexture(0u, 0u, 0u, 255u);
+                CreateSkinningResources();
                 ConfigureSamplerUniforms();
             }
             catch (...)
@@ -311,21 +327,21 @@ export namespace kairo::renderer
 
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
-            if (mesh.IsSkinned())
-                throw std::logic_error(
-                    "Skinned mesh upload requires the native GPU skinning path.");
             if (mesh.Indices().size() >
                 static_cast<std::size_t>(std::numeric_limits<GLsizei>::max()))
                 throw std::length_error("OpenGL mesh index count exceeds GLsizei capacity.");
+            if (mesh.RequiredJointCount() > MaximumSkinJoints)
+                throw std::length_error("OpenGL skinned mesh exceeds the portable joint limit.");
             glfwMakeContextCurrent(m_Window.NativeHandle());
             GpuMesh gpu;
             glGenVertexArrays(1, &gpu.VertexArray);
             glGenBuffers(1, &gpu.VertexBuffer);
             glGenBuffers(1, &gpu.IndexBuffer);
+            if (mesh.IsSkinned()) glGenBuffers(1, &gpu.SkinBuffer);
             try
             {
                 if (gpu.VertexArray == 0u || gpu.VertexBuffer == 0u ||
-                    gpu.IndexBuffer == 0u)
+                    gpu.IndexBuffer == 0u || (mesh.IsSkinned() && gpu.SkinBuffer == 0u))
                     throw std::runtime_error("OpenGL failed to allocate mesh objects.");
                 glBindVertexArray(gpu.VertexArray);
                 glBindBuffer(GL_ARRAY_BUFFER, gpu.VertexBuffer);
@@ -339,6 +355,19 @@ export namespace kairo::renderer
                 ConfigureVertexAttribute(1u, 3, stride, offsetof(MeshVertex, Color));
                 ConfigureVertexAttribute(2u, 3, stride, offsetof(MeshVertex, Normal));
                 ConfigureVertexAttribute(3u, 2, stride, offsetof(MeshVertex, TexCoord));
+                if (mesh.IsSkinned())
+                {
+                    glBindBuffer(GL_ARRAY_BUFFER, gpu.SkinBuffer);
+                    glBufferData(GL_ARRAY_BUFFER, CheckedGLSize(mesh.SkinBytes()),
+                        mesh.Skinning().data(), GL_STATIC_DRAW);
+                    constexpr GLsizei skinStride =
+                        static_cast<GLsizei>(sizeof(SkinVertexInfluence));
+                    ConfigureIntegerVertexAttribute(4u, 4, GL_UNSIGNED_INT,
+                        skinStride, offsetof(SkinVertexInfluence, Joints));
+                    ConfigureVertexAttribute(5u, 4, skinStride,
+                        offsetof(SkinVertexInfluence, Weights));
+                    gpu.RequiredJoints = mesh.RequiredJointCount();
+                }
                 glBindVertexArray(0u);
                 gpu.IndexCount = static_cast<GLsizei>(mesh.Indices().size());
                 ThrowIfGLError("uploading a mesh");
@@ -431,6 +460,16 @@ export namespace kairo::renderer
                 RenderScene::Validate(draw);
                 if (!m_Meshes.contains(draw.Mesh))
                     throw std::invalid_argument("RenderScene references an OpenGL mesh owned by another runtime.");
+                const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
+                if (mesh.RequiredJoints > 0u)
+                {
+                    if (draw.Skinning.Size() < mesh.RequiredJoints)
+                        throw std::invalid_argument(
+                            "OpenGL skinned draw palette does not cover every referenced joint.");
+                }
+                else if (!draw.Skinning.Empty())
+                    throw std::invalid_argument(
+                        "OpenGL static mesh draw cannot carry a skin palette.");
                 ValidateTextureHandle(draw.Material.BaseColorTexture);
                 ValidateTextureHandle(draw.Material.NormalTexture);
                 ValidateTextureHandle(draw.Material.MetallicRoughnessTexture);
@@ -606,15 +645,50 @@ export namespace kairo::renderer
 
         void ConfigureSamplerUniforms() const
         {
-            glUseProgram(m_MeshProgram);
-            SetUniform(m_MeshProgram, "uShadowMap", 0);
-            SetUniform(m_MeshProgram, "uBaseColorMap", 1);
-            SetUniform(m_MeshProgram, "uNormalMap", 2);
-            SetUniform(m_MeshProgram, "uMetallicRoughnessMap", 3);
-            SetUniform(m_MeshProgram, "uEmissiveMap", 4);
-            SetUniform(m_MeshProgram, "uOcclusionMap", 5);
-            SetUniform(m_MeshProgram, "uEnvironmentMap", 6);
+            ConfigureProgramSamplers(m_MeshProgram);
+            ConfigureProgramSamplers(m_SkinnedMeshProgram);
             glUseProgram(0u);
+        }
+
+        static void ConfigureProgramSamplers(GLuint program)
+        {
+            glUseProgram(program);
+            SetUniform(program, "uShadowMap", 0);
+            SetUniform(program, "uBaseColorMap", 1);
+            SetUniform(program, "uNormalMap", 2);
+            SetUniform(program, "uMetallicRoughnessMap", 3);
+            SetUniform(program, "uEmissiveMap", 4);
+            SetUniform(program, "uOcclusionMap", 5);
+            SetUniform(program, "uEnvironmentMap", 6);
+        }
+
+        void CreateSkinningResources()
+        {
+            GLint maximumBlockBytes = 0;
+            glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &maximumBlockBytes);
+            constexpr std::size_t requiredBytes = MaximumSkinJoints * 16u * sizeof(float);
+            if (maximumBlockBytes < static_cast<GLint>(requiredBytes))
+                throw PresentationUnavailableError(
+                    "OpenGL implementation does not provide the required 16 KiB skin uniform block.");
+            glGenBuffers(1, &m_SkinPaletteBuffer);
+            if (m_SkinPaletteBuffer == 0u)
+                throw std::runtime_error("OpenGL failed to allocate the skin palette buffer.");
+            glBindBuffer(GL_UNIFORM_BUFFER, m_SkinPaletteBuffer);
+            glBufferData(GL_UNIFORM_BUFFER, CheckedGLSize(requiredBytes), nullptr,
+                GL_DYNAMIC_DRAW);
+            glBindBufferBase(GL_UNIFORM_BUFFER, SkinPaletteBindingPoint,
+                m_SkinPaletteBuffer);
+            const auto bindBlock = [](GLuint program)
+            {
+                const GLuint block = glGetUniformBlockIndex(program, "SkinPaletteBlock");
+                if (block == GL_INVALID_INDEX)
+                    throw std::runtime_error(
+                        "OpenGL skinned shader does not expose SkinPaletteBlock.");
+                glUniformBlockBinding(program, block, SkinPaletteBindingPoint);
+            };
+            bindBlock(m_SkinnedMeshProgram);
+            bindBlock(m_SkinnedShadowProgram);
+            glBindBuffer(GL_UNIFORM_BUFFER, 0u);
         }
 
         void CreateViewportTarget(std::uint32_t width, std::uint32_t height)
@@ -745,13 +819,17 @@ export namespace kairo::renderer
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(m_ShadowSettings.SlopeDepthBias,
                 m_ShadowSettings.ConstantDepthBias);
-            glUseProgram(m_ShadowProgram);
-            SetMatrix(m_ShadowProgram, "uLightViewProjection", lightViewProjection);
             for (const MeshDraw& draw : m_Draws)
             {
                 if (!draw.CastShadows ||
                     draw.Material.AlphaMode == MaterialAlphaMode::Blend) continue;
-                SetMatrix(m_ShadowProgram, "uModel", draw.Model);
+                const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
+                const GLuint program = mesh.RequiredJoints > 0u
+                    ? m_SkinnedShadowProgram : m_ShadowProgram;
+                glUseProgram(program);
+                SetMatrix(program, "uLightViewProjection", lightViewProjection);
+                SetMatrix(program, "uModel", draw.Model);
+                if (mesh.RequiredJoints > 0u) UploadSkinPalette(draw.Skinning);
                 DrawMesh(draw.Mesh);
             }
             glDisable(GL_POLYGON_OFFSET_FILL);
@@ -762,6 +840,8 @@ export namespace kairo::renderer
             const kairo::foundation::math::Mat4f& lightViewProjection,
             std::optional<std::size_t> shadowIndex) const
         {
+            static_cast<void>(lightViewProjection);
+            static_cast<void>(shadowIndex);
             glBindFramebuffer(GL_FRAMEBUFFER, m_ViewportFramebuffer);
             glViewport(0, 0, CheckedGLDimension(m_ViewportWidth),
                 CheckedGLDimension(m_ViewportHeight));
@@ -771,8 +851,6 @@ export namespace kairo::renderer
             glEnable(GL_DEPTH_TEST);
             glEnable(GL_CULL_FACE);
             glCullFace(GL_BACK);
-            glUseProgram(m_MeshProgram);
-            UploadFrameUniforms(lightViewProjection, shadowIndex);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, m_ShadowDepth);
         }
@@ -795,7 +873,7 @@ export namespace kairo::renderer
 
             for (std::size_t index = 0u; index < m_Draws.size(); ++index)
                 if (m_Draws[index].Material.AlphaMode != MaterialAlphaMode::Blend)
-                    DrawOne(m_Draws[index]);
+                    DrawOne(m_Draws[index], lightViewProjection, shadowIndex);
         }
 
         void DrawTransparentPass(
@@ -825,7 +903,8 @@ export namespace kairo::renderer
                 glDisablei(GL_BLEND, 1u);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 glDepthMask(GL_FALSE);
-                for (const std::size_t index : transparent) DrawOne(m_Draws[index]);
+                for (const std::size_t index : transparent)
+                    DrawOne(m_Draws[index], lightViewProjection, shadowIndex);
                 glDepthMask(GL_TRUE);
                 glDisablei(GL_BLEND, 0u);
             }
@@ -843,67 +922,75 @@ export namespace kairo::renderer
             ThrowIfGLError("rendering an OpenGL frame");
         }
 
-        void UploadFrameUniforms(
+        void UploadFrameUniforms(GLuint program,
             const kairo::foundation::math::Mat4f& lightViewProjection,
             std::optional<std::size_t> shadowIndex) const
         {
-            SetMatrix(m_MeshProgram, "uView", m_Camera.View());
-            SetMatrix(m_MeshProgram, "uProjection",
+            SetMatrix(program, "uView", m_Camera.View());
+            SetMatrix(program, "uProjection",
                 OpenGLCameraProjection(m_ViewportWidth, m_ViewportHeight));
-            SetMatrix(m_MeshProgram, "uLightViewProjection", lightViewProjection);
-            SetUniform(m_MeshProgram, "uCameraPosition", m_Camera.Position());
-            SetUniform(m_MeshProgram, "uAmbient",
+            SetMatrix(program, "uLightViewProjection", lightViewProjection);
+            SetUniform(program, "uCameraPosition", m_Camera.Position());
+            SetUniform(program, "uAmbient",
                 m_Environment.AmbientColor * m_Environment.AmbientIntensity);
-            SetUniform(m_MeshProgram, "uBackground", m_Environment.BackgroundColor);
-            SetUniform(m_MeshProgram, "uExposure", m_Environment.ExposureEV100);
-            SetUniform(m_MeshProgram, "uEnvironmentIntensity",
+            SetUniform(program, "uBackground", m_Environment.BackgroundColor);
+            SetUniform(program, "uExposure", m_Environment.ExposureEV100);
+            SetUniform(program, "uEnvironmentIntensity",
                 m_Environment.EnvironmentIntensity);
-            SetUniform(m_MeshProgram, "uShadingMode", static_cast<int>(m_ShadingMode));
-            SetUniform(m_MeshProgram, "uLightCount", static_cast<int>(m_Lights.size()));
-            SetUniform(m_MeshProgram, "uShadowLightIndex",
+            SetUniform(program, "uShadingMode", static_cast<int>(m_ShadingMode));
+            SetUniform(program, "uLightCount", static_cast<int>(m_Lights.size()));
+            SetUniform(program, "uShadowLightIndex",
                 shadowIndex.has_value() ? static_cast<int>(*shadowIndex) : -1);
-            SetUniform(m_MeshProgram, "uShadowEnabled",
+            SetUniform(program, "uShadowEnabled",
                 m_ShadowSettings.Enabled && shadowIndex.has_value() ? 1 : 0);
-            SetUniform(m_MeshProgram, "uShadowStrength", m_ShadowSettings.Strength);
-            SetUniform(m_MeshProgram, "uShadowTexel",
+            SetUniform(program, "uShadowStrength", m_ShadowSettings.Strength);
+            SetUniform(program, "uShadowTexel",
                 1.0f / static_cast<float>(ShadowResolution));
-            SetUniform(m_MeshProgram, "uReceiverBias", m_ShadowSettings.ReceiverBias);
+            SetUniform(program, "uReceiverBias", m_ShadowSettings.ReceiverBias);
             for (std::size_t index = 0u; index < m_Lights.size(); ++index)
             {
                 const RenderLight& light = m_Lights[index];
                 const auto direction = kairo::foundation::math::SafeNormalize(
                     light.Direction, kairo::foundation::math::Vec3f::Up());
-                SetUniform4(m_MeshProgram, IndexedUniform("uLightPositionType", index),
+                SetUniform4(program, IndexedUniform("uLightPositionType", index),
                     light.Position.x, light.Position.y, light.Position.z,
                     static_cast<float>(light.Type));
-                SetUniform4(m_MeshProgram, IndexedUniform("uLightDirectionRange", index),
+                SetUniform4(program, IndexedUniform("uLightDirectionRange", index),
                     direction.x, direction.y, direction.z, light.Range);
-                SetUniform4(m_MeshProgram, IndexedUniform("uLightColorIntensity", index),
+                SetUniform4(program, IndexedUniform("uLightColorIntensity", index),
                     light.Color.x, light.Color.y, light.Color.z, light.Intensity);
-                SetUniform4(m_MeshProgram, IndexedUniform("uLightSpot", index),
+                SetUniform4(program, IndexedUniform("uLightSpot", index),
                     std::cos(light.InnerConeRadians),
                     std::cos(light.OuterConeRadians), light.AreaWidth,
                     light.AreaHeight);
             }
         }
 
-        void DrawOne(const MeshDraw& draw) const
+        void DrawOne(const MeshDraw& draw,
+            const kairo::foundation::math::Mat4f& lightViewProjection,
+            std::optional<std::size_t> shadowIndex) const
         {
+            const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
+            const GLuint program = mesh.RequiredJoints > 0u
+                ? m_SkinnedMeshProgram : m_MeshProgram;
+            glUseProgram(program);
+            UploadFrameUniforms(program, lightViewProjection, shadowIndex);
+            if (mesh.RequiredJoints > 0u) UploadSkinPalette(draw.Skinning);
             const auto normal = ComputeNormalMatrix(draw.Model);
-            SetMatrix(m_MeshProgram, "uModel", draw.Model);
-            SetMatrix(m_MeshProgram, "uNormalMatrix", normal);
-            SetUniform4(m_MeshProgram, "uBaseColorFactor",
+            SetMatrix(program, "uModel", draw.Model);
+            SetMatrix(program, "uNormalMatrix", normal);
+            SetUniform4(program, "uBaseColorFactor",
                 draw.Material.BaseColor.x, draw.Material.BaseColor.y,
                 draw.Material.BaseColor.z, draw.Material.BaseColorAlpha);
-            SetUniform(m_MeshProgram, "uEmissiveFactor", draw.Material.Emissive);
-            SetUniform4(m_MeshProgram, "uMaterialFactors",
+            SetUniform(program, "uEmissiveFactor", draw.Material.Emissive);
+            SetUniform4(program, "uMaterialFactors",
                 draw.Material.Metallic, draw.Material.Roughness,
                 draw.Material.AmbientOcclusion, draw.Material.AlphaCutoff);
-            SetUniform(m_MeshProgram, "uNormalScale", draw.Material.NormalScale);
-            SetUniform(m_MeshProgram, "uAlphaMode",
+            SetUniform(program, "uNormalScale", draw.Material.NormalScale);
+            SetUniform(program, "uAlphaMode",
                 static_cast<int>(draw.Material.AlphaMode));
-            SetUniformUnsigned(m_MeshProgram, "uObjectID", draw.ObjectID);
-            SetUniform(m_MeshProgram, "uReceiveShadows", draw.ReceiveShadows ? 1 : 0);
+            SetUniformUnsigned(program, "uObjectID", draw.ObjectID);
+            SetUniform(program, "uReceiveShadows", draw.ReceiveShadows ? 1 : 0);
             BindTextureUnit(1u, TextureOr(draw.Material.BaseColorTexture,
                 m_FallbackWhite));
             BindTextureUnit(2u, TextureOr(draw.Material.NormalTexture,
@@ -921,10 +1008,29 @@ export namespace kairo::renderer
                 ? 0.0f
                 : static_cast<float>(m_Textures.at(
                     m_Environment.EnvironmentTexture).MipLevels - 1u);
-            SetUniform(m_MeshProgram, "uEnvironmentMaxLod", maxLod);
+            SetUniform(program, "uEnvironmentMaxLod", maxLod);
             if (draw.Material.DoubleSided) glDisable(GL_CULL_FACE);
             else glEnable(GL_CULL_FACE);
             DrawMesh(draw.Mesh);
+        }
+
+        void UploadSkinPalette(const SkinPalette& palette) const
+        {
+            palette.Validate();
+            if (palette.Empty())
+                throw std::invalid_argument(
+                    "OpenGL skinned draw requires a non-empty skin palette.");
+            std::array<float, MaximumSkinJoints * 16u> packed{};
+            for (std::size_t joint = 0u; joint < palette.Size(); ++joint)
+                for (std::size_t row = 0u; row < 4u; ++row)
+                    for (std::size_t column = 0u; column < 4u; ++column)
+                        packed[joint * 16u + column * 4u + row] =
+                            palette.JointMatrices[joint](row, column);
+            const std::size_t bytes = palette.Size() * 16u * sizeof(float);
+            glBindBuffer(GL_UNIFORM_BUFFER, m_SkinPaletteBuffer);
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, CheckedGLSize(bytes), packed.data());
+            glBindBufferBase(GL_UNIFORM_BUFFER, SkinPaletteBindingPoint,
+                m_SkinPaletteBuffer);
         }
 
         void DrawDebugLines()
@@ -1104,6 +1210,14 @@ export namespace kairo::renderer
                 reinterpret_cast<const void*>(offset));
         }
 
+        static void ConfigureIntegerVertexAttribute(GLuint index, GLint components,
+            GLenum type, GLsizei stride, std::size_t offset)
+        {
+            glEnableVertexAttribArray(index);
+            glVertexAttribIPointer(index, components, type, stride,
+                reinterpret_cast<const void*>(offset));
+        }
+
         [[nodiscard]] static GLsizeiptr CheckedGLSize(std::size_t bytes)
         {
             if (bytes > static_cast<std::size_t>(
@@ -1238,6 +1352,7 @@ export namespace kairo::renderer
         static void DeleteMesh(const GpuMesh& mesh) noexcept
         {
             if (mesh.IndexBuffer != 0u) glDeleteBuffers(1, &mesh.IndexBuffer);
+            if (mesh.SkinBuffer != 0u) glDeleteBuffers(1, &mesh.SkinBuffer);
             if (mesh.VertexBuffer != 0u) glDeleteBuffers(1, &mesh.VertexBuffer);
             if (mesh.VertexArray != 0u) glDeleteVertexArrays(1, &mesh.VertexArray);
         }
@@ -1280,13 +1395,18 @@ export namespace kairo::renderer
             if (m_ShadowFramebuffer != 0u)
                 glDeleteFramebuffers(1, &m_ShadowFramebuffer);
             DeleteViewportTarget();
+            if (m_SkinPaletteBuffer != 0u) glDeleteBuffers(1, &m_SkinPaletteBuffer);
             if (m_DebugProgram != 0u) glDeleteProgram(m_DebugProgram);
+            if (m_SkinnedShadowProgram != 0u) glDeleteProgram(m_SkinnedShadowProgram);
             if (m_ShadowProgram != 0u) glDeleteProgram(m_ShadowProgram);
+            if (m_SkinnedMeshProgram != 0u) glDeleteProgram(m_SkinnedMeshProgram);
             if (m_MeshProgram != 0u) glDeleteProgram(m_MeshProgram);
             m_FallbackBlack = m_FallbackNormal = m_FallbackWhite = 0u;
             m_DebugVertexBuffer = m_DebugVertexArray = 0u;
             m_ShadowDepth = m_ShadowFramebuffer = 0u;
-            m_DebugProgram = m_ShadowProgram = m_MeshProgram = 0u;
+            m_SkinPaletteBuffer = 0u;
+            m_DebugProgram = m_SkinnedShadowProgram = m_ShadowProgram =
+                m_SkinnedMeshProgram = m_MeshProgram = 0u;
         }
     };
 }

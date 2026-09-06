@@ -123,3 +123,17 @@ TEST_CASE("render scene carries a finite backend-neutral skin palette")
         std::numeric_limits<float>::quiet_NaN();
     REQUIRE_THROWS_AS(RenderScene::Validate(draw), std::invalid_argument);
 }
+
+TEST_CASE("portable GPU skin palette rejects the 256th joint")
+{
+    SkinPalette palette;
+    palette.JointMatrices.resize(MaximumSkinJoints,
+        kairo::foundation::math::Mat4f::Identity());
+    REQUIRE_NOTHROW(palette.Validate());
+    palette.JointMatrices.push_back(kairo::foundation::math::Mat4f::Identity());
+    REQUIRE_THROWS_AS(palette.Validate(), std::length_error);
+
+    SkinVertexInfluence invalid{ { static_cast<std::uint32_t>(MaximumSkinJoints),
+        0u, 0u, 0u }, { 1.0f, 0.0f, 0.0f, 0.0f } };
+    REQUIRE_THROWS_AS(ValidateSkinVertexInfluence(invalid), std::out_of_range);
+}
