@@ -39,6 +39,25 @@ int main()
         if (mesh == InvalidMeshHandle)
             throw std::runtime_error("D3D12 skinned mesh upload returned an invalid handle");
 
+        // A skinned mesh cannot be submitted without enough joint matrices.
+        // Exercise this native runtime boundary before the valid render path.
+        bool rejectedMissingPalette = false;
+        try
+        {
+            MeshDraw invalidDraw;
+            invalidDraw.Mesh = mesh;
+            RenderScene invalidScene;
+            invalidScene.Add(invalidDraw);
+            runtime.SubmitRenderScene(invalidScene);
+        }
+        catch (const std::invalid_argument&)
+        {
+            rejectedMissingPalette = true;
+        }
+        if (!rejectedMissingPalette)
+            throw std::runtime_error(
+                "D3D12 accepted a skinned draw without its required joint palette");
+
         RenderLight light;
         light.Type = RenderLightType::Directional;
         light.Direction = { 0.25f, 1.0f, 0.35f };
