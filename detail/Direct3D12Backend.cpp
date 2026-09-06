@@ -202,7 +202,7 @@ SamplerComparisonState shadowSampler:register(s6);
 struct VertexIn { float3 position:POSITION; float3 color:COLOR; float3 normal:NORMAL; float2 uv:TEXCOORD; };
 struct SkinnedVertexIn { float3 position:POSITION; float3 color:COLOR; float3 normal:NORMAL; float2 uv:TEXCOORD; uint4 jointIndices:JOINTS; float4 weights:WEIGHTS; };
 struct VertexOut { float4 position:SV_Position; float3 world:WORLD; float3 color:COLOR; float3 normal:NORMAL; float2 uv:TEXCOORD; float4 shadow:SHADOW; };
-VertexOut MeshVS(VertexIn i) { VertexOut o; float4 world=mul(float4(i.position,1),model); o.position=mul(mul(world,view),projection); o.world=world.xyz; float3x3 n=float3x3(normal0.xyz,normal1.xyz,normal2.xyz); o.normal=normalize(mul(i.normal,n)); o.color=i.color; o.uv=i.uv; o.shadow=mul(world,lightViewProjection); return o; }
+VertexOut MeshVS(VertexIn i) { VertexOut o; float4 world=mul(model,float4(i.position,1)); o.position=mul(projection,mul(view,world)); o.world=world.xyz; float3x3 n=float3x3(normal0.xyz,normal1.xyz,normal2.xyz); o.normal=normalize(mul(n,i.normal)); o.color=i.color; o.uv=i.uv; o.shadow=mul(lightViewProjection,world); return o; }
 row_major float4x4 SkinMatrix(SkinnedVertexIn i) {
  row_major float4x4 result=(float4x4)0.0;
  if(i.weights.x>0)result+=i.weights.x*joints[i.jointIndices.x];
@@ -213,14 +213,14 @@ row_major float4x4 SkinMatrix(SkinnedVertexIn i) {
 }
 VertexOut SkinnedMeshVS(SkinnedVertexIn i) {
  VertexOut o; row_major float4x4 skin=SkinMatrix(i);
- float4 asset=mul(float4(i.position,1),skin); float4 world=mul(asset,model);
- o.position=mul(mul(world,view),projection); o.world=world.xyz;
+ float4 asset=mul(skin,float4(i.position,1)); float4 world=mul(model,asset);
+ o.position=mul(projection,mul(view,world)); o.world=world.xyz;
  float3 r0=skin[0].xyz,r1=skin[1].xyz,r2=skin[2].xyz;
  float3 c0=cross(r1,r2),c1=cross(r2,r0),c2=cross(r0,r1); float det=dot(r0,c0);
  float3x3 skinNormal=abs(det)>1e-8?float3x3(c0,c1,c2)/det:float3x3(r0,r1,r2);
  float3x3 n=float3x3(normal0.xyz,normal1.xyz,normal2.xyz);
- o.normal=normalize(mul(mul(i.normal,skinNormal),n)); o.color=i.color; o.uv=i.uv;
- o.shadow=mul(world,lightViewProjection); return o;
+ o.normal=normalize(mul(n,mul(skinNormal,i.normal))); o.color=i.color; o.uv=i.uv;
+ o.shadow=mul(lightViewProjection,world); return o;
 }
 float3 Fresnel(float c,float3 f0){return f0+(1-f0)*pow(saturate(1-c),5);}
 float2 EnvironmentUV(float3 d){d=normalize(d);return float2(atan2(d.z,d.x)/(2*PI)+.5,asin(clamp(d.y,-1,1))/PI+.5);}
@@ -240,10 +240,10 @@ PixelOut MeshPS(VertexOut i) {
  float3 emissive=emissiveNormalScale.xyz*emissiveTex.Sample(emissiveSampler,i.uv).rgb;float3 reflected=reflect(-V,N);uint w,h,levels;environmentTex.GetDimensions(0,w,h,levels);float3 environment=environmentTex.SampleLevel(environmentSampler,EnvironmentUV(reflected),roughness*max(int(levels)-1,0)).rgb*backgroundEnvironment.w;float nv=max(dot(N,V),0);float3 ambient=(ambientExposure.rgb*base.rgb+environment*base.rgb*(1-metallic)+environment*Fresnel(nv,f0)*(1-roughness*.65))*ao;
  float3 color=shadingMode==1?base.rgb+emissive:(shadingMode==3?diagnostic.xxx:ambient+direct+emissive);color*=exp2(ambientExposure.w);color=color/(color+1);o.color=float4(color,alphaMode==3?base.a:1);o.id=objectID;return o;
 }
-float4 ShadowVS(VertexIn i):SV_Position{return mul(mul(float4(i.position,1),model),lightViewProjection);}
-float4 SkinnedShadowVS(SkinnedVertexIn i):SV_Position{return mul(mul(mul(float4(i.position,1),SkinMatrix(i)),model),lightViewProjection);}
+float4 ShadowVS(VertexIn i):SV_Position{return mul(lightViewProjection,mul(model,float4(i.position,1)));}
+float4 SkinnedShadowVS(SkinnedVertexIn i):SV_Position{return mul(lightViewProjection,mul(model,mul(SkinMatrix(i),float4(i.position,1))));}
 struct DebugIn{float3 position:POSITION;float4 color:COLOR;};struct DebugOut{float4 position:SV_Position;float4 color:COLOR;};
-DebugOut DebugVS(DebugIn i){DebugOut o;o.position=mul(mul(float4(i.position,1),view),projection);o.color=i.color;return o;}float4 DebugPS(DebugOut i):SV_Target{return i.color;}
+DebugOut DebugVS(DebugIn i){DebugOut o;o.position=mul(projection,mul(view,float4(i.position,1)));o.color=i.color;return o;}float4 DebugPS(DebugOut i):SV_Target{return i.color;}
 struct FullscreenOut{float4 position:SV_Position;float2 uv:TEXCOORD;};
 FullscreenOut FullscreenVS(uint id:SV_VertexID){float2 uv=float2((id<<1)&2,id&2);FullscreenOut o;o.position=float4(uv*float2(2,-2)+float2(-1,1),0,1);o.uv=uv;return o;}
 float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.uv);}
