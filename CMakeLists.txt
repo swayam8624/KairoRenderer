@@ -129,6 +129,12 @@ add_custom_command(
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.vert"
     VERBATIM)
 add_custom_command(
+    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_triangle.vert.spv"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skinned_triangle.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_triangle.vert.spv"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skinned_triangle.vert"
+    VERBATIM)
+add_custom_command(
     OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
     COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
@@ -152,12 +158,20 @@ add_custom_command(
     COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert"
     VERBATIM)
+add_custom_command(
+    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_shadow.vert.spv"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skinned_shadow.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_shadow.vert.spv"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skinned_shadow.vert"
+    VERBATIM)
 add_custom_target(KairoRendererShaders DEPENDS
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_triangle.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv")
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv"
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_shadow.vert.spv")
 
 set(KAIRO_RENDERER_MODULES
     GraphicsBackend.cppm
@@ -280,6 +294,12 @@ if(KAIRO_RENDERER_BUILD_TESTS)
         add_test(NAME KairoRendererOpenGLSkinningSmoke
             COMMAND KairoRendererOpenGLSkinningSmoke)
         set_tests_properties(KairoRendererOpenGLSkinningSmoke PROPERTIES
+            SKIP_RETURN_CODE 77)
+        add_executable(KairoRendererVulkanSkinningSmoke tests/VulkanSkinningSmoke.cpp)
+        target_link_libraries(KairoRendererVulkanSkinningSmoke PRIVATE KairoRenderer)
+        add_test(NAME KairoRendererVulkanSkinningSmoke
+            COMMAND KairoRendererVulkanSkinningSmoke)
+        set_tests_properties(KairoRendererVulkanSkinningSmoke PROPERTIES
             SKIP_RETURN_CODE 77)
     endif()
     if(TARGET KairoRendererPhysicsDebug)
