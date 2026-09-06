@@ -24,6 +24,7 @@ import Kairo.Renderer.Camera;
 import Kairo.Renderer.DebugDraw;
 import Kairo.Renderer.Material;
 import Kairo.Renderer.Mesh;
+import Kairo.Renderer.Skinning;
 import Kairo.Renderer.RenderScene;
 import Kairo.Renderer.Texture;
 import Kairo.Renderer.Types;
@@ -85,16 +86,27 @@ export namespace kairo::renderer
 
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
-            if (mesh.IsSkinned())
-                throw std::logic_error(
-                    "Skinned mesh upload requires the native GPU skinning path.");
-            if (m_NextMesh == InvalidMeshHandle) throw std::overflow_error("Renderer mesh handle space is exhausted.");
-            auto vertices = std::make_unique<VulkanHostBuffer>(m_VulkanDevice, mesh.VertexBytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-            auto indices = std::make_unique<VulkanHostBuffer>(m_VulkanDevice, mesh.IndexBytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+            if (mesh.RequiredJointCount() > MaximumSkinJoints)
+                throw std::length_error("Vulkan skinned mesh exceeds the portable joint limit.");
+            if (m_NextMesh == InvalidMeshHandle)
+                throw std::overflow_error("Renderer mesh handle space is exhausted.");
+            auto vertices = std::make_unique<VulkanHostBuffer>(m_VulkanDevice,
+                mesh.VertexBytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+            auto indices = std::make_unique<VulkanHostBuffer>(m_VulkanDevice,
+                mesh.IndexBytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
             vertices->Write(mesh.Vertices().data(), mesh.VertexBytes());
             indices->Write(mesh.Indices().data(), mesh.IndexBytes());
+            std::unique_ptr<VulkanHostBuffer> skin;
+            if (mesh.IsSkinned())
+            {
+                skin = std::make_unique<VulkanHostBuffer>(m_VulkanDevice,
+                    mesh.SkinBytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                skin->Write(mesh.Skinning().data(), mesh.SkinBytes());
+            }
             const MeshHandle handle = m_NextMesh++;
-            m_Meshes.emplace(handle, GpuMesh{ std::move(vertices), std::move(indices), static_cast<std::uint32_t>(mesh.Indices().size()) });
+            m_Meshes.emplace(handle, GpuMesh{ std::move(vertices), std::move(skin),
+                std::move(indices), static_cast<std::uint32_t>(mesh.Indices().size()),
+                mesh.RequiredJointCount() });
             return handle;
         }
 
@@ -148,7 +160,18 @@ export namespace kairo::renderer
             for (const MeshDraw& draw : scene.Draws())
             {
                 RenderScene::Validate(draw);
-                if (!m_Meshes.contains(draw.Mesh)) throw std::out_of_range("RenderScene references an unknown mesh handle.");
+                if (!m_Meshes.contains(draw.Mesh))
+                    throw std::out_of_range("RenderScene references an unknown mesh handle.");
+                const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
+                if (mesh.RequiredJoints > 0u)
+                {
+                    if (draw.Skinning.Size() < mesh.RequiredJoints)
+                        throw std::invalid_argument(
+                            "Vulkan skinned draw palette does not cover every referenced joint.");
+                }
+                else if (!draw.Skinning.Empty())
+                    throw std::invalid_argument(
+                        "Vulkan static mesh draw cannot carry a skin palette.");
                 validateTexture(draw.Material.BaseColorTexture);
                 validateTexture(draw.Material.NormalTexture);
                 validateTexture(draw.Material.MetallicRoughnessTexture);
@@ -320,8 +343,10 @@ export namespace kairo::renderer
         struct GpuMesh final
         {
             std::unique_ptr<VulkanHostBuffer> Vertices;
+            std::unique_ptr<VulkanHostBuffer> Skin;
             std::unique_ptr<VulkanHostBuffer> Indices;
             std::uint32_t IndexCount = 0u;
+            std::size_t RequiredJoints = 0u;
         };
         struct DebugVertex final
         {
@@ -334,9 +359,12 @@ export namespace kairo::renderer
         VkRenderPass m_RenderPass = VK_NULL_HANDLE;
         VkPipelineLayout m_Layout = VK_NULL_HANDLE;
         VkPipeline m_MeshPipeline = VK_NULL_HANDLE;
+        VkPipeline m_SkinnedMeshPipeline = VK_NULL_HANDLE;
         VkPipeline m_TransparentPipeline = VK_NULL_HANDLE;
+        VkPipeline m_SkinnedTransparentPipeline = VK_NULL_HANDLE;
         VkPipeline m_DebugLinePipeline = VK_NULL_HANDLE;
         VkPipeline m_ShadowPipeline = VK_NULL_HANDLE;
+        VkPipeline m_SkinnedShadowPipeline = VK_NULL_HANDLE;
         VulkanHostBuffer m_UniformBuffer;
         VulkanDirectionalShadowMap m_ShadowMap;
         std::unique_ptr<VulkanTexture2D> m_FallbackWhite;
@@ -431,7 +459,36 @@ export namespace kairo::renderer
                 VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, meshInput, VK_TRUE, false);
             m_TransparentPipeline = CreatePipeline("triangle.vert.spv", "triangle.frag.spv",
                 VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, meshInput, VK_FALSE, true);
-            m_ShadowPipeline = CreateShadowPipeline(meshInput);
+            m_ShadowPipeline = CreateShadowPipeline("shadow.vert.spv", meshInput);
+
+            VkVertexInputBindingDescription skinBinding{};
+            skinBinding.binding = 1u;
+            skinBinding.stride = sizeof(SkinVertexInfluence);
+            skinBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            const std::array skinnedBindings{ meshBinding, skinBinding };
+            const std::array skinnedAttributes{
+                meshAttributes[0], meshAttributes[1], meshAttributes[2], meshAttributes[3],
+                VkVertexInputAttributeDescription{ 4u, 1u, VK_FORMAT_R32G32B32A32_UINT,
+                    offsetof(SkinVertexInfluence, Joints) },
+                VkVertexInputAttributeDescription{ 5u, 1u, VK_FORMAT_R32G32B32A32_SFLOAT,
+                    offsetof(SkinVertexInfluence, Weights) }
+            };
+            VkPipelineVertexInputStateCreateInfo skinnedInput{};
+            skinnedInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            skinnedInput.vertexBindingDescriptionCount =
+                static_cast<std::uint32_t>(skinnedBindings.size());
+            skinnedInput.pVertexBindingDescriptions = skinnedBindings.data();
+            skinnedInput.vertexAttributeDescriptionCount =
+                static_cast<std::uint32_t>(skinnedAttributes.size());
+            skinnedInput.pVertexAttributeDescriptions = skinnedAttributes.data();
+            m_SkinnedMeshPipeline = CreatePipeline("skinned_triangle.vert.spv",
+                "triangle.frag.spv", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                skinnedInput, VK_TRUE, false);
+            m_SkinnedTransparentPipeline = CreatePipeline("skinned_triangle.vert.spv",
+                "triangle.frag.spv", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                skinnedInput, VK_FALSE, true);
+            m_SkinnedShadowPipeline = CreateShadowPipeline(
+                "skinned_shadow.vert.spv", skinnedInput);
 
             VkVertexInputBindingDescription binding{};
             binding.binding = 0u; binding.stride = sizeof(DebugVertex); binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -452,9 +509,10 @@ export namespace kairo::renderer
         /// Task: reuse the scene mesh layout and push constants while omitting
         /// all color attachments and fragment work. Dynamic depth bias allows
         /// tools to tune acne/peter-panning tradeoffs without pipeline rebuilds.
-        [[nodiscard]] VkPipeline CreateShadowPipeline(const VkPipelineVertexInputStateCreateInfo& vertexInput) const
+        [[nodiscard]] VkPipeline CreateShadowPipeline(const std::string& vertexName,
+            const VkPipelineVertexInputStateCreateInfo& vertexInput) const
         {
-            const VkShaderModule vertex = CreateShaderModule(ReadSpirv("shadow.vert.spv"));
+            const VkShaderModule vertex = CreateShaderModule(ReadSpirv(vertexName));
             try
             {
                 VkPipelineShaderStageCreateInfo stage{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
@@ -612,15 +670,16 @@ export namespace kairo::renderer
             vkCmdSetViewport(command.Handle(), 0u, 1u, &viewport);
             vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
             vkCmdSetDepthBias(command.Handle(), m_ShadowSettings.ConstantDepthBias, 0.0f, m_ShadowSettings.SlopeDepthBias);
-            BindMaterial(command, 0u);
-            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_ShadowPipeline);
-
-            constexpr VkDeviceSize offset = 0u;
-            for (const MeshDraw& draw : m_Draws)
+            constexpr VkDeviceSize offsets[2]{ 0u, 0u };
+            for (std::size_t drawIndex = 0u; drawIndex < m_Draws.size(); ++drawIndex)
             {
+                const MeshDraw& draw = m_Draws[drawIndex];
                 if (!draw.CastShadows ||
                     draw.Material.AlphaMode == MaterialAlphaMode::Blend) continue;
                 const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
+                BindMaterial(command, drawIndex);
+                vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    mesh.RequiredJoints > 0u ? m_SkinnedShadowPipeline : m_ShadowPipeline);
                 MeshPushConstants push{};
                 CopyTranspose(draw.Model, push.Values.data());
                 // Vulkan requires every stage declared by an overlapping
@@ -629,9 +688,12 @@ export namespace kairo::renderer
                 vkCmdPushConstants(command.Handle(), m_Layout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                     0u, sizeof(push), &push);
-                const VkBuffer vertexBuffer = mesh.Vertices->Handle();
-                vkCmdBindVertexBuffers(command.Handle(), 0u, 1u, &vertexBuffer, &offset);
-                vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u, VK_INDEX_TYPE_UINT32);
+                const VkBuffer buffers[2]{ mesh.Vertices->Handle(),
+                    mesh.Skin ? mesh.Skin->Handle() : VK_NULL_HANDLE };
+                const std::uint32_t bufferCount = mesh.Skin ? 2u : 1u;
+                vkCmdBindVertexBuffers(command.Handle(), 0u, bufferCount, buffers, offsets);
+                vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u,
+                    VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, 1u, 0u, 0, 0u);
             }
             vkCmdEndRenderPass(command.Handle());
@@ -640,12 +702,17 @@ export namespace kairo::renderer
         void DrawMeshes(const VulkanCommandBuffer& command) const
         {
             if (m_Draws.empty()) return;
-            constexpr VkDeviceSize offset = 0u;
-            const auto drawOne = [&](std::size_t drawIndex)
+            constexpr VkDeviceSize offsets[2]{ 0u, 0u };
+            const auto drawOne = [&](std::size_t drawIndex, bool transparent)
             {
                 const MeshDraw& draw = m_Draws[drawIndex];
                 BindMaterial(command, drawIndex);
                 const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
+                const bool skinned = mesh.RequiredJoints > 0u;
+                const VkPipeline pipeline = transparent
+                    ? (skinned ? m_SkinnedTransparentPipeline : m_TransparentPipeline)
+                    : (skinned ? m_SkinnedMeshPipeline : m_MeshPipeline);
+                vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 MeshPushConstants push{};
                 CopyTranspose(draw.Model, push.Values.data());
                 const auto normal = ComputeNormalMatrix(draw.Model);
@@ -657,18 +724,18 @@ export namespace kairo::renderer
                 vkCmdPushConstants(command.Handle(), m_Layout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                     0u, sizeof(push), &push);
-                const VkBuffer vertexBuffer = mesh.Vertices->Handle();
-                vkCmdBindVertexBuffers(command.Handle(), 0u, 1u, &vertexBuffer, &offset);
+                const VkBuffer buffers[2]{ mesh.Vertices->Handle(),
+                    mesh.Skin ? mesh.Skin->Handle() : VK_NULL_HANDLE };
+                const std::uint32_t bufferCount = mesh.Skin ? 2u : 1u;
+                vkCmdBindVertexBuffers(command.Handle(), 0u, bufferCount, buffers, offsets);
                 vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u,
                     VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, 1u, 0u, 0, 0u);
             };
 
-            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                m_MeshPipeline);
             for (std::size_t index = 0u; index < m_Draws.size(); ++index)
                 if (m_Draws[index].Material.AlphaMode != MaterialAlphaMode::Blend)
-                    drawOne(index);
+                    drawOne(index, false);
 
             std::vector<std::size_t> transparentDraws;
             transparentDraws.reserve(m_Draws.size());
@@ -688,9 +755,7 @@ export namespace kairo::renderer
                         cameraPosition;
                     return Dot(leftOffset, leftOffset) > Dot(rightOffset, rightOffset);
                 });
-            vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                m_TransparentPipeline);
-            for (const std::size_t index : transparentDraws) drawOne(index);
+            for (const std::size_t index : transparentDraws) drawOne(index, true);
         }
 
         [[nodiscard]] static kairo::assets::TextureArtifactData SolidTexture(
@@ -730,6 +795,7 @@ export namespace kairo::renderer
                 };
                 VulkanMaterialImages binding;
                 binding.Material = draw.Material;
+                binding.Skinning = draw.Skinning.Empty() ? nullptr : &draw.Skinning;
                 for (std::size_t channel = 0u; channel < textures.size(); ++channel)
                 {
                     binding.Views[channel] = textures[channel]->View();
@@ -877,15 +943,24 @@ export namespace kairo::renderer
             m_DebugVertexBuffer.reset(); m_DebugVertexCapacity = 0u;
             for (const VkFramebuffer framebuffer : m_Framebuffers) vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
             m_Framebuffers.clear();
+            if (m_SkinnedShadowPipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(m_Device, m_SkinnedShadowPipeline, nullptr);
             if (m_ShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_ShadowPipeline, nullptr);
             if (m_DebugLinePipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_DebugLinePipeline, nullptr);
+            if (m_SkinnedTransparentPipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(m_Device, m_SkinnedTransparentPipeline, nullptr);
             if (m_TransparentPipeline != VK_NULL_HANDLE)
                 vkDestroyPipeline(m_Device, m_TransparentPipeline, nullptr);
+            if (m_SkinnedMeshPipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(m_Device, m_SkinnedMeshPipeline, nullptr);
             if (m_MeshPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_MeshPipeline, nullptr);
             if (m_Layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(m_Device, m_Layout, nullptr);
             if (m_RenderPass != VK_NULL_HANDLE) vkDestroyRenderPass(m_Device, m_RenderPass, nullptr);
-            m_ShadowPipeline = VK_NULL_HANDLE; m_DebugLinePipeline = VK_NULL_HANDLE;
-            m_MeshPipeline = VK_NULL_HANDLE; m_TransparentPipeline = VK_NULL_HANDLE;
+            m_SkinnedShadowPipeline = VK_NULL_HANDLE; m_ShadowPipeline = VK_NULL_HANDLE;
+            m_DebugLinePipeline = VK_NULL_HANDLE;
+            m_SkinnedMeshPipeline = VK_NULL_HANDLE; m_MeshPipeline = VK_NULL_HANDLE;
+            m_SkinnedTransparentPipeline = VK_NULL_HANDLE;
+            m_TransparentPipeline = VK_NULL_HANDLE;
             m_Layout = VK_NULL_HANDLE; m_RenderPass = VK_NULL_HANDLE;
         }
     };

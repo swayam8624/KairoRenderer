@@ -16,6 +16,7 @@ export module Kairo.Renderer.VulkanDescriptor;
 import Kairo.Renderer.VulkanBuffer;
 import Kairo.Renderer.VulkanDevice;
 import Kairo.Renderer.Material;
+import Kairo.Renderer.Skinning;
 
 export namespace kairo::renderer
 {
@@ -136,6 +137,9 @@ export namespace kairo::renderer
         VkImageView EnvironmentView = VK_NULL_HANDLE;
         VkSampler EnvironmentSampler = VK_NULL_HANDLE;
         PBRMaterial Material;
+        /// Optional per-draw joint palette. The descriptor owner copies it into
+        /// fence-safe UBO storage during Rebuild; callers retain no GPU lifetime.
+        const SkinPalette* Skinning = nullptr;
     };
 
     /// Owns a stable descriptor-set layout and a fence-safe, rebuildable pool
@@ -147,7 +151,7 @@ export namespace kairo::renderer
         explicit VulkanMaterialDescriptors(const VulkanDevice& device)
             : m_DeviceObject(device), m_Device(device.Handle())
         {
-            std::array<VkDescriptorSetLayoutBinding, 9u> bindings{};
+            std::array<VkDescriptorSetLayoutBinding, 10u> bindings{};
             bindings[0] = { 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1u,
                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
             for (std::uint32_t binding = 1u; binding <= 6u; ++binding)
@@ -158,6 +162,8 @@ export namespace kairo::renderer
                 VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
             bindings[8] = { 8u, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1u,
                 VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
+            bindings[9] = { 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1u,
+                VK_SHADER_STAGE_VERTEX_BIT, nullptr };
             VkDescriptorSetLayoutCreateInfo create{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
             create.bindingCount = static_cast<std::uint32_t>(bindings.size());
             create.pBindings = bindings.data();
@@ -198,7 +204,7 @@ export namespace kairo::renderer
 
             const std::uint32_t count = static_cast<std::uint32_t>(materials.size());
             const std::array poolSizes{
-                VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count * 2u },
+                VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count * 3u },
                 VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count * 7u }
             };
             VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -221,6 +227,7 @@ export namespace kairo::renderer
             }
 
             m_MaterialBuffers.reserve(count);
+            m_SkinBuffers.reserve(count);
             for (std::uint32_t index = 0u; index < count; ++index)
             {
                 const auto& source = materials[index];
@@ -264,7 +271,25 @@ export namespace kairo::renderer
                     sizeof(MaterialUniform) };
                 const VkDescriptorImageInfo environmentInfo{ source.EnvironmentSampler,
                     source.EnvironmentView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-                std::array<VkWriteDescriptorSet, 9u> writes{};
+
+                std::unique_ptr<VulkanHostBuffer> skinBuffer;
+                VkDescriptorBufferInfo skinInfo{};
+                if (source.Skinning != nullptr && !source.Skinning->Empty())
+                {
+                    source.Skinning->Validate();
+                    SkinUniform skin{};
+                    for (std::size_t joint = 0u; joint < source.Skinning->Size(); ++joint)
+                        for (std::size_t row = 0u; row < 4u; ++row)
+                            for (std::size_t column = 0u; column < 4u; ++column)
+                                skin.Values[joint * 16u + column * 4u + row] =
+                                    source.Skinning->JointMatrices[joint](row, column);
+                    skinBuffer = std::make_unique<VulkanHostBuffer>(m_DeviceObject,
+                        sizeof(SkinUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+                    skinBuffer->Write(&skin, sizeof(skin));
+                    skinInfo = { skinBuffer->Handle(), 0u, sizeof(SkinUniform) };
+                }
+
+                std::array<VkWriteDescriptorSet, 10u> writes{};
                 writes[0] = Write(m_Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                 writes[0].pBufferInfo = &cameraInfo;
                 writes[1] = Write(m_Sets[index], 1u,
@@ -281,20 +306,32 @@ export namespace kairo::renderer
                 writes[8] = Write(m_Sets[index], 8u,
                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                 writes[8].pImageInfo = &environmentInfo;
-                vkUpdateDescriptorSets(m_Device,
-                    static_cast<std::uint32_t>(writes.size()), writes.data(), 0u, nullptr);
+                std::uint32_t writeCount = 9u;
+                if (skinBuffer)
+                {
+                    writes[9] = Write(m_Sets[index], 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                    writes[9].pBufferInfo = &skinInfo;
+                    writeCount = 10u;
+                }
+                vkUpdateDescriptorSets(m_Device, writeCount, writes.data(), 0u, nullptr);
                 m_MaterialBuffers.push_back(std::move(buffer));
+                m_SkinBuffers.push_back(std::move(skinBuffer));
             }
         }
 
     private:
         struct MaterialUniform final { std::array<float, 16u> Values{}; };
+        struct SkinUniform final
+        {
+            std::array<float, MaximumSkinJoints * 16u> Values{};
+        };
         const VulkanDevice& m_DeviceObject;
         VkDevice m_Device = VK_NULL_HANDLE;
         VkDescriptorSetLayout m_Layout = VK_NULL_HANDLE;
         VkDescriptorPool m_Pool = VK_NULL_HANDLE;
         std::vector<VkDescriptorSet> m_Sets;
         std::vector<std::unique_ptr<VulkanHostBuffer>> m_MaterialBuffers;
+        std::vector<std::unique_ptr<VulkanHostBuffer>> m_SkinBuffers;
 
         [[nodiscard]] static VkWriteDescriptorSet Write(VkDescriptorSet set,
             std::uint32_t binding, VkDescriptorType type) noexcept
@@ -309,6 +346,7 @@ export namespace kairo::renderer
 
         void ClearPool() noexcept
         {
+            m_SkinBuffers.clear();
             m_MaterialBuffers.clear();
             m_Sets.clear();
             if (m_Pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(m_Device, m_Pool, nullptr);
