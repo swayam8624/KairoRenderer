@@ -50,6 +50,19 @@ TEST_CASE("renderer skin influences require normalized finite weights")
     REQUIRE_THROWS_AS(ValidateSkinVertexInfluence(invalid), std::invalid_argument);
 }
 
+TEST_CASE("zero-weight skin slots may carry irrelevant joint indices")
+{
+    SkinVertexInfluence influence{
+        { 0u, static_cast<std::uint32_t>(MaximumSkinJoints + 500u),
+            std::numeric_limits<std::uint32_t>::max(), 42u },
+        { 1.0f, 0.0f, 0.0f, 0.0f }
+    };
+    REQUIRE_NOTHROW(ValidateSkinVertexInfluence(influence));
+
+    influence.Weights = { 0.75f, 0.25f, 0.0f, 0.0f };
+    REQUIRE_THROWS_AS(ValidateSkinVertexInfluence(influence), std::out_of_range);
+}
+
 TEST_CASE("renderer mesh preserves glTF skin stream without changing static vertex layout")
 {
     const auto primitive = SkinnedPrimitive();
@@ -122,4 +135,18 @@ TEST_CASE("render scene carries a finite backend-neutral skin palette")
     draw.Skinning.JointMatrices[0](0u, 0u) =
         std::numeric_limits<float>::quiet_NaN();
     REQUIRE_THROWS_AS(RenderScene::Validate(draw), std::invalid_argument);
+}
+
+TEST_CASE("portable GPU skin palette rejects the 256th joint")
+{
+    SkinPalette palette;
+    palette.JointMatrices.resize(MaximumSkinJoints,
+        kairo::foundation::math::Mat4f::Identity());
+    REQUIRE_NOTHROW(palette.Validate());
+    palette.JointMatrices.push_back(kairo::foundation::math::Mat4f::Identity());
+    REQUIRE_THROWS_AS(palette.Validate(), std::length_error);
+
+    SkinVertexInfluence invalid{ { static_cast<std::uint32_t>(MaximumSkinJoints),
+        0u, 0u, 0u }, { 1.0f, 0.0f, 0.0f, 0.0f } };
+    REQUIRE_THROWS_AS(ValidateSkinVertexInfluence(invalid), std::out_of_range);
 }
