@@ -58,6 +58,9 @@ int main()
         if (!first.has_value() || !first->IsVisuallyNonUniform())
             throw std::runtime_error(
                 "first Metal skinned frame did not produce visible geometry");
+        if (first->Width != 96u || first->Height != 96u)
+            throw std::runtime_error(
+                "first Metal capture did not preserve the requested viewport extent");
 
         draw.Skinning.JointMatrices[0] =
             MakeTranslation(Vec3f{ 0.35f, 0.0f, 0.0f });
@@ -71,6 +74,9 @@ int main()
         if (!second.has_value() || !second->IsVisuallyNonUniform())
             throw std::runtime_error(
                 "second Metal skinned frame did not produce visible geometry");
+        if (second->Width != 96u || second->Height != 96u)
+            throw std::runtime_error(
+                "second Metal capture did not preserve the requested viewport extent");
         if (first->RGBA == second->RGBA)
             throw std::runtime_error(
                 "changing the Metal joint palette did not change rendered pixels");
