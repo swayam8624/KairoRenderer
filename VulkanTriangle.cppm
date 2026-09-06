@@ -85,6 +85,9 @@ export namespace kairo::renderer
 
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
+            if (mesh.IsSkinned())
+                throw std::logic_error(
+                    "Skinned mesh upload requires the native GPU skinning path.");
             if (m_NextMesh == InvalidMeshHandle) throw std::overflow_error("Renderer mesh handle space is exhausted.");
             auto vertices = std::make_unique<VulkanHostBuffer>(m_VulkanDevice, mesh.VertexBytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
             auto indices = std::make_unique<VulkanHostBuffer>(m_VulkanDevice, mesh.IndexBytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);

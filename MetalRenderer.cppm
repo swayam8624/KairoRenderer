@@ -210,6 +210,9 @@ export namespace kairo::renderer
 
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
+            if (mesh.IsSkinned())
+                throw std::logic_error(
+                    "Skinned mesh upload requires the native GPU skinning path.");
             std::vector<detail::MetalVertex> vertices;
             vertices.reserve(mesh.Vertices().size());
             for (const MeshVertex& vertex : mesh.Vertices())

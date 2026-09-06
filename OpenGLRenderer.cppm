@@ -311,6 +311,9 @@ export namespace kairo::renderer
 
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
+            if (mesh.IsSkinned())
+                throw std::logic_error(
+                    "Skinned mesh upload requires the native GPU skinning path.");
             if (mesh.Indices().size() >
                 static_cast<std::size_t>(std::numeric_limits<GLsizei>::max()))
                 throw std::length_error("OpenGL mesh index count exceeds GLsizei capacity.");

@@ -76,14 +76,14 @@ export namespace kairo::renderer
         MeshHandle Mesh = InvalidMeshHandle;
         kairo::foundation::math::Mat4f Model = kairo::foundation::math::Mat4f::Identity();
         PBRMaterial Material{};
-        /// Empty for a static draw. For a skinned draw these matrices are
-        /// already in imported-asset space (jointWorld * inverseBind).
-        SkinPalette Skinning{};
         /// Zero means non-pickable. Editor scene extraction supplies stable
         /// scene entity IDs; runtime-only draws may deliberately leave it zero.
         std::uint32_t ObjectID = 0u;
         bool CastShadows = true;
         bool ReceiveShadows = true;
+        /// Empty for a static draw. For a skinned draw these matrices are
+        /// already in imported-asset space (jointWorld * inverseBind).
+        SkinPalette Skinning{};
     };
 
     /// Input: finite object-to-world matrix with a non-singular linear part.
