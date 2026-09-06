@@ -310,6 +310,15 @@ if(KAIRO_RENDERER_BUILD_TESTS)
         set_tests_properties(KairoRendererMetalSkinningSmoke PROPERTIES
             SKIP_RETURN_CODE 77)
     endif()
+    if(WIN32)
+        add_executable(KairoRendererDirect3D12SkinningSmoke
+            tests/Direct3D12SkinningSmoke.cpp)
+        target_link_libraries(KairoRendererDirect3D12SkinningSmoke PRIVATE KairoRenderer)
+        add_test(NAME KairoRendererDirect3D12SkinningSmoke
+            COMMAND KairoRendererDirect3D12SkinningSmoke)
+        set_tests_properties(KairoRendererDirect3D12SkinningSmoke PROPERTIES
+            SKIP_RETURN_CODE 77)
+    endif()
     if(TARGET KairoRendererPhysicsDebug)
         add_executable(KairoRendererPhysicsDebugTests tests/PhysicsDebugBridgeTests.cpp)
         target_link_libraries(KairoRendererPhysicsDebugTests PRIVATE KairoRendererPhysicsDebug Catch2::Catch2WithMain)

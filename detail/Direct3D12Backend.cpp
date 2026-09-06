@@ -368,6 +368,7 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
         {
             float Joints[255u * 16u]{};
         };
+        static_assert(sizeof(SkinConstants) == 16u * 1024u);
     }
 
     class Direct3D12Backend::Impl final
@@ -406,6 +407,11 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
         std::byte* ConstantMapped = nullptr;
         UINT64 ConstantCapacity = 8u * 1024u * 1024u;
         UINT64 ConstantCursor = 0u;
+        // One upload per unique palette pointer per encoded frame. Shadow and
+        // forward passes share the same CBV address instead of consuming the
+        // constant arena twice for the same draw.
+        std::unordered_map<const float*, D3D12_GPU_VIRTUAL_ADDRESS>
+            SkinPaletteAddresses;
         ComPtr<ID3D12Resource> ViewportColor;
         ComPtr<ID3D12Resource> ViewportID;
         ComPtr<ID3D12Resource> ViewportDepth;
@@ -1023,11 +1029,15 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
                 draw.SkinJointCount>255u)
                 throw std::invalid_argument(
                     "Direct3D 12 skinned draw has an invalid skin palette.");
+            if(const auto cached=SkinPaletteAddresses.find(draw.SkinMatrices);
+                cached!=SkinPaletteAddresses.end()) return cached->second;
             SkinConstants constants{};
             std::copy_n(draw.SkinMatrices,
                 static_cast<std::size_t>(draw.SkinJointCount) * 16u,
                 constants.Joints);
-            return UploadConstants(&constants,sizeof(constants));
+            const auto address=UploadConstants(&constants,sizeof(constants));
+            SkinPaletteAddresses.emplace(draw.SkinMatrices,address);
+            return address;
         }
 
         void DrawMesh(const Direct3D12Draw& draw,
@@ -1089,6 +1099,7 @@ float4 PresentPS(FullscreenOut i):SV_Target{return baseTex.Sample(baseSampler,i.
         void EncodeScene(const Direct3D12Frame& frame)
         {
             ConstantCursor=0u;
+            SkinPaletteAddresses.clear();
             const FrameConstants frameConstants=MakeFrame(frame);
             const auto frameAddress=UploadConstants(&frameConstants,
                 sizeof(frameConstants));
