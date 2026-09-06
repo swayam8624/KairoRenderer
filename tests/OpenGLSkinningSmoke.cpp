@@ -1,5 +1,6 @@
 #include <exception>
 #include <iostream>
+#include <stdexcept>
 
 import Kairo.Renderer;
 import Kairo.Foundation.Math;
@@ -10,6 +11,9 @@ int main()
     try
     {
         using namespace kairo::renderer;
+        using kairo::foundation::math::MakeTranslation;
+        using kairo::foundation::math::Vec3f;
+
         kairo::assets::GltfPrimitiveData primitive;
         primitive.Mesh.HasNormals = true;
         primitive.Mesh.Vertices = {
@@ -30,21 +34,39 @@ int main()
 
         OpenGLRendererRuntime runtime({ "OpenGL skinning smoke", 96u, 96u, false });
         const MeshHandle mesh = runtime.CreateMesh(Mesh::FromGltfPrimitive(primitive));
-        RenderScene scene;
-        MeshDraw draw;
-        draw.Mesh = mesh;
-        draw.Skinning.JointMatrices.push_back(
-            kairo::foundation::math::MakeTranslation(
-                kairo::foundation::math::Vec3f{ 0.1f, 0.0f, 0.0f }));
-        scene.Add(draw);
+
         RenderLight light;
         light.Type = RenderLightType::Directional;
         light.Direction = { 0.25f, 1.0f, 0.35f };
         light.CastShadows = true;
-        scene.AddLight(light);
         runtime.SetViewportShadingMode(ViewportShadingMode::Unlit);
-        runtime.SubmitRenderScene(scene);
+
+        MeshDraw draw;
+        draw.Mesh = mesh;
+        draw.Skinning.JointMatrices.push_back(MakeTranslation(Vec3f{ -0.2f, 0.0f, 0.0f }));
+        RenderScene firstScene;
+        firstScene.Add(draw);
+        firstScene.AddLight(light);
+        runtime.SubmitRenderScene(firstScene);
+        runtime.RequestViewportCapture();
         runtime.DrawFrame();
+        auto first = runtime.TakeViewportCapture();
+        if (!first.has_value() || !first->IsVisuallyNonUniform())
+            throw std::runtime_error("first skinned frame did not produce visible geometry");
+
+        draw.Skinning.JointMatrices[0] = MakeTranslation(Vec3f{ 0.35f, 0.0f, 0.0f });
+        RenderScene secondScene;
+        secondScene.Add(draw);
+        secondScene.AddLight(light);
+        runtime.SubmitRenderScene(secondScene);
+        runtime.RequestViewportCapture();
+        runtime.DrawFrame();
+        auto second = runtime.TakeViewportCapture();
+        if (!second.has_value() || !second->IsVisuallyNonUniform())
+            throw std::runtime_error("second skinned frame did not produce visible geometry");
+        if (first->RGBA == second->RGBA)
+            throw std::runtime_error("changing the joint palette did not change rendered pixels");
+
         return 0;
     }
     catch (const PresentationUnavailableError& error)
