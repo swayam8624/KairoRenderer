@@ -13,6 +13,7 @@ export module Kairo.Renderer.RenderScene;
 import Kairo.Foundation.Math;
 import Kairo.Renderer.Material;
 import Kairo.Renderer.Texture;
+import Kairo.Renderer.Skinning;
 
 export namespace kairo::renderer
 {
@@ -80,6 +81,9 @@ export namespace kairo::renderer
         std::uint32_t ObjectID = 0u;
         bool CastShadows = true;
         bool ReceiveShadows = true;
+        /// Empty for a static draw. For a skinned draw these matrices are
+        /// already in imported-asset space (jointWorld * inverseBind).
+        SkinPalette Skinning{};
     };
 
     /// Input: finite object-to-world matrix with a non-singular linear part.
@@ -149,6 +153,7 @@ export namespace kairo::renderer
             if (draw.Mesh == InvalidMeshHandle) throw std::invalid_argument("MeshDraw requires a valid mesh handle.");
             static_cast<void>(ComputeNormalMatrix(draw.Model));
             draw.Material.Validate();
+            draw.Skinning.Validate();
         }
 
     private:

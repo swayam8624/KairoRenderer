@@ -4,6 +4,7 @@ export import Kairo.Renderer.Types;
 export import Kairo.Renderer.RenderGraph;
 export import Kairo.Renderer.Camera;
 export import Kairo.Renderer.Mesh;
+export import Kairo.Renderer.Skinning;
 export import Kairo.Renderer.Material;
 export import Kairo.Renderer.Texture;
 export import Kairo.Renderer.AssetAdapters;

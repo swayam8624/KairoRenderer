@@ -1,5 +1,6 @@
 module;
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,8 @@ export module Kairo.Renderer.Mesh;
 
 import Kairo.Foundation.Math;
 import Kairo.Assets.MeshArtifact;
+import Kairo.Assets.GltfSceneArtifact;
+import Kairo.Renderer.Skinning;
 
 export namespace kairo::renderer
 {
@@ -41,7 +44,20 @@ export namespace kairo::renderer
 
         [[nodiscard]] const std::vector<MeshVertex>& Vertices() const noexcept { return m_Vertices; }
         [[nodiscard]] const std::vector<std::uint32_t>& Indices() const noexcept { return m_Indices; }
+        [[nodiscard]] const std::vector<SkinVertexInfluence>& Skinning() const noexcept { return m_Skinning; }
+        [[nodiscard]] bool IsSkinned() const noexcept { return !m_Skinning.empty(); }
         [[nodiscard]] std::size_t VertexBytes() const noexcept { return m_Vertices.size() * sizeof(MeshVertex); }
+        [[nodiscard]] std::size_t SkinBytes() const noexcept { return m_Skinning.size() * sizeof(SkinVertexInfluence); }
+        [[nodiscard]] std::size_t RequiredJointCount() const noexcept
+        {
+            std::size_t required = 0u;
+            for (const auto& influence : m_Skinning)
+                for (std::size_t slot = 0u; slot < influence.Weights.size(); ++slot)
+                    if (influence.Weights[slot] > 0.0f)
+                        required = std::max(required,
+                            static_cast<std::size_t>(influence.Joints[slot]) + 1u);
+            return required;
+        }
         [[nodiscard]] std::size_t IndexBytes() const noexcept { return m_Indices.size() * sizeof(std::uint32_t); }
 
         /// Input: a validated, backend-neutral KairoAssets triangle mesh and
@@ -78,6 +94,32 @@ export namespace kairo::renderer
                 });
             }
             return Mesh(std::move(vertices), artifact.Indices);
+        }
+
+        /// Input: one validated glTF primitive. Output: the existing static
+        /// vertex stream plus an optional parallel four-weight skin stream.
+        /// Task: preserve the backend's established vertex ABI while allowing
+        /// native APIs to bind skinning as a second stream/buffer.
+        [[nodiscard]] static Mesh FromGltfPrimitive(
+            const kairo::assets::GltfPrimitiveData& primitive,
+            const kairo::foundation::math::Vec3f& color = { 1.0f, 1.0f, 1.0f })
+        {
+            Mesh result = FromArtifact(primitive.Mesh, color);
+            if (!primitive.Skinning.empty())
+            {
+                if (primitive.Skinning.size() != result.m_Vertices.size())
+                    throw std::invalid_argument(
+                        "Renderer glTF skin stream must match the vertex count.");
+                result.m_Skinning.reserve(primitive.Skinning.size());
+                for (const auto& source : primitive.Skinning)
+                {
+                    SkinVertexInfluence influence{ source.Joints, source.Weights };
+                    ValidateSkinVertexInfluence(influence);
+                    result.m_Skinning.push_back(influence);
+                }
+                result.Validate();
+            }
+            return result;
         }
 
         /// Output: a 24-vertex/36-index cube with face colors. Duplicating
@@ -197,11 +239,19 @@ export namespace kairo::renderer
     private:
         std::vector<MeshVertex> m_Vertices;
         std::vector<std::uint32_t> m_Indices;
+        std::vector<SkinVertexInfluence> m_Skinning;
         void Validate() const
         {
             if (m_Vertices.empty() || m_Indices.empty() || m_Indices.size() % 3u != 0u) throw std::invalid_argument("Mesh requires vertices and triangle indices.");
             for (const std::uint32_t index : m_Indices)
                 if (index >= m_Vertices.size()) throw std::out_of_range("Mesh index exceeds vertex count.");
+            if (!m_Skinning.empty())
+            {
+                if (m_Skinning.size() != m_Vertices.size())
+                    throw std::invalid_argument("Mesh skin stream must match vertex count.");
+                for (const auto& influence : m_Skinning)
+                    ValidateSkinVertexInfluence(influence);
+            }
         }
     };
 }
