@@ -74,7 +74,7 @@ endif()
 set(KAIRO_RENDERER_MATH_REVISION e12778734a8e8ffe060255a9c03683ad6c4b1a92)
 set(KAIRO_RENDERER_GEOMETRY_REVISION d570c91eaddf5c40e05b5a22cea6db78177e7fd0)
 set(KAIRO_RENDERER_ASSETS_REVISION 9e63b89520a053a1144a0350415a9f107b66eafa)
-set(KAIRO_RENDERER_PHYSICS_REVISION e7dfcb712dd70c865ebe03189e765c0df15b6bed)
+set(KAIRO_RENDERER_PHYSICS_REVISION c3d23c8fdf0a81f94346e1630ecc09b0cf742f9d)
 
 if(NOT TARGET KairoMath)
     set(KAIRO_MATH_SOURCE_DIR "" CACHE PATH "Path to a local KairoMath checkout")
@@ -260,10 +260,11 @@ if(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE)
             add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Foundation/KairoPhysicsEngine" "${CMAKE_CURRENT_BINARY_DIR}/_deps/KairoPhysicsEngine")
         else()
             include(FetchContent)
+            # Immutable SHA fallbacks require the referenced commit object to
+            # exist even after main advances, so do not use a depth-1 clone.
             FetchContent_Declare(KairoPhysicsEngine
                 GIT_REPOSITORY https://github.com/swayam8624/KairoPhysicsEngine.git
-                GIT_TAG ${KAIRO_RENDERER_PHYSICS_REVISION}
-                GIT_SHALLOW TRUE)
+                GIT_TAG ${KAIRO_RENDERER_PHYSICS_REVISION})
             FetchContent_MakeAvailable(KairoPhysicsEngine)
         endif()
     endif()
