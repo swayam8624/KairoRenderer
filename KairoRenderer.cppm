@@ -1,5 +1,6 @@
 module;
 
+#include <cstddef>
 #include <cstdint>
 
 export module Kairo.Renderer;
@@ -84,10 +85,12 @@ export namespace kairo::renderer
         const RenderScene& scene) noexcept
     {
         RendererSceneTelemetry result;
-        result.DrawCount = static_cast<std::uint64_t>(scene.Draws().size());
+        const auto& draws = scene.Draws();
+        result.DrawCount = static_cast<std::uint64_t>(draws.size());
         result.LightCount = static_cast<std::uint64_t>(scene.Lights().size());
-        for (const auto& draw : scene.Draws())
+        for (std::size_t index = 0u; index < draws.size(); ++index)
         {
+            const auto& draw = draws[index];
             if (!draw.Skinning.Empty()) ++result.SkinnedDrawCount;
             if (draw.CastShadows) ++result.ShadowCasterCount;
         }
