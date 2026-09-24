@@ -310,6 +310,7 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     add_executable(KairoRendererTests
         tests/RendererTests.cpp
         tests/RenderGraphExecutionPlanTests.cpp
+        tests/RenderGraphScaleTests.cpp
         tests/SkinningContractTests.cpp)
     target_link_libraries(KairoRendererTests PRIVATE KairoRenderer Catch2::Catch2WithMain)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 23)
