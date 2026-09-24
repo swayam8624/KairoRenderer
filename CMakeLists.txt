@@ -41,6 +41,10 @@ block()
     # CMake 4 removed implicit compatibility below 3.5; glad's small legacy
     # project is policy-clean at 3.5 and needs this explicit floor.
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    # glad 0.1.36 is an intentionally pinned legacy generator. Its own
+    # cmake_minimum_required declaration is older than modern CMake's preferred
+    # range; keep that third-party deprecation out of Kairo's warning budget.
+    set(CMAKE_WARN_DEPRECATED OFF)
     FetchContent_Declare(KairoGlad
         GIT_REPOSITORY https://github.com/Dav1dde/glad.git
         GIT_TAG v0.1.36
@@ -48,6 +52,9 @@ block()
         PATCH_COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply --whitespace=nowarn
             "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-utf8-sig.patch")
     FetchContent_MakeAvailable(KairoGlad)
+    if(TARGET glad AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(glad PRIVATE -Wno-unused-but-set-global)
+    endif()
 endblock()
 if(APPLE)
     enable_language(OBJCXX)
@@ -225,7 +232,7 @@ target_compile_definitions(KairoRenderer PUBLIC
 if(APPLE)
     target_sources(KairoRenderer PRIVATE detail/MetalBackend.mm)
     set_source_files_properties(detail/MetalBackend.mm PROPERTIES
-        COMPILE_OPTIONS "-fobjc-arc")
+        COMPILE_OPTIONS "-fobjc-arc;-fno-objc-msgsend-selector-stubs")
     target_compile_definitions(KairoRenderer PUBLIC
         KAIRO_RENDERER_HAS_METAL_BACKEND=1)
     target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_MOLTENVK_ICD_FILE="${KAIRO_MOLTENVK_ICD_FILE}")
@@ -236,6 +243,7 @@ if(WIN32)
         KAIRO_RENDERER_HAS_D3D12_BACKEND=1)
 endif()
 target_compile_definitions(KairoRenderer PUBLIC $<$<BOOL:${KAIRO_RENDERER_ENABLE_VALIDATION}>:KAIRO_RENDERER_ENABLE_VALIDATION=1>)
+set_property(TARGET KairoRenderer PROPERTY COMPILE_WARNING_AS_ERROR ON)
 target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry KairoAssets
     glfw Vulkan::Vulkan OpenGL::GL glad)
 if(APPLE)
@@ -293,6 +301,10 @@ if(KAIRO_RENDERER_BUILD_TESTS)
         tests/RenderGraphExecutionPlanTests.cpp
         tests/SkinningContractTests.cpp)
     target_link_libraries(KairoRendererTests PRIVATE KairoRenderer Catch2::Catch2WithMain)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        target_compile_options(KairoRendererTests PRIVATE -Wno-c2y-extensions)
+    endif()
+    set_property(TARGET KairoRendererTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
     enable_testing()
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
     if(UNIX AND NOT APPLE)
@@ -329,6 +341,10 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     if(TARGET KairoRendererPhysicsDebug)
         add_executable(KairoRendererPhysicsDebugTests tests/PhysicsDebugBridgeTests.cpp)
         target_link_libraries(KairoRendererPhysicsDebugTests PRIVATE KairoRendererPhysicsDebug Catch2::Catch2WithMain)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            target_compile_options(KairoRendererPhysicsDebugTests PRIVATE -Wno-c2y-extensions)
+        endif()
+        set_property(TARGET KairoRendererPhysicsDebugTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
         add_test(NAME KairoRendererPhysicsDebugTests COMMAND KairoRendererPhysicsDebugTests)
     endif()
 endif()
