@@ -41,17 +41,16 @@ block()
     # CMake 4 removed implicit compatibility below 3.5; glad's small legacy
     # project is policy-clean at 3.5 and needs this explicit floor.
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-    # glad 0.1.36 is an intentionally pinned legacy generator. Its own
-    # cmake_minimum_required declaration is older than modern CMake's preferred
-    # range; keep that third-party deprecation out of Kairo's warning budget.
-    set(CMAKE_WARN_DEPRECATED OFF)
     FetchContent_Declare(KairoGlad
         GIT_REPOSITORY https://github.com/Dav1dde/glad.git
         GIT_TAG v0.1.36
         GIT_SHALLOW TRUE
-        PATCH_COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply --whitespace=nowarn
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-utf8-sig.patch"
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-cmake-minimum.patch")
+        PATCH_COMMAND "${CMAKE_COMMAND}"
+            "-DKAIRO_PATCH_GIT=${GIT_EXECUTABLE}"
+            "-DKAIRO_PATCH_SOURCE_DIR=<SOURCE_DIR>"
+            "-DKAIRO_PATCH_1=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-utf8-sig.patch"
+            "-DKAIRO_PATCH_2=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-cmake-minimum.patch"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyGitPatches.cmake")
     FetchContent_MakeAvailable(KairoGlad)
     if(TARGET glad AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(glad PRIVATE -Wno-unused-but-set-global)
