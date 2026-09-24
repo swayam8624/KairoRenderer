@@ -215,6 +215,41 @@ TEST_CASE("Renderer camera poses reject degenerate views and drive the view matr
     REQUIRE_THROWS_AS(pose.Validate(), std::invalid_argument);
 }
 
+TEST_CASE("Renderer camera projection honors authored perspective and orthographic ranges",
+    "[KairoRenderer][Camera][Projection]")
+{
+    ShowcaseCamera camera;
+    CameraPose perspective;
+    perspective.Position = { 0.0f, 2.0f, 8.0f };
+    perspective.Target = { 0.0f, 0.0f, 0.0f };
+    perspective.VerticalFovRadians = 0.75f;
+    perspective.NearPlane = 0.25f;
+    perspective.FarPlane = 1500.0f;
+    camera.SetPose(perspective);
+
+    const auto authoredPerspective = camera.Projection(1600u, 900u);
+    const auto expectedPerspective = kairo::foundation::math::Perspective(
+        perspective.VerticalFovRadians, 1600.0f / 900.0f,
+        perspective.NearPlane, perspective.FarPlane);
+    auto expectedPerspectiveFlipped = expectedPerspective;
+    expectedPerspectiveFlipped(1u, 1u) *= -1.0f;
+    CHECK(authoredPerspective == expectedPerspectiveFlipped);
+
+    CameraPose orthographic = perspective;
+    orthographic.Projection = CameraProjectionMode::Orthographic;
+    orthographic.OrthographicSize = 40.0f;
+    camera.SetPose(orthographic);
+    const auto authoredOrthographic = camera.Projection(1600u, 800u);
+    auto expectedOrthographic = kairo::foundation::math::Orthographic(
+        -40.0f, 40.0f, -20.0f, 20.0f,
+        orthographic.NearPlane, orthographic.FarPlane);
+    expectedOrthographic(1u, 1u) *= -1.0f;
+    CHECK(authoredOrthographic == expectedOrthographic);
+
+    orthographic.FarPlane = orthographic.NearPlane;
+    REQUIRE_THROWS_AS(orthographic.Validate(), std::invalid_argument);
+}
+
 TEST_CASE("Debug draw emits deterministic AABB edges and axes", "[KairoRenderer][Debug]")
 {
     DebugDrawList draw;
