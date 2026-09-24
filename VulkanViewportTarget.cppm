@@ -126,7 +126,8 @@ export namespace kairo::renderer
 
         void CreateSampler()
         {
-            VkSamplerCreateInfo create{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+            VkSamplerCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
             create.magFilter = VK_FILTER_LINEAR;
             create.minFilter = VK_FILTER_LINEAR;
             create.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -195,7 +196,8 @@ export namespace kairo::renderer
             dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
             const std::array attachments{ color, objectID, depth };
-            VkRenderPassCreateInfo create{ VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+            VkRenderPassCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
             create.attachmentCount = static_cast<std::uint32_t>(attachments.size());
             create.pAttachments = attachments.data();
             create.subpassCount = 1u;
@@ -223,7 +225,8 @@ export namespace kairo::renderer
         void CreateAttachment(Attachment& target, VkFormat format,
             VkImageAspectFlags aspect, VkImageUsageFlags usage)
         {
-            VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+            VkImageCreateInfo image{};
+            image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
             image.imageType = VK_IMAGE_TYPE_2D;
             image.format = format;
             image.extent = { m_Extent.width, m_Extent.height, 1u };
@@ -239,14 +242,17 @@ export namespace kairo::renderer
 
             VkMemoryRequirements requirements{};
             vkGetImageMemoryRequirements(m_Device, target.Image, &requirements);
-            VkMemoryAllocateInfo allocation{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+            VkMemoryAllocateInfo allocation{};
+            allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = FindDeviceLocalMemory(requirements.memoryTypeBits);
             if (vkAllocateMemory(m_Device, &allocation, nullptr, &target.Memory) != VK_SUCCESS ||
                 vkBindImageMemory(m_Device, target.Image, target.Memory, 0u) != VK_SUCCESS)
                 throw std::runtime_error("Cannot allocate editor viewport image memory.");
 
-            VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+            VkImageViewCreateInfo view{};
+
+            view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             view.image = target.Image;
             view.viewType = VK_IMAGE_VIEW_TYPE_2D;
             view.format = format;
@@ -260,7 +266,8 @@ export namespace kairo::renderer
         void CreateFramebuffer()
         {
             const std::array attachments{ m_Color.View, m_ObjectID.View, m_Depth.View };
-            VkFramebufferCreateInfo create{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+            VkFramebufferCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             create.renderPass = m_RenderPass;
             create.attachmentCount = static_cast<std::uint32_t>(attachments.size());
             create.pAttachments = attachments.data();
