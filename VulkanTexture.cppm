@@ -104,7 +104,9 @@ export namespace kairo::renderer
             if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0u)
                 throw std::runtime_error("Selected Vulkan device cannot sample the texture artifact format.");
 
-            VkImageCreateInfo create{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+            VkImageCreateInfo create{};
+
+            create.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
             create.imageType = VK_IMAGE_TYPE_2D;
             create.format = m_Format;
             create.extent = { m_Width, m_Height, 1u };
@@ -120,7 +122,8 @@ export namespace kairo::renderer
 
             VkMemoryRequirements requirements{};
             vkGetImageMemoryRequirements(m_Device, m_Image, &requirements);
-            VkMemoryAllocateInfo allocation{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+            VkMemoryAllocateInfo allocation{};
+            allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = FindMemoryType(device.PhysicalHandle(),
                 requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -132,7 +135,8 @@ export namespace kairo::renderer
 
         void CreateView()
         {
-            VkImageViewCreateInfo create{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+            VkImageViewCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             create.image = m_Image;
             create.viewType = VK_IMAGE_VIEW_TYPE_2D;
             create.format = m_Format;
@@ -154,7 +158,8 @@ export namespace kairo::renderer
 
         void CreateSampler(TextureSampler sampling)
         {
-            VkSamplerCreateInfo create{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+            VkSamplerCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
             create.magFilter = VK_FILTER_LINEAR;
             create.minFilter = VK_FILTER_LINEAR;
             create.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -183,25 +188,30 @@ export namespace kairo::renderer
 
             VkCommandPool pool = VK_NULL_HANDLE;
             VkCommandBuffer command = VK_NULL_HANDLE;
-            VkCommandPoolCreateInfo poolCreate{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+            VkCommandPoolCreateInfo poolCreate{};
+            poolCreate.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
             poolCreate.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
             poolCreate.queueFamilyIndex = device.GraphicsFamily();
             if (vkCreateCommandPool(m_Device, &poolCreate, nullptr, &pool) != VK_SUCCESS)
                 throw std::runtime_error("vkCreateCommandPool for texture upload failed.");
             try
             {
-                VkCommandBufferAllocateInfo allocate{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+                VkCommandBufferAllocateInfo allocate{};
+                allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
                 allocate.commandPool = pool;
                 allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
                 allocate.commandBufferCount = 1u;
                 if (vkAllocateCommandBuffers(m_Device, &allocate, &command) != VK_SUCCESS)
                     throw std::runtime_error("vkAllocateCommandBuffers for texture upload failed.");
-                VkCommandBufferBeginInfo begin{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+                VkCommandBufferBeginInfo begin{};
+                begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS)
                     throw std::runtime_error("vkBeginCommandBuffer for texture upload failed.");
 
-                VkImageMemoryBarrier toTransfer{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+                VkImageMemoryBarrier toTransfer{};
+
+                toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
                 toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
                 toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -230,7 +240,9 @@ export namespace kairo::renderer
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     static_cast<std::uint32_t>(copies.size()), copies.data());
 
-                VkImageMemoryBarrier toShader{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+                VkImageMemoryBarrier toShader{};
+
+                toShader.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 toShader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
                 toShader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
                 toShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -244,7 +256,8 @@ export namespace kairo::renderer
                     nullptr, 1u, &toShader);
                 if (vkEndCommandBuffer(command) != VK_SUCCESS)
                     throw std::runtime_error("vkEndCommandBuffer for texture upload failed.");
-                VkSubmitInfo submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+                VkSubmitInfo submit{};
+                submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
                 submit.commandBufferCount = 1u;
                 submit.pCommandBuffers = &command;
                 if (vkQueueSubmit(device.GraphicsQueue(), 1u, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
