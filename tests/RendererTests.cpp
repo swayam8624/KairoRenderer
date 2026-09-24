@@ -390,6 +390,61 @@ TEST_CASE("glTF scene conversion preserves hierarchy materials and texture seman
     CHECK(semantics[1u] == kairo::assets::TextureSemantic::Normal);
 }
 
+TEST_CASE("glTF scene conversion routes embedded material images to the embedded resolver",
+    "[KairoRenderer][Assets][glTF][EmbeddedTexture]")
+{
+    kairo::assets::MeshArtifactData triangle;
+    triangle.HasNormals = true;
+    triangle.HasTexCoords = true;
+    triangle.Vertices = {
+        { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f } },
+        { { 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f } },
+        { { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } }
+    };
+    triangle.Indices = { 0u, 1u, 2u };
+
+    kairo::assets::GltfMaterialData material;
+    material.BaseColorTexture.MimeType = "image/png";
+    material.BaseColorTexture.EmbeddedBytes = {
+        std::byte{ 0x89 }, std::byte{ 0x50 }, std::byte{ 0x4E }, std::byte{ 0x47 }
+    };
+
+    kairo::assets::GltfSceneArtifactData source;
+    source.Materials.push_back(material);
+    source.Primitives.push_back({ triangle, {}, 0u, {} });
+    kairo::assets::GltfNodeData node;
+    node.Name = "Embedded";
+    node.PrimitiveIndices = { 0u };
+    source.Nodes.push_back(node);
+    source.RootNodes = { 0u };
+
+    bool uriResolverCalled = false;
+    bool embeddedResolverCalled = false;
+    const auto converted = MakeGltfRenderAsset(
+        source,
+        [&](std::string_view, kairo::assets::TextureSemantic)
+        {
+            uriResolverCalled = true;
+            return TextureHandle{ 41u };
+        },
+        [&](const kairo::assets::GltfTextureBinding& binding,
+            kairo::assets::TextureSemantic semantic)
+        {
+            embeddedResolverCalled = true;
+            CHECK(binding.Uri.empty());
+            CHECK(binding.MimeType == "image/png");
+            CHECK(binding.EmbeddedBytes.size() == 4u);
+            CHECK(semantic == kairo::assets::TextureSemantic::Color);
+            return TextureHandle{ 42u };
+        });
+
+    REQUIRE(converted.Primitives.size() == 1u);
+    CHECK_FALSE(uriResolverCalled);
+    CHECK(embeddedResolverCalled);
+    CHECK(converted.Primitives.front().Material.BaseColorTexture == 42u);
+    CHECK_THROWS_AS(MakeGltfRenderAsset(source), std::invalid_argument);
+}
+
 TEST_CASE("Render scenes validate authored lights and environment bounds",
     "[KairoRenderer][Scene][Lighting]")
 {
