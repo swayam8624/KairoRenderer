@@ -50,7 +50,8 @@ block()
         GIT_TAG v0.1.36
         GIT_SHALLOW TRUE
         PATCH_COMMAND "${GIT_EXECUTABLE}" -C <SOURCE_DIR> apply --whitespace=nowarn
-            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-utf8-sig.patch")
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-utf8-sig.patch"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-cmake-minimum.patch")
     FetchContent_MakeAvailable(KairoGlad)
     if(TARGET glad AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(glad PRIVATE -Wno-unused-but-set-global)
