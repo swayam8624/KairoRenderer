@@ -1,5 +1,6 @@
 module;
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
@@ -17,11 +18,32 @@ export namespace kairo::renderer
     /// Task: let a host own camera interaction while the renderer owns only
     /// matrix construction and GPU upload. The direction from `Position` to
     /// `Target` must be non-zero; the world up vector is +Y.
+    enum class CameraProjectionMode : std::uint8_t
+    {
+        Perspective,
+        Orthographic
+    };
+
     struct CameraPose final
     {
         kairo::foundation::math::Vec3f Position{ 2.6f, 1.9f, 3.8f };
         kairo::foundation::math::Vec3f Target{};
         kairo::foundation::math::Vec3f Up = kairo::foundation::math::Vec3f::Up();
+        CameraProjectionMode Projection = CameraProjectionMode::Perspective;
+        float VerticalFovRadians = 1.0471975512f;
+        float OrthographicSize = 10.0f;
+        float NearPlane = 0.1f;
+        float FarPlane = 1000.0f;
+
+        CameraPose() = default;
+
+        CameraPose(
+            kairo::foundation::math::Vec3f position,
+            kairo::foundation::math::Vec3f target,
+            kairo::foundation::math::Vec3f up = kairo::foundation::math::Vec3f::Up())
+            : Position(position), Target(target), Up(up)
+        {
+        }
 
         void Validate() const
         {
@@ -33,7 +55,22 @@ export namespace kairo::renderer
             if (!finite(Position) || !finite(Target) || !finite(Up) ||
                 (Target - Position).LengthSquared() <= 1.0e-10f ||
                 Up.LengthSquared() <= 1.0e-10f)
-                throw std::invalid_argument("CameraPose requires finite position/target and a non-zero direction/up vector.");
+                throw std::invalid_argument(
+                    "CameraPose requires finite position/target and a non-zero direction/up vector.");
+            if (!std::isfinite(VerticalFovRadians) ||
+                !(VerticalFovRadians > 0.0f && VerticalFovRadians < 3.14159265f) ||
+                !std::isfinite(OrthographicSize) || OrthographicSize <= 0.0f ||
+                !std::isfinite(NearPlane) || !std::isfinite(FarPlane) ||
+                NearPlane <= 0.0f || FarPlane <= NearPlane)
+                throw std::invalid_argument("CameraPose contains an invalid projection range.");
+            switch (Projection)
+            {
+                case CameraProjectionMode::Perspective:
+                case CameraProjectionMode::Orthographic:
+                    break;
+                default:
+                    throw std::invalid_argument("CameraPose projection mode is unsupported.");
+            }
         }
     };
 
@@ -83,11 +120,27 @@ export namespace kairo::renderer
 
         [[nodiscard]] const CameraPose& Pose() const noexcept { return m_Pose; }
 
-        [[nodiscard]] kairo::foundation::math::Mat4f Projection(std::uint32_t width, std::uint32_t height) const noexcept
+        [[nodiscard]] kairo::foundation::math::Mat4f Projection(
+            std::uint32_t width, std::uint32_t height) const noexcept
         {
             using namespace kairo::foundation::math;
-            Mat4f projection = Perspective(
-                1.0471975512f, static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
+            const float aspect = static_cast<float>(width) /
+                static_cast<float>(std::max(height, 1u));
+            Mat4f projection;
+            if (m_Pose.Projection == CameraProjectionMode::Orthographic)
+            {
+                const float halfHeight = m_Pose.OrthographicSize * 0.5f;
+                const float halfWidth = halfHeight * aspect;
+                projection = Orthographic(
+                    -halfWidth, halfWidth, -halfHeight, halfHeight,
+                    m_Pose.NearPlane, m_Pose.FarPlane);
+            }
+            else
+            {
+                projection = Perspective(
+                    m_Pose.VerticalFovRadians, aspect,
+                    m_Pose.NearPlane, m_Pose.FarPlane);
+            }
             // The renderer uses Vulkan's conventional positive-height
             // viewport. Flip clip-space Y once in the projection so +Y world
             // geometry appears upward in the framebuffer.
