@@ -38,9 +38,10 @@ block()
     set(GLAD_API "gl=4.1" CACHE STRING "" FORCE)
     set(GLAD_REPRODUCIBLE ON CACHE BOOL "" FORCE)
     set(GLAD_INSTALL OFF CACHE BOOL "" FORCE)
-    # CMake 4 removed implicit compatibility below 3.5; glad's small legacy
-    # project is policy-clean at 3.5 and needs this explicit floor.
-    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    # CMake 4 warns about compatibility below 3.10. The pinned GLAD project
+    # is policy-clean at 3.10, and the patch raises its declaration instead of
+    # suppressing a legitimate dependency-maintenance diagnostic.
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
     FetchContent_Declare(KairoGlad
         GIT_REPOSITORY https://github.com/Dav1dde/glad.git
         GIT_TAG v0.1.36
