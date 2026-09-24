@@ -239,13 +239,19 @@ target_compile_definitions(KairoRenderer PUBLIC $<$<BOOL:${KAIRO_RENDERER_ENABLE
 target_link_libraries(KairoRenderer PUBLIC KairoMath KairoGeometry KairoAssets
     glfw Vulkan::Vulkan OpenGL::GL glad)
 if(APPLE)
+    # KairoRenderer is a static library that contains Objective-C++ Metal
+    # implementation objects.  Final consumers are often pure C++ executables,
+    # so their linker driver does not automatically add the Objective-C runtime.
+    # Keep the native link contract transitive with the static archive.
     target_link_libraries(KairoRenderer PUBLIC
+        "-framework Foundation"
         "-framework Metal"
         "-framework AppKit"
         "-framework QuartzCore"
         "-framework CoreFoundation"
         "-framework IOKit"
-        "-framework IOSurface")
+        "-framework IOSurface"
+        "-lobjc")
 endif()
 if(WIN32)
     target_link_libraries(KairoRenderer PUBLIC d3d12 dxgi d3dcompiler)
