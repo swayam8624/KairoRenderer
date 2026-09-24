@@ -1,0 +1,32 @@
+schema: kairo.research-track.v1
+track: R6
+title: Cross-backend semantic differential rendering
+state: hypothesis
+problem: Pixel differences across Vulkan, Metal, D3D12, OpenGL and the CPU reference renderer are difficult to localize to scene semantics, resource state or backend implementation.
+hypothesis: Semantic buffers and reference-render deltas can localize injected and natural backend divergence more accurately than pixel-only comparison.
+baselines:
+  - pixel_l1
+  - ssim_only
+  - reference_depth_delta
+  - manual_backend_debugging
+workloads:
+  - canonical_pbr_scenes
+  - animation_and_skinning
+  - shadow_visibility
+  - material_parameter_sweeps
+  - injected_backend_faults
+metrics:
+  - fault_localization_accuracy
+  - localization_rank
+  - false_positive_rate
+  - time_to_localize
+  - image_error
+ablations:
+  - no_semantic_ids
+  - no_reference_renderer
+  - no_depth_normals
+failure_cases:
+  - stochastic_sampling
+  - precision_only_differences
+  - visually_equivalent_backend_paths
+falsification: Reject if semantic differential signals do not improve localization over pixel/reference baselines on held-out injected faults.
