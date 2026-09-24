@@ -2,7 +2,7 @@ name: KairoRenderer CI
 
 on:
   push:
-    branches: [main, agent/phase1-5-cross-platform-ci]
+    branches: [main, agent/phase1-5-cross-platform-ci, fix/gltf-embedded-textures]
   pull_request:
   workflow_dispatch:
 
