@@ -1,0 +1,33 @@
+schema: kairo.research-track.v1
+track: R1
+title: Telemetry-adaptive render graph
+state: hypothesis
+problem: Fixed render-graph allocation and scheduling policies ignore changing frame pressure and resource lifetimes.
+hypothesis: A bounded online policy using recent pass cost and transient-memory pressure can reduce deadline misses without increasing visual or dependency errors.
+baselines:
+  - fixed_current_policy
+  - fixed_conservative_policy
+  - static_profile_tuned_policy
+  - offline_oracle
+workloads:
+  - canonical_shared_content
+  - heavy_transient_chain
+  - readback_capture_pressure
+  - shadow_and_tooling_pressure
+metrics:
+  - frame_ms_p50
+  - frame_ms_p95
+  - frame_ms_p99
+  - deadline_miss_rate
+  - transient_allocation_bytes
+  - policy_overhead_us
+  - output_equivalence
+ablations:
+  - no_memory_signal
+  - no_latency_signal
+  - no_hysteresis
+failure_cases:
+  - rapidly_alternating_workloads
+  - memory_pressure_spikes
+  - telemetry_noise
+falsification: Reject the hypothesis if deadline misses do not improve over the best fixed baseline after policy overhead, or if output/resource correctness changes.
