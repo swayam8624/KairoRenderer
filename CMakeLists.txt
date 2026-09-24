@@ -51,6 +51,7 @@ block()
             "-DKAIRO_PATCH_SOURCE_DIR=<SOURCE_DIR>"
             "-DKAIRO_PATCH_1=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-utf8-sig.patch"
             "-DKAIRO_PATCH_2=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-cmake-minimum.patch"
+            "-DKAIRO_PATCH_2_LEGACY=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/glad-0.1.36-cmake-minimum-legacy-3.5.patch"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyGitPatches.cmake")
     FetchContent_MakeAvailable(KairoGlad)
     if(TARGET glad AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
