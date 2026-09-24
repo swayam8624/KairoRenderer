@@ -287,10 +287,12 @@ if(KAIRO_RENDERER_BUILD_PHYSICS_BRIDGE)
     target_sources(KairoRendererPhysicsDebug PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
         PhysicsDebugBridge.cppm)
     target_link_libraries(KairoRendererPhysicsDebug PUBLIC KairoRenderer KairoPhysicsEngine)
+    set_property(TARGET KairoRendererPhysicsDebug PROPERTY COMPILE_WARNING_AS_ERROR ON)
 endif()
 
 add_executable(KairoRendererClear examples/clear_window.cpp)
 target_link_libraries(KairoRendererClear PRIVATE KairoRenderer)
+set_property(TARGET KairoRendererClear PROPERTY COMPILE_WARNING_AS_ERROR ON)
 
 if(KAIRO_RENDERER_BUILD_TESTS)
     include(FetchContent)
@@ -310,12 +312,14 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     if(UNIX AND NOT APPLE)
         add_executable(KairoRendererOpenGLSkinningSmoke tests/OpenGLSkinningSmoke.cpp)
         target_link_libraries(KairoRendererOpenGLSkinningSmoke PRIVATE KairoRenderer)
+        set_property(TARGET KairoRendererOpenGLSkinningSmoke PROPERTY COMPILE_WARNING_AS_ERROR ON)
         add_test(NAME KairoRendererOpenGLSkinningSmoke
             COMMAND KairoRendererOpenGLSkinningSmoke)
         set_tests_properties(KairoRendererOpenGLSkinningSmoke PROPERTIES
             SKIP_RETURN_CODE 77)
         add_executable(KairoRendererVulkanSkinningSmoke tests/VulkanSkinningSmoke.cpp)
         target_link_libraries(KairoRendererVulkanSkinningSmoke PRIVATE KairoRenderer)
+        set_property(TARGET KairoRendererVulkanSkinningSmoke PROPERTY COMPILE_WARNING_AS_ERROR ON)
         add_test(NAME KairoRendererVulkanSkinningSmoke
             COMMAND KairoRendererVulkanSkinningSmoke)
         set_tests_properties(KairoRendererVulkanSkinningSmoke PROPERTIES
@@ -324,6 +328,7 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     if(APPLE)
         add_executable(KairoRendererMetalSkinningSmoke tests/MetalSkinningSmoke.cpp)
         target_link_libraries(KairoRendererMetalSkinningSmoke PRIVATE KairoRenderer)
+        set_property(TARGET KairoRendererMetalSkinningSmoke PROPERTY COMPILE_WARNING_AS_ERROR ON)
         add_test(NAME KairoRendererMetalSkinningSmoke
             COMMAND KairoRendererMetalSkinningSmoke)
         set_tests_properties(KairoRendererMetalSkinningSmoke PROPERTIES
@@ -333,6 +338,7 @@ if(KAIRO_RENDERER_BUILD_TESTS)
         add_executable(KairoRendererDirect3D12SkinningSmoke
             tests/Direct3D12SkinningSmoke.cpp)
         target_link_libraries(KairoRendererDirect3D12SkinningSmoke PRIVATE KairoRenderer)
+        set_property(TARGET KairoRendererDirect3D12SkinningSmoke PROPERTY COMPILE_WARNING_AS_ERROR ON)
         add_test(NAME KairoRendererDirect3D12SkinningSmoke
             COMMAND KairoRendererDirect3D12SkinningSmoke)
         set_tests_properties(KairoRendererDirect3D12SkinningSmoke PROPERTIES
