@@ -27,18 +27,18 @@ TEST_CASE("Render graph compiles hazards transitions and transient aliases",
     const auto swapchain = graph.AddResource({ "Swapchain",
         RenderResourceKind::External, 0u, false, RenderResourceState::Present });
     std::vector<int> execution;
-    graph.AddPass("Shadow", { { shadow, RenderAccessMode::Write,
+    (void)graph.AddPass("Shadow", { { shadow, RenderAccessMode::Write,
         RenderResourceState::DepthAttachment } }, [&] { execution.push_back(1); });
-    graph.AddPass("Lighting", {
+    (void)graph.AddPass("Lighting", {
         { shadow, RenderAccessMode::Read, RenderResourceState::ShaderRead },
         { intermediate, RenderAccessMode::Write,
             RenderResourceState::ColorAttachment } },
         [&] { execution.push_back(2); });
-    graph.AddPass("Post", {
+    (void)graph.AddPass("Post", {
         { intermediate, RenderAccessMode::Read, RenderResourceState::ShaderRead },
         { post, RenderAccessMode::Write, RenderResourceState::ColorAttachment } },
         [&] { execution.push_back(3); });
-    graph.AddPass("Present", {
+    (void)graph.AddPass("Present", {
         { post, RenderAccessMode::Read, RenderResourceState::ShaderRead },
         { swapchain, RenderAccessMode::Write, RenderResourceState::Present } },
         [&] { execution.push_back(4); });
@@ -67,7 +67,7 @@ TEST_CASE("Render graph rejects invalid reads and dependency cycles",
     RenderGraph uninitialized;
     const auto resource = uninitialized.AddResource({ "Transient",
         RenderResourceKind::Buffer, 64u, true });
-    uninitialized.AddPass("Read", { { resource, RenderAccessMode::Read,
+    (void)uninitialized.AddPass("Read", { { resource, RenderAccessMode::Read,
         RenderResourceState::ShaderRead } });
     REQUIRE_THROWS_AS(uninitialized.Compile(), std::logic_error);
 
@@ -355,7 +355,7 @@ TEST_CASE("glTF scene conversion preserves hierarchy materials and texture seman
 
     kairo::assets::GltfSceneArtifactData source;
     source.Materials.push_back(material);
-    source.Primitives.push_back({ triangle, {}, 0u });
+    source.Primitives.push_back({ triangle, {}, 0u, {} });
     kairo::assets::GltfNodeData parent;
     parent.Name = "Parent";
     parent.LocalTransform[12u] = 2.0f;
