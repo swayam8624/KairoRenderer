@@ -291,7 +291,8 @@ export namespace kairo::renderer
             }
             if (captureDestination != VK_NULL_HANDLE)
             {
-                VkImageMemoryBarrier toTransfer{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+                VkImageMemoryBarrier toTransfer{};
+                toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 toTransfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
                 toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
                 toTransfer.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -515,35 +516,44 @@ export namespace kairo::renderer
             const VkShaderModule vertex = CreateShaderModule(ReadSpirv(vertexName));
             try
             {
-                VkPipelineShaderStageCreateInfo stage{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+                VkPipelineShaderStageCreateInfo stage{};
+                stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
                 stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
                 stage.module = vertex;
                 stage.pName = "main";
-                VkPipelineInputAssemblyStateCreateInfo assembly{ VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+                VkPipelineInputAssemblyStateCreateInfo assembly{};
+                assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
                 assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-                VkPipelineViewportStateCreateInfo viewport{ VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+                VkPipelineViewportStateCreateInfo viewport{};
+                viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
                 viewport.viewportCount = 1u;
                 viewport.scissorCount = 1u;
-                VkPipelineRasterizationStateCreateInfo rasterizer{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+                VkPipelineRasterizationStateCreateInfo rasterizer{};
+                rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
                 rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
                 rasterizer.cullMode = VK_CULL_MODE_NONE;
                 rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
                 rasterizer.depthBiasEnable = VK_TRUE;
                 rasterizer.lineWidth = 1.0f;
-                VkPipelineMultisampleStateCreateInfo multisampling{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+                VkPipelineMultisampleStateCreateInfo multisampling{};
+                multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
                 multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-                VkPipelineDepthStencilStateCreateInfo depth{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+                VkPipelineDepthStencilStateCreateInfo depth{};
+                depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
                 depth.depthTestEnable = VK_TRUE;
                 depth.depthWriteEnable = VK_TRUE;
                 depth.depthCompareOp = VK_COMPARE_OP_LESS;
-                VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+                VkPipelineColorBlendStateCreateInfo blend{};
+                blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
                 const std::array dynamicStates{
                     VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS
                 };
-                VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+                VkPipelineDynamicStateCreateInfo dynamic{};
+                dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
                 dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
                 dynamic.pDynamicStates = dynamicStates.data();
-                VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+                VkGraphicsPipelineCreateInfo create{};
+                create.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
                 create.stageCount = 1u;
                 create.pStages = &stage;
                 create.pVertexInputState = &vertexInput;
@@ -592,20 +602,27 @@ export namespace kairo::renderer
             const VkPipelineVertexInputStateCreateInfo& vertexInput, VkBool32 depthWrite,
             bool alphaBlend) const
         {
-            VkPipelineShaderStageCreateInfo vertexStage{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+            VkPipelineShaderStageCreateInfo vertexStage{};
+            vertexStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             vertexStage.stage = VK_SHADER_STAGE_VERTEX_BIT; vertexStage.module = vertex; vertexStage.pName = "main";
-            VkPipelineShaderStageCreateInfo fragmentStage{ VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+            VkPipelineShaderStageCreateInfo fragmentStage{};
+            fragmentStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             fragmentStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT; fragmentStage.module = fragment; fragmentStage.pName = "main";
             const std::array stages{ vertexStage, fragmentStage };
-            VkPipelineInputAssemblyStateCreateInfo assembly{ VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+            VkPipelineInputAssemblyStateCreateInfo assembly{};
+            assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
             assembly.topology = topology;
-            VkPipelineViewportStateCreateInfo viewport{ VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+            VkPipelineViewportStateCreateInfo viewport{};
+            viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
             viewport.viewportCount = 1u; viewport.scissorCount = 1u;
-            VkPipelineRasterizationStateCreateInfo rasterizer{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+            VkPipelineRasterizationStateCreateInfo rasterizer{};
+            rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
             rasterizer.polygonMode = VK_POLYGON_MODE_FILL; rasterizer.cullMode = VK_CULL_MODE_NONE; rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rasterizer.lineWidth = 1.0f;
-            VkPipelineMultisampleStateCreateInfo multisampling{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+            VkPipelineMultisampleStateCreateInfo multisampling{};
+            multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
             multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-            VkPipelineDepthStencilStateCreateInfo depth{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+            VkPipelineDepthStencilStateCreateInfo depth{};
+            depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
             depth.depthTestEnable = VK_TRUE; depth.depthWriteEnable = depthWrite; depth.depthCompareOp = VK_COMPARE_OP_LESS;
             VkPipelineColorBlendAttachmentState attachment{};
             attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -623,14 +640,17 @@ export namespace kairo::renderer
             objectAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
                 VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
                 VK_COLOR_COMPONENT_A_BIT;
-            VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+            VkPipelineColorBlendStateCreateInfo blend{};
+            blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
             const std::array blendAttachments{ attachment, objectAttachment };
             blend.attachmentCount = static_cast<std::uint32_t>(blendAttachments.size());
             blend.pAttachments = blendAttachments.data();
             const std::array dynamicStates{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-            VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+            VkPipelineDynamicStateCreateInfo dynamic{};
+            dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
             dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size()); dynamic.pDynamicStates = dynamicStates.data();
-            VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+            VkGraphicsPipelineCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
             create.stageCount = static_cast<std::uint32_t>(stages.size()); create.pStages = stages.data(); create.pVertexInputState = &vertexInput;
             create.pInputAssemblyState = &assembly; create.pViewportState = &viewport; create.pRasterizationState = &rasterizer;
             create.pMultisampleState = &multisampling; create.pDepthStencilState = &depth; create.pColorBlendState = &blend;
@@ -651,7 +671,8 @@ export namespace kairo::renderer
         /// shared push block; material and normal slots remain zeroed.
         void DrawDirectionalShadowMap(const VulkanCommandBuffer& command) const
         {
-            const VkClearValue clear{ { 1.0f, 0u } };
+            VkClearValue clear{};
+            clear.depthStencil = VkClearDepthStencilValue{ 1.0f, 0u };
             VkRenderPassBeginInfo begin{};
             begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             begin.renderPass = m_ShadowMap.RenderPass();
@@ -920,7 +941,8 @@ export namespace kairo::renderer
 
         [[nodiscard]] VkShaderModule CreateShaderModule(const std::vector<std::uint32_t>& spirv) const
         {
-            VkShaderModuleCreateInfo create{ VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+            VkShaderModuleCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
             create.codeSize = spirv.size() * sizeof(std::uint32_t); create.pCode = spirv.data(); VkShaderModule module = VK_NULL_HANDLE;
             if (vkCreateShaderModule(m_Device, &create, nullptr, &module) != VK_SUCCESS) throw std::runtime_error("vkCreateShaderModule failed.");
             return module;
