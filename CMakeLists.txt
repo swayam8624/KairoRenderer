@@ -231,8 +231,14 @@ target_compile_definitions(KairoRenderer PUBLIC
     KAIRO_RENDERER_HAS_OPENGL_BACKEND=1)
 if(APPLE)
     target_sources(KairoRenderer PRIVATE detail/MetalBackend.mm)
+    set(_kairo_renderer_metal_compile_options -fobjc-arc)
+    if(CMAKE_OBJCXX_COMPILER_ID STREQUAL "Clang" AND
+       CMAKE_OBJCXX_COMPILER_VERSION VERSION_GREATER_EQUAL 23)
+        list(APPEND _kairo_renderer_metal_compile_options
+            -fno-objc-msgsend-selector-stubs)
+    endif()
     set_source_files_properties(detail/MetalBackend.mm PROPERTIES
-        COMPILE_OPTIONS "-fobjc-arc;-fno-objc-msgsend-selector-stubs")
+        COMPILE_OPTIONS "${_kairo_renderer_metal_compile_options}")
     target_compile_definitions(KairoRenderer PUBLIC
         KAIRO_RENDERER_HAS_METAL_BACKEND=1)
     target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_MOLTENVK_ICD_FILE="${KAIRO_MOLTENVK_ICD_FILE}")
