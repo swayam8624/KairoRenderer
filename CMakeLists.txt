@@ -235,7 +235,8 @@ if(APPLE)
     if(CMAKE_OBJCXX_COMPILER_ID STREQUAL "Clang" AND
        CMAKE_OBJCXX_COMPILER_VERSION VERSION_GREATER_EQUAL 23)
         list(APPEND _kairo_renderer_metal_compile_options
-            -fno-objc-msgsend-selector-stubs)
+            -fno-objc-msgsend-selector-stubs
+            -fno-objc-msgsend-class-selector-stubs)
     endif()
     set_source_files_properties(detail/MetalBackend.mm PROPERTIES
         COMPILE_OPTIONS "${_kairo_renderer_metal_compile_options}")
