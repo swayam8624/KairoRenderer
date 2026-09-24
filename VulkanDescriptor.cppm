@@ -164,7 +164,8 @@ export namespace kairo::renderer
                 VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
             bindings[9] = { 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1u,
                 VK_SHADER_STAGE_VERTEX_BIT, nullptr };
-            VkDescriptorSetLayoutCreateInfo create{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+            VkDescriptorSetLayoutCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
             create.bindingCount = static_cast<std::uint32_t>(bindings.size());
             create.pBindings = bindings.data();
             if (vkCreateDescriptorSetLayout(m_Device, &create, nullptr, &m_Layout) != VK_SUCCESS)
@@ -207,7 +208,8 @@ export namespace kairo::renderer
                 VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count * 3u },
                 VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count * 7u }
             };
-            VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+            VkDescriptorPoolCreateInfo pool{};
+            pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
             pool.maxSets = count;
             pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
             pool.pPoolSizes = poolSizes.data();
@@ -216,7 +218,8 @@ export namespace kairo::renderer
 
             std::vector<VkDescriptorSetLayout> layouts(count, m_Layout);
             m_Sets.resize(count);
-            VkDescriptorSetAllocateInfo allocation{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+            VkDescriptorSetAllocateInfo allocation{};
+            allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
             allocation.descriptorPool = m_Pool;
             allocation.descriptorSetCount = count;
             allocation.pSetLayouts = layouts.data();
@@ -336,7 +339,8 @@ export namespace kairo::renderer
         [[nodiscard]] static VkWriteDescriptorSet Write(VkDescriptorSet set,
             std::uint32_t binding, VkDescriptorType type) noexcept
         {
-            VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             write.dstSet = set;
             write.dstBinding = binding;
             write.descriptorCount = 1u;
