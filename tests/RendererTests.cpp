@@ -215,6 +215,41 @@ TEST_CASE("Renderer camera poses reject degenerate views and drive the view matr
     REQUIRE_THROWS_AS(pose.Validate(), std::invalid_argument);
 }
 
+TEST_CASE("Renderer camera projection honors authored frustum and orthographic settings",
+    "[KairoRenderer][Camera][Projection]")
+{
+    ShowcaseCamera camera;
+
+    CameraPose perspective;
+    perspective.Position = { 0.0f, 2.0f, 8.0f };
+    perspective.Target = { 0.0f, 0.0f, 0.0f };
+    perspective.VerticalFovRadians = 0.7853981634f;
+    perspective.NearPlane = 0.25f;
+    perspective.FarPlane = 1000.0f;
+    perspective.Validate();
+    camera.SetPose(perspective);
+    const auto authoredPerspective = camera.Projection(1600u, 900u);
+
+    CameraPose shorter = perspective;
+    shorter.FarPlane = 100.0f;
+    camera.SetPose(shorter);
+    const auto shortPerspective = camera.Projection(1600u, 900u);
+    CHECK(authoredPerspective != shortPerspective);
+
+    CameraPose orthographic = perspective;
+    orthographic.Projection = CameraProjectionMode::Orthographic;
+    orthographic.OrthographicSize = 20.0f;
+    orthographic.Validate();
+    camera.SetPose(orthographic);
+    const auto ortho = camera.Projection(1600u, 900u);
+    CHECK(ortho != authoredPerspective);
+    CHECK(ortho(3u, 3u) == 1.0f);
+
+    CameraPose invalid = perspective;
+    invalid.FarPlane = invalid.NearPlane;
+    REQUIRE_THROWS_AS(invalid.Validate(), std::invalid_argument);
+}
+
 TEST_CASE("Debug draw emits deterministic AABB edges and axes", "[KairoRenderer][Debug]")
 {
     DebugDrawList draw;
