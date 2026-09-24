@@ -60,7 +60,8 @@ export namespace kairo::renderer
             std::vector<VkDeviceQueueCreateInfo> queueInfos;
             for (const std::uint32_t family : uniqueFamilies)
             {
-                VkDeviceQueueCreateInfo info{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
+                VkDeviceQueueCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
                 info.queueFamilyIndex = family;
                 info.queueCount = 1;
                 info.pQueuePriorities = &priority;
@@ -76,7 +77,8 @@ export namespace kairo::renderer
             // The viewport writes shaded color and integer object IDs in one
             // subpass. Transparent color must blend while IDs remain exact.
             features.independentBlend = VK_TRUE;
-            VkDeviceCreateInfo create{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+            VkDeviceCreateInfo create{};
+            create.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
             create.queueCreateInfoCount = static_cast<std::uint32_t>(queueInfos.size());
             create.pQueueCreateInfos = queueInfos.data();
             create.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
