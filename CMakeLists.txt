@@ -248,6 +248,11 @@ if(APPLE)
 endif()
 if(WIN32)
     target_sources(KairoRenderer PRIVATE detail/Direct3D12Backend.cpp)
+    # D3D12 constant-buffer structs intentionally use explicit alignment.
+    # MSVC C4324 reports the resulting ABI padding; suppress only that
+    # diagnostic for the native backend implementation, never engine-wide.
+    set_source_files_properties(detail/Direct3D12Backend.cpp PROPERTIES
+        COMPILE_OPTIONS "/wd4324")
     target_compile_definitions(KairoRenderer PUBLIC
         KAIRO_RENDERER_HAS_D3D12_BACKEND=1)
 endif()
