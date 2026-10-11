@@ -483,7 +483,12 @@ export namespace kairo::renderer
             m_Triangle.Recreate(m_Swapchain);
         }
 
-        [[nodiscard]] static VulkanInstanceDesc MakeInstanceDesc() { return { "KairoRenderer", true }; }
+        // Honor the build setting. Runtime opt-out via
+        // KAIRO_VULKAN_VALIDATION=0 remains available for stale macOS SDKs.
+        [[nodiscard]] static VulkanInstanceDesc MakeInstanceDesc()
+        {
+            return { "KairoRenderer", KAIRO_RENDERER_VALIDATION_DEFAULT != 0 };
+        }
         [[nodiscard]] static std::vector<const char*> RequiredExtensions()
         {
             std::uint32_t count = 0;
