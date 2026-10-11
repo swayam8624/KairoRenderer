@@ -4,6 +4,7 @@ module;
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -39,7 +40,17 @@ export namespace kairo::renderer
                 extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
                 flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
             }
-            if (desc.EnableValidation && HasLayer("VK_LAYER_KHRONOS_validation") && HasExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
+            // Validation is optional for editor/game startup. Homebrew's Vulkan
+            // loader + MoltenVK does not install Khronos validation layers, and
+            // partially removed Vulkan SDKs can advertise a stale layer manifest.
+            const char* validationOverride = std::getenv("KAIRO_VULKAN_VALIDATION");
+            const bool validationDisabled = validationOverride != nullptr &&
+                (std::strcmp(validationOverride, "0") == 0 ||
+                 std::strcmp(validationOverride, "false") == 0 ||
+                 std::strcmp(validationOverride, "off") == 0);
+            if (desc.EnableValidation && !validationDisabled &&
+                HasLayer("VK_LAYER_KHRONOS_validation") &&
+                HasExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
             {
                 m_ValidationEnabled = true;
                 extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -66,10 +77,37 @@ export namespace kairo::renderer
                 create.ppEnabledLayerNames = &validationLayer;
             }
 
-            const VkResult result = vkCreateInstance(&create, nullptr, &m_Handle);
+            VkResult result = vkCreateInstance(&create, nullptr, &m_Handle);
+            // An advertised validation layer may still fail to load, e.g. its
+            // JSON manifest references a deleted dylib after a Homebrew upgrade.
+            // Prefer a running Vulkan renderer without validation to exiting.
+            if (result == VK_ERROR_LAYER_NOT_PRESENT && m_ValidationEnabled)
+            {
+                std::cerr << "Kairo Vulkan: optional validation layer is advertised but "
+                             "could not be loaded. Retrying without validation.\n";
+                m_ValidationEnabled = false;
+                create.enabledLayerCount = 0u;
+                create.ppEnabledLayerNames = nullptr;
+                result = vkCreateInstance(&create, nullptr, &m_Handle);
+            }
             if (result != VK_SUCCESS)
             {
-                throw std::runtime_error(std::string("vkCreateInstance failed: ") + VulkanResultText(result));
+                std::string explanation = std::string("vkCreateInstance failed: ") +
+                    VulkanResultText(result);
+                if (result == VK_ERROR_LAYER_NOT_PRESENT)
+                {
+                    explanation +=
+                        ". Vulkan could not load an instance layer even after "
+                        "skipping optional Kairo validation. Check stale layer "
+                        "manifests or VK_INSTANCE_LAYERS / VK_LAYER_PATH / "
+                        "VK_ADD_LAYER_PATH / VK_LOADER_LAYERS_ENABLE overrides. "
+                        "Try: env -u VK_INSTANCE_LAYERS -u VK_LAYER_PATH "
+                        "-u VK_ADD_LAYER_PATH -u VK_LOADER_LAYERS_ENABLE "
+                        "KAIRO_VULKAN_VALIDATION=0 <KairoEditorApp> "
+                        "--project <Project.kproject> --renderer vulkan. "
+                        "Set VK_LOADER_DEBUG=layer for loader diagnostics.";
+                }
+                throw std::runtime_error(explanation);
             }
         }
         ~VulkanInstance() { if (m_Handle != VK_NULL_HANDLE) vkDestroyInstance(m_Handle, nullptr); }
