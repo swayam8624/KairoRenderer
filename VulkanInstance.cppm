@@ -43,11 +43,22 @@ export namespace kairo::renderer
             // Validation is optional for editor/game startup. Homebrew's Vulkan
             // loader + MoltenVK does not install Khronos validation layers, and
             // partially removed Vulkan SDKs can advertise a stale layer manifest.
-            const char* validationOverride = std::getenv("KAIRO_VULKAN_VALIDATION");
-            const bool validationDisabled = validationOverride != nullptr &&
-                (std::strcmp(validationOverride, "0") == 0 ||
-                 std::strcmp(validationOverride, "false") == 0 ||
-                 std::strcmp(validationOverride, "off") == 0);
+            // MSVC treats getenv as unsafe under /WX. Use its owned-copy
+            // variant on Windows without weakening warnings across targets.
+            std::string validationOverride;
+#if defined(_WIN32)
+            char* rawOverride = nullptr;
+            std::size_t rawLength = 0u;
+            if (_dupenv_s(&rawOverride, &rawLength, "KAIRO_VULKAN_VALIDATION") == 0 &&
+                rawOverride != nullptr)
+                validationOverride = rawOverride;
+            std::free(rawOverride);
+#else
+            if (const char* rawOverride = std::getenv("KAIRO_VULKAN_VALIDATION"))
+                validationOverride = rawOverride;
+#endif
+            const bool validationDisabled = validationOverride == "0" ||
+                validationOverride == "false" || validationOverride == "off";
             if (desc.EnableValidation && !validationDisabled &&
                 HasLayer("VK_LAYER_KHRONOS_validation") &&
                 HasExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
