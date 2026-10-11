@@ -54,6 +54,46 @@ Opaque draws precede stable back-to-front transparent draws; object IDs remain
 unblended for exact editor picking. Directional, point, spot, and center-sampled
 rectangular-area emitters come from the scene rather than a hardcoded light.
 
+## macOS Vulkan / MoltenVK layer startup
+
+Kairo uses the Homebrew MoltenVK ICD for Vulkan on Apple Silicon. The
+`vulkan-headers`, `vulkan-loader`, and `molten-vk` formulas **do not
+guarantee that the optional Khronos validation layer is installed**.
+Validation is not required to run or render; Kairo will skip unavailable
+validation layers and retry without the optional layer if an advertised
+manifest fails at instance creation.
+
+If `vkCreateInstance` returns `VK_ERROR_LAYER_NOT_PRESENT`, first test
+without shell-injected Vulkan layer configuration:
+
+```sh
+env -u VK_INSTANCE_LAYERS -u VK_LAYER_PATH -u VK_ADD_LAYER_PATH \
+    -u VK_LOADER_LAYERS_ENABLE KAIRO_VULKAN_VALIDATION=0 \
+    ./build/dev-clang/components/KairoEditor/KairoEditorApp \
+    --project Samples/PlayableVerticalSlice/Project.kproject --renderer vulkan
+```
+
+The command above is from the KairoGameEngine umbrella root. It does **not**
+change renderer backends or permanently edit environment variables.
+
+To inspect Vulkan loader-layer selection when failures persist:
+
+```sh
+env | grep '^VK_' || true
+VK_LOADER_DEBUG=layer ./build/dev-clang/components/KairoEditor/KairoEditorApp \
+    --project Samples/PlayableVerticalSlice/Project.kproject --renderer vulkan
+```
+
+For a reproducible build with validation disabled:
+
+```sh
+cmake --preset dev-clang -DKAIRO_RENDERER_ENABLE_VALIDATION=OFF
+cmake --build --preset dev-clang --target KairoEditorApp KairoPlayer
+```
+
+Turning off validation does **not** disable Vulkan, change the MoltenVK
+graphics device, or remove GPU error checking performed by the renderer.
+
 ## Textures and glTF scenes
 
 `CreateTexture` uploads validated `TextureArtifactData` and returns an opaque
