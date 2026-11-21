@@ -67,6 +67,7 @@ export namespace kairo::renderer
 // Central dispatch visits the actually chosen backend. The shared API does not make
 // platform-native GPU objects interchangeable.
         template<class Operation>
+        /// TEACHING METHOD: The backend-agnostic dispatcher uses std::variant + std::visit; runtime implementation owns native device and handles. Both const and mutable overloads preserve caller constness.
         decltype(auto) Visit(Operation&& operation)
         {
             return std::visit([&](auto& runtime) -> decltype(auto)
@@ -76,6 +77,7 @@ export namespace kairo::renderer
         }
 
         template<class Operation>
+        /// TEACHING METHOD: The backend-agnostic dispatcher uses std::variant + std::visit; runtime implementation owns native device and handles. Both const and mutable overloads preserve caller constness.
         decltype(auto) Visit(Operation&& operation) const
         {
             return std::visit([&](const auto& runtime) -> decltype(auto)
@@ -85,15 +87,19 @@ export namespace kairo::renderer
         }
 
     public:
+        /// TEACHING METHOD: Validate/select an available backend from WindowDesc and instantiate it through CreateBackend; explicit unavailable choices should fail, not silently change APIs.
         explicit RendererRuntime(const WindowDesc& windowDesc)
             : m_Backend(SelectGraphicsBackend(
                   windowDesc.Backend, CompiledGraphicsBackends())),
+              /// TEACHING METHOD: Factory for the explicitly chosen API; compile-time feature guards prevent nonexistent native implementations from being constructed.
               m_Runtime(CreateBackend(m_Backend, windowDesc))
         {
         }
 
+        /// TEACHING METHOD: Return the selected API for diagnostics and feature-aware adapters.
         [[nodiscard]] GraphicsBackend Backend() const noexcept { return m_Backend; }
 
+        /// TEACHING METHOD: Delegate a full present/render cycle and record that backend's completed CPU render-stage profile.
         void DrawFrame()
         {
 #if defined(KAIRO_RENDERER_HAS_OPENGL_BACKEND)
@@ -101,6 +107,7 @@ export namespace kairo::renderer
             {
                 OpenGLRendererRuntime& runtime = OpenGL();
                 runtime.DrawFrame();
+                /// TEACHING METHOD: Snapshot of completed render stages for Editor profiling; timings are backend-specific CPU measurements, not cross-API GPU timestamp parity.
                 m_LastFrameProfile = runtime.LastFrameProfile();
                 return;
             }
@@ -139,26 +146,31 @@ export namespace kairo::renderer
             return m_LastFrameProfile;
         }
 
+        /// TEACHING METHOD: Expose the backend's actual native window abstraction to Player/Editor event loops.
         [[nodiscard]] Window& NativeWindow() noexcept
         {
             return Visit([](auto& runtime) -> Window& { return runtime.NativeWindow(); });
         }
 
+        /// TEACHING METHOD: Forward world-space debug lines from physics/editor to the selected renderer.
         void SubmitDebugDraw(const DebugDrawList& debug)
         {
             Visit([&](auto& runtime) { runtime.SubmitDebugDraw(debug); });
         }
 
+        /// TEACHING METHOD: Create backend-owned GPU/indexed mesh resources from a validated portable Mesh contract; handle lifetime must be released with DestroyMesh.
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
             return Visit([&](auto& runtime) { return runtime.CreateMesh(mesh); });
         }
 
+        /// TEACHING METHOD: Retire an existing backend mesh handle. Handle validity and resource synchronization are native-backend concerns.
         void DestroyMesh(MeshHandle mesh)
         {
             Visit([&](auto& runtime) { runtime.DestroyMesh(mesh); });
         }
 
+        /// TEACHING METHOD: Convert KairoAssets texture artifact and sampler policy into a backend texture handle, preserving authored color-space and filtering semantics.
         [[nodiscard]] TextureHandle CreateTexture(
             const kairo::assets::TextureArtifactData& texture,
             TextureSampler sampling = {})
@@ -169,21 +181,25 @@ export namespace kairo::renderer
             });
         }
 
+        /// TEACHING METHOD: Release a backend-owned texture resource; scene bindings must no longer reference the handle.
         void DestroyTexture(TextureHandle texture)
         {
             Visit([&](auto& runtime) { runtime.DestroyTexture(texture); });
         }
 
+        /// TEACHING METHOD: Hand the same authored RenderScene to each native implementation; renderer-specific draw extraction occurs downstream.
         void SubmitRenderScene(const RenderScene& scene)
         {
             Visit([&](auto& runtime) { runtime.SubmitRenderScene(scene); });
         }
 
+        /// TEACHING METHOD: Set viewport camera transform independently of asset loading or scene serialization.
         void SetCameraPose(const CameraPose& pose)
         {
             Visit([&](auto& runtime) { runtime.SetCameraPose(pose); });
         }
 
+        /// TEACHING METHOD: Forward validated shadow bias/filter settings to the backend. Shadow maps are rendered in backend passes, not by the Editor.
         void SetDirectionalShadowSettings(
             const DirectionalShadowSettings& settings)
         {
@@ -193,6 +209,7 @@ export namespace kairo::renderer
             });
         }
 
+        /// TEACHING METHOD: Read active settings from the backend for UI inspection and deterministic round trips.
         [[nodiscard]] const DirectionalShadowSettings& DirectionalShadows() const noexcept
         {
             return Visit([](const auto& runtime)
@@ -202,11 +219,13 @@ export namespace kairo::renderer
             });
         }
 
+        /// TEACHING METHOD: Switch viewport display/debug shading without altering authored PBR material data.
         void SetViewportShadingMode(ViewportShadingMode mode) noexcept
         {
             Visit([&](auto& runtime) { runtime.SetViewportShadingMode(mode); });
         }
 
+        /// TEACHING METHOD: Report active viewport shading mode to Editor tools.
         [[nodiscard]] ViewportShadingMode ViewportShading() const noexcept
         {
             return Visit([](const auto& runtime)
@@ -215,17 +234,20 @@ export namespace kairo::renderer
             });
         }
 
+        /// TEACHING METHOD: Request native render-target/swapchain-compatible viewport size; implementations manage GPU resource reallocation.
         void ResizeViewport(std::uint32_t width, std::uint32_t height)
         {
             Visit([&](auto& runtime) { runtime.ResizeViewport(width, height); });
         }
 
+        /// TEACHING METHOD: Ask the GPU viewport to resolve an object ID at pixel coordinates; result is asynchronous or deferred.
         void RequestViewportPick(std::uint32_t x, std::uint32_t y)
         {
             Visit([&](auto& runtime) { runtime.RequestViewportPick(x, y); });
         }
 
         [[nodiscard]] std::optional<std::uint32_t>
+        /// TEACHING METHOD: Consume the optional completed object-ID readback for Editor selection.
         TakeViewportPickResult() noexcept
         {
             return Visit([](auto& runtime)
@@ -234,12 +256,14 @@ export namespace kairo::renderer
             });
         }
 
+        /// TEACHING METHOD: Schedule viewport readback for smoke tests or visual inspection, not an immediate screen image.
         void RequestViewportCapture()
         {
             Visit([](auto& runtime) { runtime.RequestViewportCapture(); });
         }
 
         [[nodiscard]] std::optional<ViewportCapture>
+        /// TEACHING METHOD: Take optional completed image data; the Player smoke fixture checks it for nonblank content.
         TakeViewportCapture() noexcept
         {
             return Visit([](auto& runtime)
