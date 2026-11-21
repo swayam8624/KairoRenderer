@@ -1,3 +1,9 @@
+// SOURCE STUDY NOTE:
+// RendererRuntime facade: selects Vulkan, Metal, OpenGL or D3D12 implementations and owns the chosen
+// backend's resources. KairoGameEngine's RuntimeRenderBridge passes render descriptors/handles to this
+// facade while keeping KairoAssets persistent identities separate.
+// Related code paths: docs/SOURCE_READING_ORDER.md.
+
 module;
 
 #include <cstdint>
