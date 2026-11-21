@@ -1,3 +1,4 @@
+// TEACHING MAP: RENDERER FACADE: The C++23 public runtime module delegates backend-neutral scene, render and debug operations to Vulkan, Metal, OpenGL or D3D12 through a tagged variant. Imports name interface dependencies. Actual device/swapchain lifetime remains inside each backend. Player and Editor consume this façade; native backend tests validate platform execution.
 module;
 
 #include <cstdint>
@@ -63,6 +64,8 @@ export namespace kairo::renderer
         BackendRuntime m_Runtime;
         RenderGraphExecutionProfile m_LastFrameProfile;
 
+// Central dispatch visits the actually chosen backend. The shared API does not make
+// platform-native GPU objects interchangeable.
         template<class Operation>
         decltype(auto) Visit(Operation&& operation)
         {
