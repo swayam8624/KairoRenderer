@@ -10,48 +10,48 @@ Read each phase in order. Every link goes to a source file or directory in this 
 
 ## 1. API and scene contracts
 
-1. [`README.md`](README.md)
-2. [`KairoRenderer.cppm`](KairoRenderer.cppm)
-3. [`RendererTypes.cppm`](RendererTypes.cppm)
-4. [`GraphicsBackend.cppm`](GraphicsBackend.cppm)
-5. [`Window.cppm`](Window.cppm)
-6. [`Camera.cppm`](Camera.cppm)
-7. [`RenderScene.cppm`](RenderScene.cppm)
-8. [`Mesh.cppm`](Mesh.cppm)
-9. [`Material.cppm`](Material.cppm)
-10. [`Texture.cppm`](Texture.cppm)
+1. [`README.md`](../README.md)
+2. [`KairoRenderer.cppm`](../KairoRenderer.cppm)
+3. [`RendererTypes.cppm`](../RendererTypes.cppm)
+4. [`GraphicsBackend.cppm`](../GraphicsBackend.cppm)
+5. [`Window.cppm`](../Window.cppm)
+6. [`Camera.cppm`](../Camera.cppm)
+7. [`RenderScene.cppm`](../RenderScene.cppm)
+8. [`Mesh.cppm`](../Mesh.cppm)
+9. [`Material.cppm`](../Material.cppm)
+10. [`Texture.cppm`](../Texture.cppm)
 
 ## 2. Rendering algorithms
 
-1. [`RenderGraph.cppm`](RenderGraph.cppm)
-2. [`ShadowSettings.cppm`](ShadowSettings.cppm)
-3. [`Skinning.cppm`](Skinning.cppm)
-4. [`DebugDraw.cppm`](DebugDraw.cppm)
-5. [`AssetAdapters.cppm`](AssetAdapters.cppm)
-6. [`PhysicsDebugBridge.cppm`](PhysicsDebugBridge.cppm)
+1. [`RenderGraph.cppm`](../RenderGraph.cppm)
+2. [`ShadowSettings.cppm`](../ShadowSettings.cppm)
+3. [`Skinning.cppm`](../Skinning.cppm)
+4. [`DebugDraw.cppm`](../DebugDraw.cppm)
+5. [`AssetAdapters.cppm`](../AssetAdapters.cppm)
+6. [`PhysicsDebugBridge.cppm`](../PhysicsDebugBridge.cppm)
 
 ## 3. Backends
 
-1. [`Renderer.cppm`](Renderer.cppm)
-2. [`VulkanInstance.cppm`](VulkanInstance.cppm)
-3. [`VulkanDevice.cppm`](VulkanDevice.cppm)
-4. [`VulkanSwapchain.cppm`](VulkanSwapchain.cppm)
-5. [`VulkanSync.cppm`](VulkanSync.cppm)
-6. [`VulkanDescriptor.cppm`](VulkanDescriptor.cppm)
-7. [`VulkanRenderer.cppm`](VulkanRenderer.cppm)
-8. [`MetalRenderer.cppm`](MetalRenderer.cppm)
-9. [`OpenGLRenderer.cppm`](OpenGLRenderer.cppm)
-10. [`Direct3D12Renderer.cppm`](Direct3D12Renderer.cppm)
+1. [`Renderer.cppm`](../Renderer.cppm)
+2. [`VulkanInstance.cppm`](../VulkanInstance.cppm)
+3. [`VulkanDevice.cppm`](../VulkanDevice.cppm)
+4. [`VulkanSwapchain.cppm`](../VulkanSwapchain.cppm)
+5. [`VulkanSync.cppm`](../VulkanSync.cppm)
+6. [`VulkanDescriptor.cppm`](../VulkanDescriptor.cppm)
+7. [`VulkanRenderer.cppm`](../VulkanRenderer.cppm)
+8. [`MetalRenderer.cppm`](../MetalRenderer.cppm)
+9. [`OpenGLRenderer.cppm`](../OpenGLRenderer.cppm)
+10. [`Direct3D12Renderer.cppm`](../Direct3D12Renderer.cppm)
 
 ## 4. Tests
 
-1. [`tests/RendererTests.cpp`](tests/RendererTests.cpp)
-2. [`tests/RenderGraphExecutionPlanTests.cpp`](tests/RenderGraphExecutionPlanTests.cpp)
-3. [`tests/SkinningContractTests.cpp`](tests/SkinningContractTests.cpp)
-4. [`tests/VulkanSkinningSmoke.cpp`](tests/VulkanSkinningSmoke.cpp)
-5. [`tests/MetalSkinningSmoke.cpp`](tests/MetalSkinningSmoke.cpp)
-6. [`tests/OpenGLSkinningSmoke.cpp`](tests/OpenGLSkinningSmoke.cpp)
-7. [`tests/Direct3D12SkinningSmoke.cpp`](tests/Direct3D12SkinningSmoke.cpp)
+1. [`tests/RendererTests.cpp`](../tests/RendererTests.cpp)
+2. [`tests/RenderGraphExecutionPlanTests.cpp`](../tests/RenderGraphExecutionPlanTests.cpp)
+3. [`tests/SkinningContractTests.cpp`](../tests/SkinningContractTests.cpp)
+4. [`tests/VulkanSkinningSmoke.cpp`](../tests/VulkanSkinningSmoke.cpp)
+5. [`tests/MetalSkinningSmoke.cpp`](../tests/MetalSkinningSmoke.cpp)
+6. [`tests/OpenGLSkinningSmoke.cpp`](../tests/OpenGLSkinningSmoke.cpp)
+7. [`tests/Direct3D12SkinningSmoke.cpp`](../tests/Direct3D12SkinningSmoke.cpp)
 
 ## End-to-end interaction map
 
