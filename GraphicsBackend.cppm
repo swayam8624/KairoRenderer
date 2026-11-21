@@ -1,3 +1,9 @@
+// SOURCE STUDY NOTE:
+// Cross-platform backend selection policy. RendererRuntime uses this to choose a compiled,
+// host-compatible API; Automatic is a request, not a concrete GPU backend. Keep OS eligibility
+// separate from availability in the current build.
+// Related code paths: docs/SOURCE_READING_ORDER.md.
+
 module;
 
 #include <stdexcept>
