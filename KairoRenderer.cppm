@@ -1,3 +1,9 @@
+// SOURCE STUDY NOTE:
+// Umbrella C++23 module surface. Reexports backend-independent mesh/material/scene/render-graph APIs
+// and conditionally available backend modules. External Player/Editor code should import
+// Kairo.Renderer or a narrow submodule, not own native API device handles.
+// Related code paths: docs/SOURCE_READING_ORDER.md.
+
 module;
 
 #include <cstddef>

@@ -1,3 +1,9 @@
+// SOURCE STUDY NOTE:
+// Translation from persistent KairoAssets texture, mesh and material artifacts to renderer-level
+// descriptions. A texture resolver maps asset references to process-local TextureHandles; the renderer
+// must handle GPU lifetime, not the persisted asset database.
+// Related code paths: docs/SOURCE_READING_ORDER.md.
+
 module;
 
 #include <algorithm>

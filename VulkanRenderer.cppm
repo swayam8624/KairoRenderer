@@ -1,3 +1,9 @@
+// SOURCE STUDY NOTE:
+// Vulkan implementation of the renderer runtime contract. Follow
+// instance/device/swapchain/command/synchronization modules to see concrete GPU submission. Validate
+// native resource lifetimes against Renderer.cppm and the logical RenderGraph.
+// Related code paths: docs/SOURCE_READING_ORDER.md.
+
 module;
 
 #include <GLFW/glfw3.h>

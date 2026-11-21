@@ -1,3 +1,9 @@
+// SOURCE STUDY NOTE:
+// Native Apple Metal implementation behind the shared renderer contract. Compare Renderer.cppm's
+// dispatch and RenderGraph's pass/resource semantics with this backend's device textures, command
+// encoding and presentation lifecycle.
+// Related code paths: docs/SOURCE_READING_ORDER.md.
+
 module;
 
 #include "detail/MetalBackend.hpp"
