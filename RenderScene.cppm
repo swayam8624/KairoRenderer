@@ -1,3 +1,9 @@
+// SOURCE STUDY NOTE:
+// Renderer-facing scene description, independent of editor/project serialization. KairoGameEngine's
+// RealtimeSceneBridge converts EngineCore scene data and Assets into these per-frame/per-instance
+// inputs.
+// Related code paths: docs/SOURCE_READING_ORDER.md.
+
 module;
 
 #include <algorithm>
