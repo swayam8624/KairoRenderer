@@ -1,5 +1,7 @@
 # KairoRenderer
 
+> **Source walkthrough:** Follow the [linked reading-order guide](docs/SOURCE_READING_ORDER.md) to understand renderer contracts, asset conversion, render-graph scheduling, backend selection and native Vulkan/Metal/OpenGL/D3D12 implementations. Original code is [MIT-licensed](LICENSE) for learning, modification and further development; third-party components retain separate terms.
+
 `KairoRenderer` is Kairo's multi-backend real-time rendering boundary. Vulkan,
 OpenGL 4.1, and native Metal are complete runtime implementations in the
 current checkout. A Windows-gated Direct3D 12 implementation and native smoke
