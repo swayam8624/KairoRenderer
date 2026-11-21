@@ -1,3 +1,9 @@
+// LEARNING MAP — C++23 umbrella API: `import Kairo.Renderer;` re-exports
+// graphics backend selection, camera/material/mesh, render-graph, window,
+// Vulkan, Metal, D3D12 and OpenGL contracts. Backend implementations own
+// actual GPU lifetimes and remain hidden from cross-platform scene data.
+// See READING_ORDER.md before exploring API-specific modules.
+
 module;
 
 #include <cstddef>

@@ -1,3 +1,9 @@
+> **Learning-first source guide:** [READING_ORDER.md](READING_ORDER.md) explains API boundaries, RenderGraph, resource ownership and platform-specific Vulkan/Metal/D3D12/OpenGL pipelines. [SOURCE_CATALOG.md](docs/SOURCE_CATALOG.md) links all tracked source files.
+>
+> **Open source:** KairoRenderer's original code is licensed under [MIT](LICENSE) for learning, reuse, modification and further development; external SDKs and third-party dependencies retain their own terms.
+>
+> **Validation:** the [95% target remains unverified](STATUS.md) until current source and native host acceptance tests pass. Platform selection tests alone do not exercise every native backend.
+
 # KairoRenderer
 
 `KairoRenderer` is Kairo's multi-backend real-time rendering boundary. Vulkan,

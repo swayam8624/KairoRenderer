@@ -1,3 +1,9 @@
+// LEARNING MAP — declarative pass/resource dependencies and lifetime plan.
+// Read ResourceKind/AccessMode/State/Handle types before execution code.
+// A validated graph is not necessarily full native GPU barrier ownership;
+// the actual backend commands/lifetimes are implemented in Vulkan/Metal/etc.
+// See READING_ORDER.md and RenderGraphExecutionPlanTests.cpp.
+
 module;
 
 #include <algorithm>

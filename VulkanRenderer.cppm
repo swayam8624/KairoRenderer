@@ -1,3 +1,9 @@
+// LEARNING MAP — Vulkan-specific interactive runtime, presentation and
+// resource management. Imports Vulkan instance/device/swapchain/commands,
+// graphics scene, materials and render graph; converts portable draws into
+// Vulkan objects and explicit synchronization. Not portable to other APIs.
+// See READING_ORDER.md for the Vulkan subsystem order.
+
 module;
 
 #include <GLFW/glfw3.h>

@@ -1,3 +1,9 @@
+// LEARNING MAP — renderer API-selection policy. Tests may simulate a host
+// platform to verify deterministic fallback order, but those tests do not
+// execute the simulated platform's native device backend.
+// Selection happens before a window/device is constructed; explicit requests
+// must fail if unsupported, not silently choose another API.
+
 module;
 
 #include <stdexcept>
