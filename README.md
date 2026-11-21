@@ -244,3 +244,12 @@ M13 hierarchy/material preserving glTF adapter      complete
 M14 native-first Vulkan/Metal/D3D12/OpenGL façade   complete
 M15 render-graph validation/lifetimes/profiling     complete (native pass migration next)
 ```
+
+
+## Learn this repository from source
+
+The [Teaching source map](docs/SOURCE_READING_ORDER.md) gives a linked reading sequence, subsystem interactions, public API boundaries, and verification questions. Begin with the public contract and entry point, trace one real operation through its implementation, and use the linked tests to distinguish expected behavior from observed evidence.
+
+**Current scope and limitations.** Multi-backend source exists, but native backend execution requires platform-specific validation; cross-platform selection-policy tests cannot replace it.
+
+**Learning and reuse.** Project-authored code is intended for study, modification and further development under the repository's applicable license. See [LICENSE](LICENSE) where present. Third-party libraries, borrowed source, assets, test data, models and media remain under their own terms; do not treat a top-level license as permission to redistribute restricted content.
