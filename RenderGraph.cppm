@@ -1,3 +1,9 @@
+// SOURCE STUDY NOTE:
+// Logical GPU pass and resource dependency graph. Declared reads/writes schedule pass ordering and
+// resource states; specific native backend modules must translate these semantics into proper
+// barriers/commands. Tests should validate graph hazards as well as actual GPU execution.
+// Related code paths: docs/SOURCE_READING_ORDER.md.
+
 module;
 
 #include <algorithm>
