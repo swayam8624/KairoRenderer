@@ -91,7 +91,6 @@ export namespace kairo::renderer
         explicit RendererRuntime(const WindowDesc& windowDesc)
             : m_Backend(SelectGraphicsBackend(
                   windowDesc.Backend, CompiledGraphicsBackends())),
-              /// TEACHING METHOD: Factory for the explicitly chosen API; compile-time feature guards prevent nonexistent native implementations from being constructed.
               m_Runtime(CreateBackend(m_Backend, windowDesc))
         {
         }
@@ -107,7 +106,6 @@ export namespace kairo::renderer
             {
                 OpenGLRendererRuntime& runtime = OpenGL();
                 runtime.DrawFrame();
-                /// TEACHING METHOD: Snapshot of completed render stages for Editor profiling; timings are backend-specific CPU measurements, not cross-API GPU timestamp parity.
                 m_LastFrameProfile = runtime.LastFrameProfile();
                 return;
             }
@@ -140,6 +138,7 @@ export namespace kairo::renderer
         /// specific: OpenGL exposes fine render phases, Vulkan exposes queue/
         /// presentation lifecycle phases, and Metal/D3D12 expose their native
         /// render-present plus synchronous readback boundaries.
+        /// TEACHING METHOD: Read the completed backend's CPU-side render-stage profile for the Editor. This is not GPU timestamp parity across graphics APIs.
         [[nodiscard]] const RenderGraphExecutionProfile& LastFrameProfile()
             const noexcept
         {
@@ -383,6 +382,7 @@ export namespace kairo::renderer
         }
 
     private:
+        /// TEACHING METHOD: Instantiate only the selected compiled graphics API; backend guards keep impossible platform choices explicit.
         [[nodiscard]] static BackendRuntime CreateBackend(
             GraphicsBackend backend, WindowDesc windowDesc)
         {
