@@ -1,3 +1,9 @@
+// LEARNING MAP — native Metal runtime. The public scene/material/graph API
+// must agree with Vulkan while Objective-C/Metal ownership is hidden behind
+// detail/MetalBackend.mm. macOS native smoke tests validate real execution;
+// cross-platform selection tests alone cannot establish native correctness.
+// See READING_ORDER.md for backend parity and lifetime checks.
+
 module;
 
 #include "detail/MetalBackend.hpp"
