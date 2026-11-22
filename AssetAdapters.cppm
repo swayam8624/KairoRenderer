@@ -41,6 +41,9 @@ export namespace kairo::renderer
     /// sharing GPU ownership or import-cache policy.
     // Resolver callback returns a runtime handle valid for the active
     // renderer. Keep ownership and upload caching outside this converter.
+    // A host-provided callback, not a renderer-owned registry. It translates
+    // a typed persistent TextureAssetHandle into one EXISTING GPU-backed
+    // TextureHandle; the converter never allocates a VkImage/MTLTexture.
     using MaterialTextureResolver =
         std::function<TextureHandle(kairo::assets::TextureAssetHandle)>;
 
@@ -50,6 +53,10 @@ export namespace kairo::renderer
     /// Task: preserve channel semantics and alpha policy at one shared boundary.
     /// Degeneracy: unresolved referenced textures fail instead of silently
     /// degrading to a fallback texture.
+    // Preserve canonical MaterialArtifactData scalar factors and all five
+    // optional texture channels. Missing channel -> InvalidTextureHandle
+    // (backend neutral fallback); present but unresolvable reference -> throw.
+    // Roughness floors at 0.04 to avoid singular microfacet behavior.
     [[nodiscard]] inline PBRMaterial MakePBRMaterial(
         const kairo::assets::MaterialArtifactData& source,
         const MaterialTextureResolver& resolveTexture = {})
@@ -102,9 +109,15 @@ export namespace kairo::renderer
     /// Resolves one external glTF image URI using the semantic required by its
     /// material channel. Empty URIs represent an absent texture in the current
     /// artifact format. Hosts own import-cache and GPU lifetime policy.
+    // URI + semantic decides sRGB color versus linear normal/data import.
+    // Caller validates project-local path and owns the uploaded texture;
+    // passing only an untyped filename would erase color-space intent.
     using GltfTextureResolver = std::function<TextureHandle(
         std::string_view, kairo::assets::TextureSemantic)>;
 
+    // CPU-owned primitive Geometry/Material plus glTF node/primitive/skin
+    // indices; no GPU buffers yet. Node/skin identity is needed to compute
+    // animated joint palettes in the shared RealtimeSceneBridge.
     struct GltfRenderPrimitive final
     {
         Mesh Geometry;
@@ -123,6 +136,9 @@ export namespace kairo::renderer
 
     /// Input: glTF's column-major matrix payload.
     /// Output: KairoMath's row/column-indexed matrix with identical transform.
+    // glTF stores its 4x4 matrix column-major. Copy element at
+    // source[column*4+row] to KairoMath's explicit (row,column) accessor.
+    // This is a storage interpretation, not an axis swap/transposition.
     [[nodiscard]] inline kairo::foundation::math::Mat4f MakeGltfMatrix(
         const std::array<float, 16u>& source)
     {
@@ -136,6 +152,10 @@ export namespace kairo::renderer
     /// Converts one glTF metallic-roughness material without inventing asset
     /// identities. External URI resolution is delegated to the host; material
     /// factors remain usable when a channel is absent.
+    // Translate glTF metallic/roughness, alpha and emissive data to PBR
+    // parameters; call semantic-aware URI resolver for five texture channels.
+    // Missing optional URIs keep neutral fallbacks; malformed referenced
+    // textures cannot quietly disappear at this conversion boundary.
     [[nodiscard]] inline PBRMaterial MakeGltfPBRMaterial(
         const kairo::assets::GltfMaterialData& source,
         const GltfTextureResolver& resolveTexture = {})
@@ -195,6 +215,12 @@ export namespace kairo::renderer
     /// Task: provide one deterministic conversion shared by Editor and Player.
     /// Degeneracy: missing normals and unresolved external textures fail with a
     /// diagnostic; a primitive without a material receives neutral PBR values.
+    // Validate parsed hierarchy; DFS compose parent*local matrices and
+    // reject cycles; construct independent CPU Mesh/PBR primitives. For a
+    // skinned mesh, LocalToAsset is identity because EngineCore's jointWorld
+    // * inverseBind palette already applies asset-space transforms. A static
+    // primitive retains its node-world matrix. Later RealtimeSceneBridge
+    // multiplies the authored SceneInstance world transform exactly once.
     [[nodiscard]] inline GltfRenderAsset MakeGltfRenderAsset(
         const kairo::assets::GltfSceneArtifactData& source,
         const GltfTextureResolver& resolveTexture = {})
@@ -203,6 +229,9 @@ export namespace kairo::renderer
         std::vector<kairo::foundation::math::Mat4f> world(
             source.Nodes.size(), kairo::foundation::math::Mat4f::Identity());
         std::vector<std::uint8_t> state(source.Nodes.size(), 0u);
+        // Three-state DFS: 0 unseen, 1 active recursion, 2 resolved.
+        // A back-edge to state 1 is an authored glTF hierarchy cycle,
+        // never silently accepted as arbitrary node traversal order.
         std::function<void(std::size_t)> resolveNode = [&](std::size_t index)
         {
             if (state[index] == 2u) return;
