@@ -1,6 +1,6 @@
 # Vulkan PBR descriptor rebuild: validation, GPU lifetime and exception safety
 
-Continue from [the texture upload and sampled-image guide](TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md), [Vulkan frame failure recovery](VULKAN_FRAME_FAILURE_RECOVERY_LAB.md), and the concrete [`VulkanDescriptor.cppm`](../VulkanDescriptor.cppm) implementation. This laboratory accompanies a functional input-validation/cleanup change to the PBR descriptor rebuild path.
+Continue from [the texture upload and sampled-image guide](TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md), [Vulkan frame failure recovery](VULKAN_FRAME_FAILURE_RECOVERY_LAB.md), and the concrete [`VulkanDescriptor.cppm`](../VulkanDescriptor.cppm) implementation. This laboratory traces the historical input-validation and partial-cleanup fixes, **followed by the now-completed transactional generation refactor**. Read the newer [first-principles generation laboratory](TRANSACTIONAL_VULKAN_DESCRIPTOR_GENERATIONS_LAB.md) alongside this chapter for the full strong-guarantee implementation.
 
 **Evidence:** the source path and ownership rules were inspected and modified. Native Vulkan allocation-failure injection, driver validation, and a full C++23 superbuild have not been executed during this pass.
 
@@ -31,46 +31,43 @@ This problem is distinct from whether the frame fence was signaled: even with ev
 
 ## 3. Input preflight is now a separate phase
 
-`VulkanMaterialDescriptors::Rebuild` now checks before releasing the old pool:
+`VulkanMaterialDescriptors::Rebuild` validates and builds a **separate candidate generation** without releasing the old pool:
 
 ```text
-if zero draws:
-    ClearPool; return  // intended disappearance of current draw sets
+DescriptorGeneration staged(device)      // initially empty, RAII owned
+BuildAndCommitResourceGeneration(active, staged, [&](candidate) {
+    if zero draws: return             // stage an EMPTY replacement
 
-verify cameraRange > 0, shadowView and shadowSampler are valid
-verify numberOfDraws <= UINT32_MAX / 7
-for every draw:
-    PBRMaterial.Validate()
-    each of five image views and samplers is non-null
-    environment image view and sampler are non-null
-    optional non-empty skin palette validates
+    verify cameraRange > 0 and valid shadow view/sampler
+    verify numberOfDraws <= UINT32_MAX / 7
+    for every draw:
+        PBRMaterial.Validate()
+        validate five texture view/sampler pairs
+        validate environment view/sampler
+        validate optional nonempty skin palette
 
-// Only after the entire input set passes:
-ClearPool()
-allocate new descriptor pool
-allocate one descriptor set per draw
-allocate and write material UBOs
-optionally allocate/copy skin UBOs
-vkUpdateDescriptorSets each draw's ten-slot shader interface
+    allocate candidate descriptor pool/sets
+    allocate/copy candidate material and optional skin UBOs
+    vkUpdateDescriptorSets(candidate.Sets[i], ...)
+});
+// If any step threw, staged destroys only its partially built resources.
+// If all succeeded, active.Swap(staged) published the new generation.
+// staged now owns the old generation, which retires at the fenced boundary.
 ```
 
 The `UINT32_MAX / 7` guard is important even for an absurdly large scene: the pool requests `count*7` combined image/sampler descriptors. Casting an arbitrary `std::span::size()` to `uint32_t` and then multiplying without checking could wrap the requested count, making the pool insufficient for the real number of draws.
 
 Each material and skin palette is now validated **once**, before any native descriptor pool mutation, avoiding an unnecessary second validation loop during upload.
 
-## 4. Native construction failures now clear partial state immediately
+## 4. Native construction failures now roll back a detached generation
 
-After the old pool is released, native creation and per-draw UBO allocation happen inside a `try` block. On any exception, `ClearPool()`:
+The **earlier correction** achieved basic exception safety: it caught errors during pool/UBO creation and cleared partially built objects, but had already destroyed the old pool. The **current implementation** goes further. Every pool, set and per-draw uniform buffer belongs to a distinct `DescriptorGeneration` owner. The builder only writes to the candidate. If any validation or native creation step throws, C++ stack unwinding destroys that candidate (including its partial per-draw buffers and `VkDescriptorPool`) without touching the previously published generation.
 
-1. Releases skin UBO owners, followed by material UBO owners.
-2. Clears the current descriptor-set handle vector.
-3. Destroys the `VkDescriptorPool` if present, making all its sets invalid.
-4. Resets the pool handle to `VK_NULL_HANDLE`.
-5. Rethrows the original exception so the renderer's frame-state handler can retire/rebuild the acquired WSI frame if needed.
+Once all candidate sets have been allocated and updated, `BuildAndCommitResourceGeneration` invokes `active.Swap(staged)`. The swap is constrained by a compile-time `noexcept` check. The caller can therefore make the complete replacement observable without a new allocation and without leaving a half-published set array. The staged object then owns and retires the former generation.
 
-This is **basic exception safety** for mid-rebuild allocations: after failure, the descriptor object holds no partially constructed pool/UBOs. It is **not** strong exception safety. The previous valid pool was already destroyed after successful preflight, so an out-of-device-memory or `std::bad_alloc` during native construction still leaves the descriptor generation empty until a later successful rebuild.
+This provides the **strong host exception guarantee** for validation and ordinary allocation exceptions: the prior active descriptor pool/set/UBO generation remains unchanged if building the replacement fails. It does *not* rescue a lost Vulkan device or guarantee that borrowed image views remain valid if other code destroys them.
 
-Also note the caller's frame fence must be complete before `ClearPool()`. Destroying a descriptor pool whose sets are still bound by pending GPU commands is not made legal by catch/cleanup logic.
+**GPU retirement is still mandatory.** Both success and rollback operate under the caller's completed-frame-fence precondition. C++ exception safety does not make it legal to destroy a descriptor pool while pending GPU work is using its sets. See the [transactional-generation deep lab](TRANSACTIONAL_VULKAN_DESCRIPTOR_GENERATIONS_LAB.md).
 
 ## 5. How this interacts with KairoRenderer's WSI recovery
 
@@ -90,18 +87,18 @@ The following are concrete targets for injected Vulkan errors, rather than asser
 
 1. Submit a valid material scene, retire its frame, then submit an invalid material with one null sampler. `Rebuild` must reject it **without destroying the old descriptor pool**; verify using wrapper/validation instrumentation.
 2. Submit a skin palette with an out-of-range joint matrix count or invalid float. The preflight should fail before native allocation.
-3. Force `vkCreateDescriptorPool` failure after valid preflight, then verify old pool is destroyed as specified, no partial UBOs remain, and subsequent recovery/rebuild can succeed.
+3. Force `vkCreateDescriptorPool` failure after valid preflight; verify **the old active pool survives unchanged**, while the failed candidate has no leaked resources.
 4. Force the Nth `VulkanHostBuffer` allocation to fail. Check that all earlier owned per-draw UBOs and the newly allocated pool are released.
-5. Force `vkAllocateDescriptorSets` failure. Check the `ClearPool` path's idempotency (the inner failure handling and the outer catch may both invoke it).
+5. Force `vkAllocateDescriptorSets` failure. Check that **the candidate generation's destructor** releases the new pool and leaves the previous active sets untouched.
 6. Change material draw count, transparency, texture IDs, skin palettes, and viewport sizes across frames. Verify the renderer never binds a descriptor set from an obsolete pool while GPU work is pending.
 7. Confirm uniform ABI/descriptor slot layout against the actual compiled GLSL/SPIR-V pipeline; CPU descriptor ordering alone cannot prove shader compatibility.
 
 Run native validation layers on a real Vulkan adapter, record the exact code commit, device/driver, failure injection point, VkResult and observed allocations/destructions.
 
-## 7. Next improvement: a truly transactional descriptor generation
+## 7. Completed improvement: a transactional descriptor generation
 
-For a strong guarantee **even on allocation failure**, allocate a completely new descriptor pool, descriptor sets and UBO owners in a detached `DescriptorGeneration` RAII object. Validate and populate the entire candidate before publishing it into `VulkanMaterialDescriptors`. At a fence-safe boundary, atomically swap the candidate with the old generation; the old generation then destructs after the GPU has finished using it.
+The planned design is now present in [`VulkanDescriptor.cppm`](../VulkanDescriptor.cppm). It constructs a detached `DescriptorGeneration` RAII owner for the new pool, sets and material/skin UBOs, validates and fills the candidate, then performs the non-throwing swap. The old generation is destroyed only after the new one is published and the previously submitted GPU frame has retired. The [portable transactional regression](../tests/TransactionalResourceGenerationTests.cpp) fault-injects validation and allocation exceptions and verifies the original active resources survive.
 
-That design introduces a real generation ID (and possibly a deferred-retirement queue if multiple frames are in flight), avoiding premature destruction when an editor previews one material while simultaneously updating another.
+The next **not-yet-implemented** extension is *deferred generation retirement* for two or more frames in flight. The current one-frame path relies on its frame fence. A multiframe renderer would need a real generation ID, an in-flight completion/timeline value for each old pool, and a garbage-collection queue that retires each old generation only after all GPU submissions referencing it finish. The complete worked derivation is in [the transactional descriptor generation lab](TRANSACTIONAL_VULKAN_DESCRIPTOR_GENERATIONS_LAB.md).
 
-The current source intentionally stops short of that larger refactor. It now guarantees **validation before mutation** and **immediate cleanup of partial native construction**, and it documents that preserving old descriptor sets across out-of-memory failures remains future work.
+Native fault injection and validation-layer execution remain outstanding; the CPU regression verifies the same host transaction helper but does not exercise native Vulkan allocation or GPU queue completion.
