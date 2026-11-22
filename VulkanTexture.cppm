@@ -12,7 +12,7 @@ module;
 // Vulkan staging bytes -> device-local VkImage mips -> sampled image view and
 // sampler. This module performs REAL native barriers, unlike logical
 // RenderGraph transitions. Its native resources are owned by VulkanTexture2D
-// and borrowed by VulkanMaterialDescriptors. See TEXTURE_UPLOAD_LAB.md.
+// and borrowed by VulkanMaterialDescriptors. See TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md.
 export module Kairo.Renderer.VulkanTexture;
 
 import Kairo.Assets.TextureArtifact;
