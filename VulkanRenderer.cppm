@@ -6,6 +6,8 @@ module;
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <exception>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -70,6 +72,24 @@ export namespace kairo::renderer
               m_Triangle(m_Device, m_Swapchain),
               m_PickReadback(m_Device, sizeof(std::uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT)
         {
+        }
+
+        ~VulkanRendererRuntime() noexcept
+        {
+            // The destructor body runs BEFORE member destructors, so retire
+            // any submitted draw/copy before VulkanTriangle, buffers, command
+            // pools and swapchain are released in reverse member order.
+            const VkResult idle = vkDeviceWaitIdle(m_Device.Handle());
+            if (idle == VK_ERROR_DEVICE_LOST)
+                m_Device.MarkUnusable();
+            else if (idle != VK_SUCCESS)
+            {
+                // No Vulkan contract permits destroying still-in-use native
+                // resources after an arbitrary failed idle wait. Refuse an
+                // invalid destruction sequence rather than hiding the error.
+                std::fputs("Kairo Vulkan: cannot prove GPU retirement at shutdown.\n", stderr);
+                std::terminate();
+            }
         }
 
         /// Task: execute the Vulkan frame lifecycle as real graph-owned native
@@ -335,7 +355,11 @@ export namespace kairo::renderer
         /// reference the handle, and release its buffers deterministically.
         void DestroyMesh(MeshHandle mesh)
         {
-            if (vkDeviceWaitIdle(m_Device.Handle()) != VK_SUCCESS) throw std::runtime_error("vkDeviceWaitIdle failed before mesh destruction.");
+            const VkResult idle = vkDeviceWaitIdle(m_Device.Handle());
+            if (idle == VK_ERROR_DEVICE_LOST)
+                m_Device.MarkUnusable(); // lost-device resources are no longer in-use
+            else if (idle != VK_SUCCESS)
+                throw std::runtime_error("vkDeviceWaitIdle failed before mesh destruction.");
             m_Triangle.DestroyMesh(mesh);
         }
 
@@ -355,7 +379,10 @@ export namespace kairo::renderer
         /// by the currently submitted scene.
         void DestroyTexture(TextureHandle texture)
         {
-            if (vkDeviceWaitIdle(m_Device.Handle()) != VK_SUCCESS)
+            const VkResult idle = vkDeviceWaitIdle(m_Device.Handle());
+            if (idle == VK_ERROR_DEVICE_LOST)
+                m_Device.MarkUnusable(); // legal to release children on loss
+            else if (idle != VK_SUCCESS)
                 throw std::runtime_error(
                     "vkDeviceWaitIdle failed before texture destruction.");
             m_Triangle.DestroyTexture(texture);
