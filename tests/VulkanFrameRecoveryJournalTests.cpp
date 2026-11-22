@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -101,6 +102,62 @@ int main()
             "Successful frame incorrectly requests recovery");
         RequireLogicError([&] { completed.Acquired(); },
             "Completed single-frame journal unexpectedly reused");
+
+        // Execute the very same recovery helper used by the native runtime.
+        // A recording failure MUST consume ImageAvailable before swapchain
+        // retirement, while a submitted-but-unpresented frame must not drain
+        // the already-consumed binary semaphore a second time.
+        using kairo::renderer::detail::TryRecoverFailedVulkanFrame;
+        std::vector<std::string> operations;
+        const auto drain = [&] { operations.emplace_back("drain"); };
+        const auto rebuild = [&] { operations.emplace_back("rebuild"); };
+
+        Require(TryRecoverFailedVulkanFrame(recordFailed, false,
+            drain, rebuild) &&
+            operations == std::vector<std::string>{ "drain", "rebuild" },
+            "Recording failure did not drain then rebuild");
+
+        operations.clear();
+        Require(TryRecoverFailedVulkanFrame(submitFailed, false,
+            drain, rebuild) &&
+            operations == std::vector<std::string>{ "drain", "rebuild" },
+            "Submit failure did not drain and replace the unsignaled fence");
+
+        operations.clear();
+        Require(TryRecoverFailedVulkanFrame(presentFailed, false,
+            drain, rebuild) &&
+            operations == std::vector<std::string>{ "rebuild" },
+            "Present failure incorrectly drained an already-waited semaphore");
+
+        operations.clear();
+        Require(!TryRecoverFailedVulkanFrame(untouched, false,
+            drain, rebuild) && operations.empty(),
+            "Pre-acquisition error triggered a native rebuild");
+        Require(!TryRecoverFailedVulkanFrame(recordFailed, true,
+            drain, rebuild) && operations.empty(),
+            "Nested swapchain-rebuild failure attempted a second rebuild");
+
+        operations.clear();
+        const bool drainFailed = TryRecoverFailedVulkanFrame(recordFailed, false,
+            [&] {
+                operations.emplace_back("drain");
+                throw std::runtime_error("injected acquire drain failure");
+            },
+            rebuild);
+        Require(!drainFailed && operations ==
+            std::vector<std::string>{ "drain" },
+            "A failed acquire drain incorrectly proceeded to resource teardown");
+
+        operations.clear();
+        const bool rebuildFailed = TryRecoverFailedVulkanFrame(recordFailed, false,
+            drain,
+            [&] {
+                operations.emplace_back("rebuild");
+                throw std::runtime_error("injected native rebuild failure");
+            });
+        Require(!rebuildFailed && operations ==
+            std::vector<std::string>{ "drain", "rebuild" },
+            "An unsuccessful native rebuild was incorrectly treated as safe");
 
         std::puts("KairoRenderer Vulkan frame recovery journal tests passed");
         return 0;
