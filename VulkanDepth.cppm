@@ -27,9 +27,9 @@ export namespace kairo::renderer
     {
     public:
         // Reject zero dimensions, then allocate a native depth image.
-        // AUDIT: no catch-and-Destroy rollback exists here, so a failed
-        // memory/bind/view allocation during construction can leak prior
-        // native handles (the class destructor never runs after a throw).
+        // Constructor failure explicitly invokes Destroy() to release any
+        // image, memory or view successfully created before a later throw.
+        // The normal C++ destructor does not run for an incomplete object.
         VulkanDepthAttachment(const VulkanDevice& device, VkExtent2D extent)
             : m_Device(device.Handle()), m_Physical(device.PhysicalHandle())
         {
@@ -37,7 +37,8 @@ export namespace kairo::renderer
             {
                 throw std::invalid_argument("VulkanDepthAttachment requires a non-zero extent.");
             }
-            Create(device.PhysicalHandle(), extent);
+            try { Create(device.PhysicalHandle(), extent); }
+            catch (...) { Destroy(); throw; }
         }
 
         ~VulkanDepthAttachment() { Destroy(); }
@@ -59,7 +60,10 @@ export namespace kairo::renderer
                 throw std::invalid_argument("VulkanDepthAttachment requires a non-zero extent.");
             }
             Destroy();
-            Create(m_Physical, extent);
+            // Preserve the current destroy-before-replace resize policy, but
+            // leave no partial native allocations if the replacement fails.
+            try { Create(m_Physical, extent); }
+            catch (...) { Destroy(); throw; }
         }
 
     private:
