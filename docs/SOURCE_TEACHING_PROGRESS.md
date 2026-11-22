@@ -2,6 +2,8 @@
 
 **Dated:** November 22, 2026. This ledger records comments and documentation present on the active `main` branch; it is **not** a claim of native GPU test success, complete source annotation or an automatically merged historic PR.
 
+**Vulkan frame recovery update:** [acquire/record/submit/present failure state journal and native recovery logic](VULKAN_FRAME_FAILURE_RECOVERY_LAB.md) is now on `main`. The fence reset occurs only after recording succeeds; unconsumed acquired semaphores are drained before swapchain generation retirement. A CPU-only test models the state order, but live WSI/driver validation and device-loss reconstruction remain unverified.
+
 **Later Vulkan repair update:** [partial constructor allocation rollback for five native wrappers](VULKAN_PARTIAL_CONSTRUCTION_ROLLBACK_LAB.md) is now committed. The older audit list below records the original findings; native fault-injection/validation-layer evidence and fence-reset recovery remain outstanding.
 
 ## Later functional GPU resource cleanup repairs
