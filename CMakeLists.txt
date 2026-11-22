@@ -344,6 +344,17 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     add_test(NAME KairoRendererVulkanFrameRecoveryJournalTests
         COMMAND KairoRendererVulkanFrameRecoveryJournalTests)
 
+    # GPU-free fault injection of the same detached-generation transaction
+    # used by VulkanMaterialDescriptors::Rebuild. Exact native Vulkan builds
+    # remain a separate validation gate for layout/driver correctness.
+    add_executable(KairoRendererTransactionalGenerationTests
+        tests/TransactionalResourceGenerationTests.cpp)
+    target_compile_features(KairoRendererTransactionalGenerationTests PRIVATE cxx_std_23)
+    set_property(TARGET KairoRendererTransactionalGenerationTests
+        PROPERTY COMPILE_WARNING_AS_ERROR ON)
+    add_test(NAME KairoRendererTransactionalGenerationTests
+        COMMAND KairoRendererTransactionalGenerationTests)
+
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
     if(UNIX AND NOT APPLE)
         add_executable(KairoRendererOpenGLSkinningSmoke tests/OpenGLSkinningSmoke.cpp)
