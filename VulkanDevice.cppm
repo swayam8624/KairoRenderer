@@ -3,6 +3,9 @@ module;
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <atomic>
+#include <cstdio>
+#include <exception>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -91,7 +94,32 @@ export namespace kairo::renderer
             vkGetDeviceQueue(m_Handle, m_GraphicsFamily, 0, &m_GraphicsQueue);
             vkGetDeviceQueue(m_Handle, m_PresentFamily, 0, &m_PresentQueue);
         }
-        ~VulkanDevice() { if (m_Handle != VK_NULL_HANDLE) vkDestroyDevice(m_Handle, nullptr); }
+        ~VulkanDevice()
+        {
+            // Deferred uploads own children of this VkDevice. Before
+            // destroying the parent we must establish that queued users of
+            // their staging/image objects have retired. VK_ERROR_DEVICE_LOST
+            // counts as completion for the Vulkan resource-in-use rule.
+            if (!m_DeferredTextureUploads.empty())
+            {
+                const VkResult idle = vkDeviceWaitIdle(m_Handle);
+                if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST)
+                {
+                    // Never free a possibly still-in-use VkBuffer/VkImage
+                    // merely to make shutdown appear successful. There is
+                    // no valid Vulkan teardown without completion evidence;
+                    // fail explicitly instead of violating native lifetime.
+                    std::fputs("Kairo Vulkan: unresolved device retirement at shutdown.\n",
+                        stderr);
+                    std::terminate();
+                }
+                for (const auto& upload : m_DeferredTextureUploads)
+                    DestroyDeferredTextureUpload(upload);
+                m_DeferredTextureUploads.clear();
+            }
+            if (m_Handle != VK_NULL_HANDLE)
+                vkDestroyDevice(m_Handle, nullptr);
+        }
         VulkanDevice(const VulkanDevice&) = delete;
         VulkanDevice& operator=(const VulkanDevice&) = delete;
         [[nodiscard]] VkPhysicalDevice PhysicalHandle() const noexcept { return m_PhysicalDevice; }
@@ -100,6 +128,54 @@ export namespace kairo::renderer
         [[nodiscard]] VkQueue PresentQueue() const noexcept { return m_PresentQueue; }
         [[nodiscard]] std::uint32_t GraphicsFamily() const noexcept { return m_GraphicsFamily; }
         [[nodiscard]] std::uint32_t PresentFamily() const noexcept { return m_PresentFamily; }
+
+        // No upload or frame submission may be issued after DEVICE_LOST or
+        // a native wait failure whose outstanding resource use is unproven.
+        // Host access to the Vulkan queue is otherwise externally serialized.
+        [[nodiscard]] bool IsUsable() const noexcept
+        {
+            return !m_Unusable.load(std::memory_order_relaxed);
+        }
+        void CheckUsable() const
+        {
+            if (!IsUsable())
+                throw std::runtime_error(
+                    "Vulkan logical device is unusable after native upload failure.");
+        }
+        void MarkUnusable() const noexcept
+        {
+            m_Unusable.store(true, std::memory_order_relaxed);
+        }
+
+        struct DeferredTextureUpload final
+        {
+            VkCommandPool CommandPool = VK_NULL_HANDLE;
+            VkBuffer StagingBuffer = VK_NULL_HANDLE;
+            VkDeviceMemory StagingMemory = VK_NULL_HANDLE;
+            void* StagingMapping = nullptr;
+            VkImage Image = VK_NULL_HANDLE;
+            VkDeviceMemory ImageMemory = VK_NULL_HANDLE;
+            VkImageView ImageView = VK_NULL_HANDLE;
+            VkSampler Sampler = VK_NULL_HANDLE;
+        };
+
+        // Reserve BEFORE vkQueueSubmit, since an allocation after successful
+        // submission could itself throw and lose native resource identity.
+        void ReserveDeferredTextureUploadSlot() const
+        {
+            m_DeferredTextureUploads.reserve(m_DeferredTextureUploads.size() + 1u);
+        }
+
+        // Each field is a raw native handle. The caller relinquishes all
+        // eight handles and zeroes its own owners BEFORE it throws. Capacity
+        // was reserved before submission, so this append cannot allocate.
+        void DeferUncertainTextureUpload(DeferredTextureUpload upload) const noexcept
+        {
+            MarkUnusable();
+            if (m_DeferredTextureUploads.size() == m_DeferredTextureUploads.capacity())
+                std::terminate(); // programming error: pre-submit reserve omitted
+            m_DeferredTextureUploads.push_back(upload);
+        }
     private:
         struct QueueFamilies final { std::uint32_t Graphics = 0; std::uint32_t Present = 0; };
         VkPhysicalDevice m_PhysicalDevice = VK_NULL_HANDLE;
@@ -108,6 +184,31 @@ export namespace kairo::renderer
         VkQueue m_PresentQueue = VK_NULL_HANDLE;
         std::uint32_t m_GraphicsFamily = 0;
         std::uint32_t m_PresentFamily = 0;
+        mutable std::atomic<bool> m_Unusable{ false };
+        // Unsafe-to-retire uploaded resources are kept alive until a
+        // device-idle success or VK_ERROR_DEVICE_LOST is established.
+        mutable std::vector<DeferredTextureUpload> m_DeferredTextureUploads;
+
+        void DestroyDeferredTextureUpload(const DeferredTextureUpload& upload) noexcept
+        {
+            if (upload.CommandPool != VK_NULL_HANDLE)
+                vkDestroyCommandPool(m_Handle, upload.CommandPool, nullptr);
+            if (upload.StagingMapping != nullptr)
+                vkUnmapMemory(m_Handle, upload.StagingMemory);
+            if (upload.StagingBuffer != VK_NULL_HANDLE)
+                vkDestroyBuffer(m_Handle, upload.StagingBuffer, nullptr);
+            if (upload.StagingMemory != VK_NULL_HANDLE)
+                vkFreeMemory(m_Handle, upload.StagingMemory, nullptr);
+            if (upload.Sampler != VK_NULL_HANDLE)
+                vkDestroySampler(m_Handle, upload.Sampler, nullptr);
+            if (upload.ImageView != VK_NULL_HANDLE)
+                vkDestroyImageView(m_Handle, upload.ImageView, nullptr);
+            if (upload.Image != VK_NULL_HANDLE)
+                vkDestroyImage(m_Handle, upload.Image, nullptr);
+            if (upload.ImageMemory != VK_NULL_HANDLE)
+                vkFreeMemory(m_Handle, upload.ImageMemory, nullptr);
+        }
+
         [[nodiscard]] static bool HasExtension(VkPhysicalDevice device, const char* requested)
         {
             std::uint32_t count = 0;
