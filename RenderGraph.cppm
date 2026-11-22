@@ -219,6 +219,10 @@ export namespace kairo::renderer
         /// Total native memory capacity required when every transient alias slot
         /// receives one allocation. This is not the sum of logical resources;
         /// non-overlapping lifetimes share the capacity of their selected slot.
+        // Sum the capacities of *logical alias slots*, not every
+        // transient resource and not actual driver heap usage. Resource
+        // alignment, native heaps, reserved memory and staging remain
+        // the concrete backend's responsibility.
         [[nodiscard]] std::uint64_t TransientAllocationBytes() const noexcept
         {
             return m_TransientAllocationBytes;
@@ -233,6 +237,11 @@ export namespace kairo::renderer
         // hooks are caller-provided; only their CPU recording time is
         // included. An exception stops later passes, it does not roll back
         // GPU work already recorded or submitted by a callback.
+        // Execute already-topologically-sorted callbacks on the calling
+        // CPU thread. ApplyTransitions is an injected hook; the graph
+        // does not emit GPU pipeline barriers by itself. CPU timing
+        // includes transition-hook/callback recording and excludes
+        // delayed asynchronous GPU completion unless a callback waits.
         [[nodiscard]] RenderGraphExecutionProfile Execute(
             const RenderGraphExecutionHooks& hooks = {}) const
         {
@@ -295,6 +304,13 @@ export namespace kairo::renderer
         // Resource declarations carry initial state and estimated bytes.
         // Transients must start Undefined because their first write is
         // expected to initialize any reused physical memory.
+        // Assign graph-local identity and validate declared lifetime:
+        // external resources cannot be transient, buffers/textures need
+        // a byte estimate, and new transient data begins Undefined.
+        // STUDY LIMITATION: the name is inserted in m_ResourceNames
+        // before later validation/push_back; a rejected declaration can
+        // leave that name reserved. Fix transactionality in a separate
+        // functional/test pass, not within teaching-only edits.
         [[nodiscard]] RenderResourceHandle AddResource(RenderResourceDesc desc)
         {
             if (desc.Name.empty())
@@ -321,6 +337,11 @@ export namespace kairo::renderer
         // Each pass may name each resource once: use ReadWrite when both
         // accesses occur. The callback is code to run, not a GPU command
         // buffer owned by the graph.
+        // Declare one pass and its logical resource access contract.
+        // Each resource appears once, with ReadWrite expressing both
+        // operations. Undefined is not a valid requested pass state.
+        // Like AddResource, m_PassNames can retain a name after a
+        // later validation/allocation failure: this needs testing.
         [[nodiscard]] RenderPassHandle AddPass(std::string name,
             std::vector<RenderResourceAccess> accesses,
             std::function<void()> execute = {})
@@ -351,6 +372,9 @@ export namespace kairo::renderer
             return handle;
         }
 
+        // Add the explicit directed edge dependency -> pass. Reject
+        // self-edge and duplicates now; full cycles involving several
+        // passes are detected during Compile's topological sort.
         void DependsOn(RenderPassHandle pass, RenderPassHandle dependency)
         {
             ValidatePass(pass);
@@ -366,6 +390,13 @@ export namespace kairo::renderer
         // Construct dependency/hazard edges then use Kahn-style
         // topological sorting with deterministic min-index selection.
         // Reject cycles before emitting an executable frame plan.
+        // Compile is a CPU-only *planner*, not native GPU execution.
+        // It derives explicit edges plus read/write hazard edges in
+        // declaration order, rejects uninitialized reads and cycles,
+        // topologically orders passes, and builds state transitions
+        // and transient lifetime/alias-slot estimates.
+        // A writer declared later does not retroactively initialize
+        // a read declared earlier, even with an explicit edge.
         [[nodiscard]] CompiledRenderGraph Compile() const
         {
             if (m_Passes.empty())
@@ -373,6 +404,9 @@ export namespace kairo::renderer
             const std::size_t passCount = m_Passes.size();
             std::vector<std::unordered_set<std::uint32_t>> edges(passCount);
             std::vector<std::uint32_t> indegree(passCount, 0u);
+            // Deduplicate graph edges so indegree cannot be inflated
+            // when an explicit dependency and a resource hazard agree.
+            // This is important for the correctness of Kahn's sort.
             const auto addEdge = [&](std::uint32_t from, std::uint32_t to)
             {
                 if (from == to) return;
@@ -385,6 +419,10 @@ export namespace kairo::renderer
             // Track last writer and pending readers per resource so a
             // write is ordered after prior reads and writes. An undefined
             // resource cannot be read before an initializing write.
+            // For each logical resource: the last writer, the readers
+            // since that writer, and whether any valid initialization
+            // has occurred. A new write waits for all earlier readers;
+            // a read waits for the last writer.
             struct Hazard final
             {
                 std::optional<std::uint32_t> Writer;
@@ -425,6 +463,9 @@ export namespace kairo::renderer
                 }
             }
 
+            // Kahn topological ordering: choose the lowest ready
+            // original pass index first for deterministic plans when
+            // multiple independent passes are schedulable.
             std::priority_queue<std::uint32_t, std::vector<std::uint32_t>,
                 std::greater<>> ready;
             for (std::uint32_t pass = 0u; pass < passCount; ++pass)
@@ -449,6 +490,9 @@ export namespace kairo::renderer
             for (const auto& resource : m_Resources)
                 compiled.m_Resources.push_back(resource.Desc);
 
+            // State transitions are tracked in *compiled pass order*.
+            // A transition is a logical before/after requirement;
+            // a Vulkan/Metal/D3D12 backend must map it to real barriers.
             std::vector<RenderResourceState> states;
             states.reserve(m_Resources.size());
             for (const auto& resource : m_Resources)
@@ -481,6 +525,10 @@ export namespace kairo::renderer
             // are strictly disjoint (last pass < next first pass), types
             // match and existing capacity is large enough. This produces
             // a planning estimate, not a physical heap binding.
+            // A transient alias slot is an estimated reusable capacity
+            // for one resource kind (buffer/texture). No overlap in
+            // [FirstPass, LastPass] and sufficient bytes are required
+            // before sharing, to avoid simultaneous ownership.
             struct AliasSlot final
             {
                 RenderResourceKind Kind;
@@ -499,6 +547,10 @@ export namespace kairo::renderer
                     return left.FirstPass < right.FirstPass;
                 return left.Resource.Value < right.Resource.Value;
             });
+            // Greedy first-fit reuse: scan prior slots for matching
+            // kind/capacity and LastPass strictly before FirstPass.
+            // This is deterministic but not a proven minimum allocation
+            // problem solution, and no native allocator is invoked.
             for (auto& lifetime : transient)
             {
                 const auto& desc = m_Resources[lifetime.Resource.Value].Desc;
@@ -534,6 +586,9 @@ export namespace kairo::renderer
                     source.Capacity });
             }
 
+            // Record both nontransient and aliasable lifetimes, then
+            // sort by resource handle for stable debugging/inspection.
+            // Runtime execution still uses the sorted pass array.
             for (const auto& lifetime : lifetimes)
                 if (lifetime &&
                     !m_Resources[lifetime->Resource.Value].Desc.Transient)
