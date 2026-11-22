@@ -10,7 +10,9 @@
 // C++23 host without a Vulkan SDK, loader, GLFW window or presentable GPU.
 
 #include <cstdint>
+#include <functional>
 #include <stdexcept>
+#include <utility>
 
 namespace kairo::renderer::detail
 {
@@ -102,4 +104,33 @@ namespace kairo::renderer::detail
             return HasAcquiredImage();
         }
     };
+
+    // This is the SAME failure-recovery decision called by VulkanRenderer.
+    // Native work is supplied as callbacks: the test can inject failures and
+    // assert ordering without pretending to submit actual GPU commands.
+    // Only a complete drain (if needed) AND successful generation rebuild
+    // permit the caller to clear its sticky unusable-renderer flag.
+    template<class DrainAcquire, class RebuildGeneration>
+    [[nodiscard]] bool TryRecoverFailedVulkanFrame(
+        const VulkanFrameRecoveryJournal& frame,
+        bool rebuildingAlreadyInProgress,
+        DrainAcquire&& drainAcquire,
+        RebuildGeneration&& rebuildGeneration) noexcept
+    {
+        if (rebuildingAlreadyInProgress ||
+            !frame.RequiresSwapchainRecovery())
+            return false;
+        try
+        {
+            if (frame.AcquireSemaphoreUnconsumed())
+                std::invoke(std::forward<DrainAcquire>(drainAcquire));
+            std::invoke(std::forward<RebuildGeneration>(rebuildGeneration));
+            return true;
+        }
+        catch (...)
+        {
+            // Preserve sticky invalid state when draining/rebuilding fails.
+            return false;
+        }
+    }
 }
