@@ -105,6 +105,20 @@ namespace kairo::renderer::detail
         }
     };
 
+    // An ordinary host exception BEFORE any Vulkan image acquisition does not
+    // invalidate a signaled frame fence or a binary WSI semaphore. Allow the
+    // caller to retry such a CPU-only failure. Device errors during the Retire
+    // fence wait or vkAcquireNextImageKHR, and incomplete swapchain rebuilds,
+    // still require a sticky unusable state rather than blind retries.
+    [[nodiscard]] inline bool CanRetryBeforeVulkanAcquire(
+        const VulkanFrameRecoveryJournal& frame,
+        bool rebuildingAlreadyInProgress,
+        bool nativeOperationFailed) noexcept
+    {
+        return frame.Phase() == VulkanFramePhase::BeforeAcquire &&
+            !rebuildingAlreadyInProgress && !nativeOperationFailed;
+    }
+
     // This is the SAME failure-recovery decision called by VulkanRenderer.
     // Native work is supplied as callbacks: the test can inject failures and
     // assert ordering without pretending to submit actual GPU commands.
