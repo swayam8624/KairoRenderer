@@ -10,6 +10,9 @@ import Kairo.Renderer;
 
 using namespace kairo::renderer;
 
+// TEACHING TEST: Checks planned alias slots, logical resource access and estimated
+// transient bytes; no native heap allocation or VkMemoryBarrier is emitted by this
+// test.
 TEST_CASE("Compiled render graph exposes backend allocation and access plans",
     "[KairoRenderer][RenderGraph][ExecutionPlan]")
 {
@@ -73,6 +76,8 @@ TEST_CASE("Compiled render graph exposes backend allocation and access plans",
     CHECK(lifetimes[gbuffer.Value].AliasSlot != lifetimes[post.Value].AliasSlot);
 }
 
+// TEACHING TEST: Ensures host transition hooks are called before CPU pass callback in
+// the compiled plan. Backend must translate transitions into actual API commands.
 TEST_CASE("Render graph transition hook runs before pass recording",
     "[KairoRenderer][RenderGraph][ExecutionPlan]")
 {
@@ -115,6 +120,8 @@ TEST_CASE("Render graph transition hook runs before pass recording",
     CHECK(profile.Passes[0u].Name == "Draw");
 }
 
+// TEACHING TEST: Rejects invalid transient/external descriptions and uninitialized
+// persistent reads to avoid silently creating undefined resource usage.
 TEST_CASE("Render graph rejects ambiguous external and uninitialized resources",
     "[KairoRenderer][RenderGraph][Validation]")
 {
@@ -144,6 +151,8 @@ TEST_CASE("Render graph rejects ambiguous external and uninitialized resources",
     REQUIRE_NOTHROW(initializedPersistent.Compile());
 }
 
+// TEACHING TEST: A failing transition hook aborts following CPU pass callbacks;
+// separately test host device state/recovery after a failed native encoding.
 TEST_CASE("Transition hook failures stop later render passes",
     "[KairoRenderer][RenderGraph][ExecutionPlan]")
 {
@@ -173,6 +182,8 @@ TEST_CASE("Transition hook failures stop later render passes",
 }
 
 #if defined(__linux__)
+// TEACHING TEST: Exercises native OpenGL rendering/capture when a compatible host
+// context exists. Do not treat this as proof of Vulkan or Metal synchronization.
 TEST_CASE("OpenGL runtime executes real graph-owned native frame stages",
     "[KairoRenderer][RenderGraph][OpenGL][Smoke]")
 {
