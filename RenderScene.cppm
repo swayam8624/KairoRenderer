@@ -1,3 +1,14 @@
+// TEACHING MODULE: RenderScene is a backend-neutral *submission snapshot*.
+// EngineCore/Editor/Player convert authored scene state and KairoAssets
+// references into renderer mesh/texture handles and per-draw transforms.
+// RendererRuntime then passes the same scene contract to one GPU backend.
+//
+// MeshHandle=0 is intentionally invalid. A draw's object ID supports
+// picking, while material/skin data affects shader bindings. Lifetime is
+// owned by the renderer: destroying an uploaded mesh before removing its
+// draw records makes those handles invalid. Scene validation must happen
+// before native commands are recorded, not inside shader execution.
+// The backend owns sorting/culling and actual GPU memory resources.
 module;
 
 #include <algorithm>
@@ -71,6 +82,10 @@ export namespace kairo::renderer
     /// Input: a valid mesh handle, object-to-world matrix, and PBR factors.
     /// Output: one indexed draw request for the next submitted scene.
     /// Task: keep frame extraction independent from Vulkan command structures.
+    // One submitted mesh draw with per-object transforms and material.
+    // Position/normal transform and skinning must agree with backend
+    // shader conventions. Object identity is distinct from mesh handle:
+    // many instances can share one uploaded mesh allocation.
     struct MeshDraw final
     {
         MeshHandle Mesh = InvalidMeshHandle;
@@ -116,6 +131,8 @@ export namespace kairo::renderer
 
     /// Frame-local collection of opaque mesh draws. The renderer copies this
     /// list on submission; callers may immediately clear or reuse the source.
+    // Owns CPU-side draw, light and environment records for submission.
+    // It does not create textures, buffers, pipelines or a swapchain.
     class RenderScene final
     {
     public:
