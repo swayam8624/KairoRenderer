@@ -1,6 +1,7 @@
 module;
 
 #include "detail/MetalBackend.hpp"
+#include "detail/NativeResourcePublication.hpp"
 
 #include <algorithm>
 #include <array>
@@ -278,10 +279,17 @@ export namespace kairo::renderer
                 }
                 skinning.push_back(converted);
             }
-            const MeshHandle handle = m_Backend.CreateMesh(
-                vertices, mesh.Indices(), skinning);
-            m_Meshes.emplace(handle, mesh.RequiredJointCount());
-            return handle;
+            // Create the native buffers BEFORE publishing their C++ handle.
+            // If unordered_map::emplace allocates/throws, release the fresh
+            // backend-owned buffers instead of leaving an unindexed GPU leak.
+            return detail::CreateAndPublishNativeResource<MeshHandle>(
+                [&] { return m_Backend.CreateMesh(vertices, mesh.Indices(), skinning); },
+                [this, &mesh](MeshHandle handle)
+                {
+                    if (!m_Meshes.emplace(handle, mesh.RequiredJointCount()).second)
+                        throw std::logic_error("Metal reused a live mesh handle.");
+                },
+                [this](MeshHandle handle) { m_Backend.DestroyMesh(handle); });
         }
 
         void DestroyMesh(MeshHandle mesh)
@@ -322,9 +330,17 @@ export namespace kairo::renderer
             upload.AddressV = Convert(sampler.AddressV);
             upload.Bytes = bytes.data();
             upload.ByteCount = bytes.size();
-            const TextureHandle handle = m_Backend.CreateTexture(upload);
-            m_Textures.insert(handle);
-            return handle;
+            // The native texture exists before the STL handle set may grow.
+            // On publication failure, destroy the unsubmitted native texture;
+            // the authoritative handle is never silently discarded.
+            return detail::CreateAndPublishNativeResource<TextureHandle>(
+                [this, &upload] { return m_Backend.CreateTexture(upload); },
+                [this](TextureHandle handle)
+                {
+                    if (!m_Textures.insert(handle).second)
+                        throw std::logic_error("Metal reused a live texture handle.");
+                },
+                [this](TextureHandle handle) { m_Backend.DestroyTexture(handle); });
         }
 
         void DestroyTexture(TextureHandle texture)
