@@ -377,9 +377,21 @@ export namespace kairo::renderer
                 DeleteMesh(gpu);
                 throw;
             }
-            const MeshHandle handle = NextHandle(m_NextMesh, m_Meshes);
-            m_Meshes.emplace(handle, gpu);
-            return handle;
+            // OpenGL GL names have already been allocated. Handle-space
+            // exhaustion or std::unordered_map::emplace allocation failure
+            // must free this not-yet-published VAO/VBO/IBO/skin buffer too.
+            try
+            {
+                const MeshHandle handle = NextHandle(m_NextMesh, m_Meshes);
+                if (!m_Meshes.emplace(handle, gpu).second)
+                    throw std::logic_error("OpenGL reused a live mesh handle.");
+                return handle;
+            }
+            catch (...)
+            {
+                DeleteMesh(gpu);
+                throw;
+            }
         }
 
         void DestroyMesh(MeshHandle mesh)
@@ -436,9 +448,20 @@ export namespace kairo::renderer
                 if (gpu.Name != 0u) glDeleteTextures(1, &gpu.Name);
                 throw;
             }
-            const TextureHandle handle = NextHandle(m_NextTexture, m_Textures);
-            m_Textures.emplace(handle, gpu);
-            return handle;
+            // The GL texture name exists even when C++ handle publication
+            // fails. Roll back that native allocation before rethrowing.
+            try
+            {
+                const TextureHandle handle = NextHandle(m_NextTexture, m_Textures);
+                if (!m_Textures.emplace(handle, gpu).second)
+                    throw std::logic_error("OpenGL reused a live texture handle.");
+                return handle;
+            }
+            catch (...)
+            {
+                if (gpu.Name != 0u) glDeleteTextures(1, &gpu.Name);
+                throw;
+            }
         }
 
         void DestroyTexture(TextureHandle texture)
