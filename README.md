@@ -2,6 +2,8 @@
 
 **Cross-repository integration lab:** [AssetID → PBR conversion → runtime handles and glTF skin palettes](https://github.com/swayam8624/KairoGameEngine/blob/main/docs/ASSET_SCENE_TO_GPU_LIFETIME_LAB.md). Read the authored/CPU contracts before following the native GPU backend; source inspection is not a native test result.
 
+**Vulkan failed-frame recovery:** [acquired WSI image, unconsumed binary semaphore, fence-reset/submission and swapchain rebuild laboratory](docs/VULKAN_FRAME_FAILURE_RECOVERY_LAB.md). A CPU journal test is registered; native validation is still required.
+
 **Vulkan constructor recovery:** [five concrete command/buffer/sync/swapchain/depth partial-allocation cleanup fixes](docs/VULKAN_PARTIAL_CONSTRUCTION_ROLLBACK_LAB.md). Native validation remains pending.
 
 **GPU resource rollback fixes:** [cross-repository C++23 ownership, failed-map-publication cleanup and Player unbind-first teardown](https://github.com/swayam8624/KairoGameEngine/blob/main/docs/GPU_RESOURCE_ROLLBACK_AND_RENDERER_TEARDOWN_LAB.md). Pure CPU test: [`NativeResourcePublicationTests.cpp`](tests/NativeResourcePublicationTests.cpp).
