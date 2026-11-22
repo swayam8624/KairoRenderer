@@ -5,6 +5,10 @@ module;
 #include <cstdint>
 #include <stdexcept>
 
+// TEACHING DEPTH-TO-SAMPLER PATH: one D32 image is first written by the
+// directional shadow raster pass, then sampled by the following material
+// fragment pass. Render-pass final layout and external dependencies are
+// native GPU sync, not just render-graph bookkeeping.
 export module Kairo.Renderer.VulkanShadowMap;
 
 import Kairo.Renderer.VulkanDevice;
@@ -20,9 +24,14 @@ export namespace kairo::renderer
     /// from swapchain extent. The render pass transitions from discarded depth
     /// contents to shader-read layout each frame and publishes the write to the
     /// following fragment pass through an explicit external dependency.
+    // Own one 1-layer, 1-mip depth image, its allocation/view, clamp-border
+    // sampler, depth-only render pass and framebuffer. View/Sampler() are
+    // borrowed by VulkanMaterialDescriptors: consumers must retire first.
     class VulkanDirectionalShadowMap final
     {
     public:
+        // Require a bounded square extent, query sampled+D32 depth support,
+        // then allocate/render-pass-create with catch-and-Destroy rollback.
         VulkanDirectionalShadowMap(const VulkanDevice& device, std::uint32_t resolution)
             : m_Device(device.Handle()), m_Physical(device.PhysicalHandle()), m_Resolution(resolution)
         {
@@ -66,6 +75,9 @@ export namespace kairo::renderer
         VkRenderPass m_RenderPass = VK_NULL_HANDLE;
         VkFramebuffer m_Framebuffer = VK_NULL_HANDLE;
 
+        // A depth format must support BOTH depth-stencil attachment writes
+        // and sampled-image reads in optimal tiling for this shadow path.
+        // Existence of D32 alone is not sufficient for the chosen pipeline.
         void ValidateFormatSupport() const
         {
             VkFormatProperties properties{};
@@ -76,6 +88,9 @@ export namespace kairo::renderer
                 throw std::runtime_error("D32_SFLOAT cannot be both a depth attachment and sampled image on this Vulkan device.");
         }
 
+        // Allocate device-local D32 image with DEPTH_STENCIL_ATTACHMENT and
+        // SAMPLED usage. Undefined initial contents become valid after the
+        // depth-clear/store render pass and its layout transition.
         void CreateImage()
         {
             VkImageCreateInfo create{};
@@ -119,6 +134,9 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateImageView for the directional shadow map failed.");
         }
 
+        // Configure nearest-filter depth sampling and opaque-white border:
+        // outside projected shadow UVs should not sample arbitrary memory.
+        // Shader comparison policy may be implemented in the shader itself.
         void CreateSampler()
         {
             VkSamplerCreateInfo create{};
@@ -135,6 +153,10 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateSampler for the directional shadow map failed.");
         }
 
+        // Begin with undefined/discarded depth, write with
+        // DEPTH_STENCIL_ATTACHMENT_OPTIMAL, finish in
+        // DEPTH_STENCIL_READ_ONLY_OPTIMAL. External dependencies publish
+        // depth writes to later FRAGMENT_SHADER reads; this is native Vulkan.
         void CreateRenderPass()
         {
             VkAttachmentDescription depth{};
@@ -176,6 +198,8 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateRenderPass for the directional shadow map failed.");
         }
 
+        // Attach the sampled D32 view to a depth-only framebuffer with
+        // the fixed shadow resolution, independent of swapchain dimensions.
         void CreateFramebuffer()
         {
             VkFramebufferCreateInfo create{};
@@ -201,6 +225,9 @@ export namespace kairo::renderer
             throw std::runtime_error("No device-local memory type supports the directional shadow map.");
         }
 
+        // Teardown order: framebuffer/render pass -> sampler -> view ->
+        // image -> device memory. External descriptor consumers and queue
+        // submissions must have retired; destruction does not wait itself.
         void Destroy() noexcept
         {
             if (m_Framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(m_Device, m_Framebuffer, nullptr);
