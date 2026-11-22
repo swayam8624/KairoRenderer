@@ -1,3 +1,18 @@
+// TEACHING ENTRY POINT: Public C++23 umbrella for the real-time renderer.
+// This module *re-exports interfaces*; it does not create a window, select a
+// GPU, or execute any passes. RendererRuntime (Renderer.cppm) is the facade;
+// Vulkan/Metal/OpenGL/D3D12 backends own device, presentation, upload and
+// readback lifetimes. Conditional exports depend on build flags, not wishes.
+//
+// Learning dependency flow: GraphicsBackend/Types define host and graphics
+// contracts; RenderScene describes draws/lights; AssetAdapters bridges stable
+// KairoAssets IDs into transient GPU handles; RenderGraph compiles logical
+// resource hazards/schedules; RendererRuntime dispatches a frame through one
+// *compiled* backend. EngineCore, Editor and Player are downstream clients.
+//
+// Be precise with telemetry: CpuFrameMilliseconds is not GPU elapsed time,
+// CpuGraphProfile measures CPU callbacks, and resident bytes are estimates
+// rather than authoritative native heap usage. See docs/SOURCE_READING_ORDER.md.
 module;
 
 #include <cstddef>
@@ -43,6 +58,9 @@ export import Kairo.Renderer.Runtime;
 
 export namespace kairo::renderer
 {
+    // Values are extracted from submitted scene records; do not confuse
+    // draw counts with a GPU command count or visible/pixel-contributing
+    // object count. A draw may have zero visible fragments.
     struct RendererSceneTelemetry final
     {
         std::uint64_t DrawCount = 0u;
@@ -73,6 +91,8 @@ export namespace kairo::renderer
         RendererResourceTelemetry Resources;
     };
 
+    // Summation of CPU-described vertex/index/skinning payload lengths.
+    // Backend allocations may include alignment, staging and padding.
     [[nodiscard]] inline std::uint64_t EstimateMeshResidentBytes(
         const Mesh& mesh) noexcept
     {
@@ -81,6 +101,9 @@ export namespace kairo::renderer
             static_cast<std::uint64_t>(mesh.SkinBytes());
     }
 
+    // Scene snapshot counting without inspecting culling or GPU counters.
+    // RendererRuntime/Editor can display this even when native backend
+    // telemetry is unavailable or a render frame has not been submitted.
     [[nodiscard]] inline RendererSceneTelemetry SummarizeRenderScene(
         const RenderScene& scene) noexcept
     {
