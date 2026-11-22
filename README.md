@@ -1,5 +1,10 @@
 # KairoRenderer
 
+**Learn through the source:** [complete reading order](docs/SOURCE_READING_ORDER.md) · [authored mesh → frame presentation walkthrough](docs/FRAME_LIFECYCLE_WALKTHROUGH.md).
+
+The walkthrough identifies what the cross-backend facade guarantees, where
+native API ownership begins, and how to interpret CPU versus GPU telemetry.
+
 `KairoRenderer` is Kairo's multi-backend real-time rendering boundary. Vulkan,
 OpenGL 4.1, and native Metal are complete runtime implementations in the
 current checkout. A Windows-gated Direct3D 12 implementation and native smoke
@@ -112,7 +117,8 @@ command-buffer execution error is surfaced rather than returning stale pixels.
 ## Build
 
 ```bash
-cd /Users/swayamsingal/Desktop/Programming/Kairo/KairoRenderer
+git clone https://github.com/swayam8624/KairoRenderer.git
+cd KairoRenderer
 cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++
 cmake --build build
 ctest --test-dir build --output-on-failure
