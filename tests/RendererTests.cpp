@@ -14,6 +14,8 @@ import Kairo.Assets.TextureArtifact;
 
 using namespace kairo::renderer;
 
+// TEACHING TEST: Tests only logical hazard edges/state plans and CPU callback order. It
+// does not allocate VkImage or MTLTexture and cannot prove native driver barriers.
 TEST_CASE("Render graph compiles hazards transitions and transient aliases",
     "[KairoRenderer][RenderGraph]")
 {
@@ -61,6 +63,8 @@ TEST_CASE("Render graph compiles hazards transitions and transient aliases",
         compiled.Lifetimes()[intermediate.Value].AliasSlot);
 }
 
+// TEACHING TEST: Rejects read-before-initialization and an impossible dependency cycle
+// before any graph execution; keeps erroneous declarations observable.
 TEST_CASE("Render graph rejects invalid reads and dependency cycles",
     "[KairoRenderer][RenderGraph]")
 {
@@ -84,6 +88,8 @@ TEST_CASE("Render graph rejects invalid reads and dependency cycles",
     REQUIRE_THROWS_AS(cyclic.Compile(), std::logic_error);
 }
 
+// TEACHING TEST: Checks backend policy from OS/compiled availability descriptions;
+// actual Vulkan/Metal/D3D12 device creation is not exercised here.
 TEST_CASE("Graphics backend selection is deterministic across desktop platforms",
     "[KairoRenderer][Backend]")
 {
@@ -117,6 +123,8 @@ TEST_CASE("Graphics backend requests reject unavailable or incompatible APIs",
         {}, HostPlatform::Linux), std::runtime_error);
 }
 
+// TEACHING TEST: Compares compiled feature macros to backend availability flags;
+// success is a compile gate, not evidence that a physical device exists.
 TEST_CASE("Compiled graphics backend availability matches the host build",
     "[KairoRenderer][Backend]")
 {
@@ -150,6 +158,8 @@ TEST_CASE("Vulkan backend snapshots reject incomplete integration handles", "[Ka
     CHECK_FALSE(static_cast<bool>(recorder));
 }
 
+// TEACHING TEST: Tests CPU-side capture validation for a tiny RGBA fixture; native
+// command completion and GPU pixel format conversion require backend smoke tests.
 TEST_CASE("Viewport captures reject uniform and malformed pixel evidence", "[KairoRenderer][Viewport]")
 {
     ViewportCapture capture{ 2u, 1u, { 10u, 10u, 10u, 255u, 40u, 10u, 10u, 255u } };
