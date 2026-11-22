@@ -8,6 +8,8 @@ Work from backend-neutral types and graph policies toward API-specific execution
 
 Read each phase in order. Every link goes to a source file or directory in this repository. For a directory, inspect its public interface and then its implementation files. After each phase, identify the caller, the state it owns, the inputs it validates, and its observable outputs.
 
+**Vulkan descriptor pool safety:** [PBR descriptor preflight, allocation cleanup, and future strong-generation transactions](VULKAN_DESCRIPTOR_REBUILD_ERROR_SAFETY_LAB.md). **CI evidence route:** [`cpu-render-resource-guards.yml`](../.github/workflows/cpu-render-resource-guards.yml) compiles the portable fault-injection and frame-journal tests on GCC/Clang.
+
 **Vulkan failed-frame recovery:** [WSI acquire semaphore draining, late fence reset, queue submission errors and fail-fast device state](VULKAN_FRAME_FAILURE_RECOVERY_LAB.md). Read [`VulkanRenderer.cppm`](../VulkanRenderer.cppm) with the portable [state journal](../detail/VulkanFrameRecoveryJournal.hpp) and [regression tests](../tests/VulkanFrameRecoveryJournalTests.cpp).
 
 **Vulkan constructor exception-safety:** [failed command buffer, mapped allocation, semaphore/fence, swapchain image view and depth-view rollback](VULKAN_PARTIAL_CONSTRUCTION_ROLLBACK_LAB.md). Compare actual constructor catch paths before studying GPU fault-injection limitations.
