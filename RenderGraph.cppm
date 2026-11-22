@@ -1,3 +1,20 @@
+// TEACHING MODULE: Backend-neutral *logical* resource scheduling.
+//
+// RenderGraph::AddResource declares external/permanent/transient resources,
+// AddPass declares access modes and requested states, and DependsOn adds
+// explicit ordering edges. Compile then detects read-before-first-write,
+// adds read/write hazard edges, topologically orders passes, derives resource
+// state transitions, and estimates disjoint transient lifetime alias slots.
+//
+// CompiledRenderGraph::Execute invokes transition hooks/callbacks in that
+// CPU schedule and measures CPU time. These hooks DO NOT automatically
+// allocate Vulkan images, insert Metal barriers, or enforce native GPU sync.
+// RendererRuntime currently wraps native backend DrawFrame as an envelope
+// pass. Native pass-level graph integration is a separate engineering task.
+//
+// Handle values are graph-local indices. Resource IDs, pass IDs, alias slot
+// numbers and native Vk/MTL handles are not interchangeable. Read
+// tests/RenderGraphExecutionPlanTests.cpp for hazard and lifetime examples.
 module;
 
 #include <algorithm>
@@ -118,6 +135,9 @@ export namespace kairo::renderer
             const std::vector<RenderResourceTransition>&)> ApplyTransitions;
     };
 
+    // An immutable executable plan produced by Compile(). It owns copies
+    // of descriptors, ordered pass callbacks and resource transition lists.
+    // A logical transient AliasSlot is not a live GPU allocation.
     class CompiledRenderGraph final
     {
         struct Pass final
@@ -209,6 +229,10 @@ export namespace kairo::renderer
         /// each pass callback and are included in that pass timing because native
         /// barrier recording is part of frame command recording. Any exception
         /// stops execution immediately and propagates unchanged.
+        // Execute callbacks sequentially in compiled order. Transition
+        // hooks are caller-provided; only their CPU recording time is
+        // included. An exception stops later passes, it does not roll back
+        // GPU work already recorded or submitted by a callback.
         [[nodiscard]] RenderGraphExecutionProfile Execute(
             const RenderGraphExecutionHooks& hooks = {}) const
         {
@@ -268,6 +292,9 @@ export namespace kairo::renderer
         }
 
     public:
+        // Resource declarations carry initial state and estimated bytes.
+        // Transients must start Undefined because their first write is
+        // expected to initialize any reused physical memory.
         [[nodiscard]] RenderResourceHandle AddResource(RenderResourceDesc desc)
         {
             if (desc.Name.empty())
@@ -291,6 +318,9 @@ export namespace kairo::renderer
             return handle;
         }
 
+        // Each pass may name each resource once: use ReadWrite when both
+        // accesses occur. The callback is code to run, not a GPU command
+        // buffer owned by the graph.
         [[nodiscard]] RenderPassHandle AddPass(std::string name,
             std::vector<RenderResourceAccess> accesses,
             std::function<void()> execute = {})
@@ -333,6 +363,9 @@ export namespace kairo::renderer
             dependencies.push_back(dependency);
         }
 
+        // Construct dependency/hazard edges then use Kahn-style
+        // topological sorting with deterministic min-index selection.
+        // Reject cycles before emitting an executable frame plan.
         [[nodiscard]] CompiledRenderGraph Compile() const
         {
             if (m_Passes.empty())
@@ -349,6 +382,9 @@ export namespace kairo::renderer
                 for (const auto dependency : m_Passes[pass].Dependencies)
                     addEdge(dependency.Value, pass);
 
+            // Track last writer and pending readers per resource so a
+            // write is ordered after prior reads and writes. An undefined
+            // resource cannot be read before an initializing write.
             struct Hazard final
             {
                 std::optional<std::uint32_t> Writer;
@@ -441,6 +477,10 @@ export namespace kairo::renderer
                 compiled.m_Passes.push_back(std::move(target));
             }
 
+            // Greedy capacity reuse is permitted only when lifetimes
+            // are strictly disjoint (last pass < next first pass), types
+            // match and existing capacity is large enough. This produces
+            // a planning estimate, not a physical heap binding.
             struct AliasSlot final
             {
                 RenderResourceKind Kind;
