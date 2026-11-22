@@ -56,7 +56,7 @@ The CPU-only [`VulkanFrameRecoveryJournal`](../detail/VulkanFrameRecoveryJournal
 | `Submitted` | `vkQueueSubmit` | Yes, until presentation | Yes |
 | `Completed` | Success or handled presentation/rebuild | No current recovery obligation | Yes |
 
-The journal refuses illegal transitions such as presenting without submission or resetting the frame fence before an acquire. It also separates `AcquireSemaphoreUnconsumed()` from `FenceResetWithoutSubmission()`. These describe **different hazards**.
+The journal refuses illegal transitions such as presenting without submission or resetting the frame fence before an acquire. It also separates `AcquireSemaphoreUnconsumed()` from `FenceResetWithoutSubmission()`. These describe **different hazards**. The related `CanRetryWithoutVulkanRebuild` helper permits a purely CPU-side error before acquisition or after a completed present, while excluding native fence/acquire errors and incomplete swapchain rebuilds.
 
 The journal has no Vulkan headers or handles; a mistaken journal cannot itself invalidate a `VkDevice`. It is deliberately a testable policy model, not a pretend GPU fence.
 
@@ -87,7 +87,7 @@ The Vulkan specification permits `commandBufferCount == 0` in a `VkSubmitInfo`, 
 
 | Failure point | Journal condition | Current action |
 | --- | --- | --- |
-| Host graph compile / previous fence wait fails before image acquisition | `BeforeAcquire` | Propagate exception, mark renderer unusable when native state is uncertain; no arbitrary image-drain submission |
+| Host-only compile/profiling failure before acquisition, or after successful present | `BeforeAcquire` or `Completed` | Propagate exception but leave renderer usable: no acquired image or unsignaled fence was stranded |\n| Native fence wait or acquisition API failure before image acquisition | `BeforeAcquire` plus native-error flag | Mark renderer unusable and propagate the actual native error; do not make an arbitrary image-drain submission |
 | Image acquired, then descriptor/recording failure | `Acquired` | Submit a wait-only drain of ImageAvailable; idle GPU; replace swapchain/synchronization; clear abandoned pick/capture |
 | Fence reset then `vkQueueSubmit` returns failure | `FenceReset` | Try drain of original acquired semaphore; idle/recreate full generation; never wait on the old unsignaled fence |
 | Graphics submit succeeds, then `vkQueuePresentKHR` fails | `Submitted` | ImageAvailable has already been waited; idle and recreate without a second acquire drain |
@@ -109,7 +109,7 @@ This is **best-effort recovery of a frame**, not a full device-loss recovery imp
 5. Normal acquire → reset → submit → present: no extra recreation required.
 6. Illegal state transitions: second acquire, early completion and submission without fence reset rejected.
 7. The production `TryRecoverFailedVulkanFrame` helper calls **drain then rebuild** for recording/submission failure, **rebuild only** after a submitted frame, and never rebuilds when no image was acquired or a rebuild is already failing.
-8. Injected drain failures prevent the rebuild callback; injected rebuild failures return failure, leaving the renderer in its fail-fast state.
+8. Injected drain failures prevent the rebuild callback; injected rebuild failures return failure, leaving the renderer in its fail-fast state.\n9. Host-only exceptions before image acquire or after completed present are eligible for retry; native fence/acquire failures, live acquired images, and incomplete rebuilds are not.
 
 The new CTest name is `KairoRendererVulkanFrameRecoveryJournalTests`. It exercises the **same header-only recovery policy invoked by the renderer**, including its injected callback ordering, but cannot exercise real `vkQueueSubmit` validation, driver queue semantics or image lifetime.
 
