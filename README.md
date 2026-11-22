@@ -2,6 +2,8 @@
 
 **Cross-repository integration lab:** [AssetID → PBR conversion → runtime handles and glTF skin palettes](https://github.com/swayam8624/KairoGameEngine/blob/main/docs/ASSET_SCENE_TO_GPU_LIFETIME_LAB.md). Read the authored/CPU contracts before following the native GPU backend; source inspection is not a native test result.
 
+**GPU resource rollback fixes:** [cross-repository C++23 ownership, failed-map-publication cleanup and Player unbind-first teardown](https://github.com/swayam8624/KairoGameEngine/blob/main/docs/GPU_RESOURCE_ROLLBACK_AND_RENDERER_TEARDOWN_LAB.md). Pure CPU test: [`NativeResourcePublicationTests.cpp`](tests/NativeResourcePublicationTests.cpp).
+
 **Learn through the source:** [complete reading order](docs/SOURCE_READING_ORDER.md) · [authored mesh → frame presentation walkthrough](docs/FRAME_LIFECYCLE_WALKTHROUGH.md) · [RenderGraph compiler hazard and aliasing lab](docs/RENDER_GRAPH_COMPILER_WORKED_EXAMPLES.md) · [native Vulkan/Metal ownership, synchronization and failure recovery](docs/NATIVE_GPU_SYNCHRONIZATION_AND_LIFETIMES_LAB.md) · [texture mip bytes → GPU upload, layout transitions and descriptor ownership](docs/TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md) · [source teaching progress and verification gaps](docs/SOURCE_TEACHING_PROGRESS.md).
 
 The walkthrough identifies what the cross-backend facade guarantees, where
