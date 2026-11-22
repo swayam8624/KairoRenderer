@@ -136,9 +136,7 @@ Return uploaded VkImage/Memory/View/Sampler
 
 On **normal success**, the queue idle wait establishes that the transient command buffer and staging memory are no longer needed by its queue submission. This is slow for large streaming workloads, but relatively easy to reason about.
 
-**Unresolved high-risk failure case:** the original upload function still destroys its command pool in the catch path if `vkQueueWaitIdle` fails after a successful submit. The scope also releases the staging buffer and the texture constructor's catch destroys the image. A driver error or device loss can make completion status uncertain. This documentation and CPU planner refactor do **not** magically prove those native resources are idle.
-
-To fix that safely, the renderer needs an explicit device-health/retirement strategy that distinguishes pre-submission failure, a completed submission, and an unrecoverable native failure. It may require quarantining resources until device teardown rather than calling ordinary destroy APIs on possibly in-flight handles. Merely adding another catch that calls `vkDeviceWaitIdle` is not sufficient without studying its result and the native device-loss contract.
+**Later source-level correction:** the [upload queue retirement and device-loss laboratory](VULKAN_UPLOAD_QUEUE_RETIREMENT_AND_DEVICE_LOSS_LAB.md) documents the now-implemented `SubmitAndRetireVulkanUpload` policy. Ordinary success, OOM-rejected submission, confirmed device idle and `VK_ERROR_DEVICE_LOST` have separate cleanup rules. When neither device completion nor device loss is established, the command pool, staging buffer/memory, image/memory, view and sampler transfer into `VulkanDevice`'s deferred journal instead of being immediately destroyed by constructor unwinding. Rendering is disabled until the caller constructs a new device. This is a concrete lifetime fix; it does **not** certify native Vulkan failure injection, real lost-device reconstruction, or guaranteed recovery after ambiguous errors.
 
 ## 7. The path toward a streaming uploader
 
