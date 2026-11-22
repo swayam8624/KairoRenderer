@@ -8,6 +8,8 @@ Work from backend-neutral types and graph policies toward API-specific execution
 
 Read each phase in order. Every link goes to a source file or directory in this repository. For a directory, inspect its public interface and then its implementation files. After each phase, identify the caller, the state it owns, the inputs it validates, and its observable outputs.
 
+**Correctness follow-on:** [Metal/D3D12 native handle publication, OpenGL post-upload cleanup, and Player scene retirement](https://github.com/swayam8624/KairoGameEngine/blob/main/docs/GPU_RESOURCE_ROLLBACK_AND_RENDERER_TEARDOWN_LAB.md). Read [`detail/NativeResourcePublication.hpp`](../detail/NativeResourcePublication.hpp) then [`tests/NativeResourcePublicationTests.cpp`](../tests/NativeResourcePublicationTests.cpp), followed by native backend source.
+
 **Source teaching status:** [annotated native files and outstanding correctness/test evidence](SOURCE_TEACHING_PROGRESS.md).
 
 **Cross-subsystem texture laboratory:** [Texture upload, mip offsets, descriptor sets and native viewport/shadow transitions](TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md). Read `TextureArtifact.cppm` and its tests before studying GPU image ownership, color-space interpretation and native layout barriers.
