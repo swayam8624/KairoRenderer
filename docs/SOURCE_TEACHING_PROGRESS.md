@@ -2,6 +2,8 @@
 
 **Dated:** November 22, 2026. This ledger records comments and documentation present on the active `main` branch; it is **not** a claim of native GPU test success, complete source annotation or an automatically merged historic PR.
 
+**Texture staging follow-on:** [one checked mip packing plan shared by the actual Vulkan uploader and the GPU-independent test](VULKAN_TEXTURE_MIP_UPLOAD_PLAN_AND_FAILURE_LAB.md). CMake/CI and the six-test standalone runner include it. This does not solve native queue-idle/device-loss errors.
+
 **Transactional descriptor safety is now implemented:** [VulkanMaterialDescriptors builds a detached RAII generation and publishes it with a no-throw swap](TRANSACTIONAL_VULKAN_DESCRIPTOR_GENERATIONS_LAB.md); failed input validation **or native candidate allocation** leaves the previous active pool and UBOs unchanged. The [historical preflight/basic-cleanup tutorial](VULKAN_DESCRIPTOR_REBUILD_ERROR_SAFETY_LAB.md) is reconciled. The [portable CPU fault-injection test](../tests/TransactionalResourceGenerationTests.cpp) is registered in [CMake](../CMakeLists.txt) and [GCC/Clang CI](../.github/workflows/cpu-render-resource-guards.yml). **Native Vulkan device validation and multiframe deferred retirement remain outstanding.**
 
 **Vulkan frame recovery update:** [acquire/record/submit/present failure state journal and native recovery logic](VULKAN_FRAME_FAILURE_RECOVERY_LAB.md) is now on `main`. The fence reset occurs only after recording succeeds; unconsumed acquired semaphores are drained before swapchain generation retirement. A CPU-only test models the state order, but live WSI/driver validation and device-loss reconstruction remain unverified.
