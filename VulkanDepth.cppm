@@ -5,6 +5,10 @@ module;
 #include <cstdint>
 #include <stdexcept>
 
+// TEACHING DEVICE-LOCAL DEPTH: reusable one-image D32 attachment for simple
+// framebuffer paths. Unlike VulkanShadowMap, this image has no SAMPLED usage;
+// unlike VulkanViewportTarget, it does not own an HDR/ID attachment pair.
+// The render pass sets the actual native depth layout.
 export module Kairo.Renderer.VulkanDepth;
 
 import Kairo.Renderer.VulkanDevice;
@@ -16,9 +20,16 @@ export namespace kairo::renderer
     /// Task: provide a swapchain-sized depth attachment for raster pipelines.
     /// It owns no layout transition itself; the render pass establishes the
     /// first depth layout and later passes declare their own dependencies.
+    // Own VkImage, VkDeviceMemory and a depth-aspect VkImageView; borrow the
+    // logical/physical Vulkan device. Framebuffer/pipeline attachment users
+    // must retire and release references before this object is destroyed.
     class VulkanDepthAttachment final
     {
     public:
+        // Reject zero dimensions, then allocate a native depth image.
+        // AUDIT: no catch-and-Destroy rollback exists here, so a failed
+        // memory/bind/view allocation during construction can leak prior
+        // native handles (the class destructor never runs after a throw).
         VulkanDepthAttachment(const VulkanDevice& device, VkExtent2D extent)
             : m_Device(device.Handle()), m_Physical(device.PhysicalHandle())
         {
@@ -39,6 +50,8 @@ export namespace kairo::renderer
 
         /// Precondition: the device is idle and no framebuffer retains View().
         /// Task: rebuild the depth image to match a recreated swapchain extent.
+        // Requires device idle and release of every framebuffer using View().
+        // Destroys old image before building new; failure is NOT transactional.
         void Recreate(VkExtent2D extent)
         {
             if (extent.width == 0u || extent.height == 0u)
@@ -56,6 +69,8 @@ export namespace kairo::renderer
         VkDeviceMemory m_Memory = VK_NULL_HANDLE;
         VkImageView m_View = VK_NULL_HANDLE;
 
+        // Release view first, then image, then bound device-local memory;
+        // clearing handles permits internal cleanup on a partial build.
         void Destroy() noexcept
         {
             if (m_View != VK_NULL_HANDLE) vkDestroyImageView(m_Device, m_View, nullptr);
@@ -66,6 +81,10 @@ export namespace kairo::renderer
             m_Memory = VK_NULL_HANDLE;
         }
 
+        // Create optimal-tiled one-mip D32 image with DEPTH_ATTACHMENT usage,
+        // allocate compatible device-local memory, bind, and expose depth
+        // aspect only through VkImageView. The render pass (not this method)
+        // establishes the actual depth-write image layout on first use.
         void Create(VkPhysicalDevice physical, VkExtent2D extent)
         {
             VkImageCreateInfo image{};
@@ -109,6 +128,8 @@ export namespace kairo::renderer
             }
         }
 
+        // Intersect the image's requirements mask with DEVICE_LOCAL memory
+        // properties, failing explicitly when this allocation is unsupported.
         [[nodiscard]] static std::uint32_t FindDeviceLocalMemory(VkPhysicalDevice physical, std::uint32_t bits)
         {
             VkPhysicalDeviceMemoryProperties properties{};
