@@ -1,6 +1,6 @@
 # KairoRenderer
 
-**Learn through the source:** [complete reading order](docs/SOURCE_READING_ORDER.md) · [authored mesh → frame presentation walkthrough](docs/FRAME_LIFECYCLE_WALKTHROUGH.md).
+**Learn through the source:** [complete reading order](docs/SOURCE_READING_ORDER.md) · [authored mesh → frame presentation walkthrough](docs/FRAME_LIFECYCLE_WALKTHROUGH.md) · [RenderGraph compiler hazard and aliasing lab](docs/RENDER_GRAPH_COMPILER_WORKED_EXAMPLES.md).
 
 The walkthrough identifies what the cross-backend facade guarantees, where
 native API ownership begins, and how to interpret CPU versus GPU telemetry.
