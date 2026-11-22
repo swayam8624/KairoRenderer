@@ -12,6 +12,8 @@ Read each phase in order. Every link goes to a source file or directory in this 
 
 **Cross-subsystem texture laboratory:** [Texture upload, mip offsets, descriptor sets and native viewport/shadow transitions](TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md). Read `TextureArtifact.cppm` and its tests before studying GPU image ownership, color-space interpretation and native layout barriers.
 
+**Cross-repository integration lab:** [CPU authored asset-to-GPU handle bridge and shared Editor/Player extraction](https://github.com/swayam8624/KairoGameEngine/blob/main/docs/ASSET_SCENE_TO_GPU_LIFETIME_LAB.md). Read the authored/CPU contracts before following the native GPU backend; source inspection is not a native test result.
+
 **Native synchronization and ownership:** [Vulkan acquire/submit/present fences, Metal command completion, readbacks, native teardown and error-path audits](NATIVE_GPU_SYNCHRONIZATION_AND_LIFETIMES_LAB.md). Start this after the render-graph overview to distinguish logical transitions from actual GPU ordering.
 
 **Algorithm exercise:** [How RenderGraph compiles resource hazards, orders passes and reuses transient storage](RENDER_GRAPH_COMPILER_WORKED_EXAMPLES.md). It also documents declaration-error exception-safety limitations.
