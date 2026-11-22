@@ -22,6 +22,17 @@ export namespace kairo::renderer
     /// lifetime.
     /// Task: provide deterministic V1 mesh/uniform upload. Device-local staging
     /// buffers are intentionally deferred until the draw contract is proven.
+    // Transfers ownership of a host-coherent staging allocation to the
+    // parent VulkanDevice only when a submitted upload's retirement cannot
+    // be proven. No Vulkan destroy happens during this transfer. The mapped
+    // pointer must be unmapped before the memory is freed at later retirement.
+    struct DetachedVulkanHostBuffer final
+    {
+        VkBuffer Buffer = VK_NULL_HANDLE;
+        VkDeviceMemory Memory = VK_NULL_HANDLE;
+        void* Mapped = nullptr;
+    };
+
     class VulkanHostBuffer final
     {
     public:
@@ -81,6 +92,20 @@ export namespace kairo::renderer
         VulkanHostBuffer(const VulkanHostBuffer&) = delete;
         VulkanHostBuffer& operator=(const VulkanHostBuffer&) = delete;
         [[nodiscard]] VkBuffer Handle() const noexcept { return m_Buffer; }
+
+        // Called only on an unproven GPU completion: the original owner
+        // must NOT destroy pending VkBuffer/VkDeviceMemory in its destructor.
+        // The device-level deferred journal assumes responsibility for
+        // unmap -> buffer destroy -> memory free after idle/device-loss.
+        [[nodiscard]] DetachedVulkanHostBuffer DetachForDeferredRetirement() noexcept
+        {
+            const DetachedVulkanHostBuffer handles{ m_Buffer, m_Memory, m_Mapped };
+            m_Buffer = VK_NULL_HANDLE;
+            m_Memory = VK_NULL_HANDLE;
+            m_Mapped = nullptr;
+            m_Size = 0u;
+            return handles;
+        }
 
         /// Precondition: byteCount does not exceed construction size.
         /// Task: copy CPU bytes into coherent GPU-visible storage.
