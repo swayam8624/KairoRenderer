@@ -6,8 +6,10 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #include "detail/TextureMipUploadPlan.hpp"
+#include "detail/VulkanUploadRetirementPolicy.hpp"
 
 // TEACHING UPLOAD: validated KairoAssets TextureArtifactData -> host-coherent
 // Vulkan staging bytes -> device-local VkImage mips -> sampled image view and
@@ -42,6 +44,7 @@ export namespace kairo::renderer
             TextureSampler sampling = {})
             : m_Device(device.Handle())
         {
+            device.CheckUsable();
             kairo::assets::ValidateTextureArtifactData(texture);
             m_Format = SelectFormat(texture);
             m_Width = texture.Mips.front().Width;
@@ -210,9 +213,11 @@ export namespace kairo::renderer
         // UNDEFINED -> TRANSFER_DST_OPTIMAL, copy each VkBufferImageCopy mip,
         // TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL. Wait for the entire
         // graphics queue to idle before staging buffer/pool destruction.
-        // AUDIT: queue-submit succeeded but vkQueueWaitIdle fails: the catch
-        // immediately destroys the command pool, so check native in-flight
-        // lifetime behavior under device-lost/error injection separately.
+        // The production SubmitAndRetireVulkanUpload helper decides whether
+        // queue completion was proven. VK_ERROR_DEVICE_LOST is retirement for
+        // the Vulkan resource-in-use rule; uncertain other errors transfer
+        // ALL staging, command and texture ownership to VulkanDevice's
+        // deferred journal instead of destroying pending native allocations.
         void Upload(const VulkanDevice& device,
             const kairo::assets::TextureArtifactData& texture)
         {
@@ -220,6 +225,10 @@ export namespace kairo::renderer
             // This extra gate rejects overflow before VkDeviceSize conversion
             // and keeps the byte offsets tested independently from Vulkan.
             const auto upload = detail::MakeTextureMipUploadPlan(texture.Mips);
+            // Pre-reserve the failure journal before any GPU submit; an
+            // allocation exception while trying to remember pending native
+            // work would otherwise recreate the very failure we are fixing.
+            device.ReserveDeferredTextureUploadSlot();
             VulkanHostBuffer staging(device,
                 static_cast<VkDeviceSize>(upload.PackedBytes.size()),
                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
@@ -307,16 +316,55 @@ export namespace kairo::renderer
                 submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
                 submit.commandBufferCount = 1u;
                 submit.pCommandBuffers = &command;
-                if (vkQueueSubmit(device.GraphicsQueue(), 1u, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
-                    vkQueueWaitIdle(device.GraphicsQueue()) != VK_SUCCESS)
-                    throw std::runtime_error("Vulkan texture upload submission failed.");
+                const auto completion = detail::SubmitAndRetireVulkanUpload(
+                    [&] { return vkQueueSubmit(device.GraphicsQueue(), 1u,
+                        &submit, VK_NULL_HANDLE); },
+                    [&] { return vkQueueWaitIdle(device.GraphicsQueue()); },
+                    [&] { return vkDeviceWaitIdle(device.Handle()); },
+                    VK_SUCCESS, VK_ERROR_DEVICE_LOST,
+                    VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+
+                if (completion.Retirement == detail::VulkanUploadRetirement::Quarantine)
+                {
+                    // Neither completion nor loss was established. Keep the
+                    // native resources alive until the owning VulkanDevice
+                    // can safely retire the queue or is itself lost.
+                    const auto detached = staging.DetachForDeferredRetirement();
+                    device.DeferUncertainTextureUpload({
+                        pool, detached.Buffer, detached.Memory, detached.Mapped,
+                        m_Image, m_Memory, m_View, m_Sampler
+                    });
+                    pool = VK_NULL_HANDLE; // journal owns command buffer pool
+                    m_Image = VK_NULL_HANDLE;
+                    m_Memory = VK_NULL_HANDLE;
+                    m_View = VK_NULL_HANDLE;
+                    m_Sampler = VK_NULL_HANDLE;
+                }
+                else if (completion.Retirement == detail::VulkanUploadRetirement::DeviceLost)
+                {
+                    // Per Vulkan lost-device rules, pending state and
+                    // resource-in-use tracking treat DEVICE_LOST as completed.
+                    // Ordinary native destruction is therefore permitted, but
+                    // the logical device must never receive another upload.
+                    device.MarkUnusable();
+                }
+
+                if (completion.Retirement != detail::VulkanUploadRetirement::Completed)
+                    throw std::runtime_error(
+                        "Vulkan texture upload failed (VkResult " +
+                        std::to_string(static_cast<int>(completion.Error)) + ").");
             }
             catch (...)
             {
-                vkDestroyCommandPool(m_Device, pool, nullptr);
+                // On unresolved completion pool is null because ownership
+                // moved into the parent device's deferred queue. On ordinary
+                // failures or device loss Vulkan allows native cleanup here.
+                if (pool != VK_NULL_HANDLE)
+                    vkDestroyCommandPool(m_Device, pool, nullptr);
                 throw;
             }
-            vkDestroyCommandPool(m_Device, pool, nullptr);
+            if (pool != VK_NULL_HANDLE)
+                vkDestroyCommandPool(m_Device, pool, nullptr);
         }
 
         // Reverse native ownership: sampler, view, image, then VkDeviceMemory.
