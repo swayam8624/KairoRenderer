@@ -1,3 +1,13 @@
+// TEACHING MODULE: Separate *policy selection* from physical GPU creation.
+// HostPlatform describes where an API can run, while
+// GraphicsBackendAvailability describes which implementations were actually
+// compiled/linked. An automatic request tries the platform preference order;
+// an explicit request must fail if unavailable, rather than changing API.
+//
+// This layer can be unit tested with synthetic platform/availability data
+// on any host; doing so does not prove that Metal, Vulkan or D3D12 can
+// instantiate a native device in that test process. RendererRuntime owns
+// the actual chosen backend and creates native resources afterward.
 module;
 
 #include <stdexcept>
@@ -33,6 +43,9 @@ export namespace kairo::renderer
     /// Backends compiled into one KairoRenderer binary. Platform compatibility
     /// and build availability are separate: Metal is valid on macOS, for
     /// example, but cannot be selected until its implementation is linked.
+    // Availability is a build-time implementation snapshot, not the
+    // runtime GPU feature set. Driver/device requirements remain the
+    // responsibility of native backend initialization.
     struct GraphicsBackendAvailability final
     {
         bool Vulkan = false;
