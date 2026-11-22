@@ -10,7 +10,9 @@ module;
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
+#include "detail/TransactionalResourceGeneration.hpp"
 
 // TEACHING DESCRIPTORS: VkDescriptorSetLayout declares shader-visible
 // bindings, VkDescriptorPool allocates set storage, and each VkDescriptorSet
@@ -171,7 +173,8 @@ export namespace kairo::renderer
         // visibility. VulkanTriangle::BindMaterial relies on this same layout;
         // adding a binding requires a shader and pipeline-layout update.
         explicit VulkanMaterialDescriptors(const VulkanDevice& device)
-            : m_DeviceObject(device), m_Device(device.Handle())
+            : m_DeviceObject(device), m_Device(device.Handle()),
+              m_Generation(device.Handle())
         {
             std::array<VkDescriptorSetLayoutBinding, 10u> bindings{};
             bindings[0] = { 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1u,
@@ -196,7 +199,10 @@ export namespace kairo::renderer
 
         ~VulkanMaterialDescriptors()
         {
-            ClearPool();
+            // Release the current descriptor generation BEFORE its shared
+            // VkDescriptorSetLayout. Generation::~Generation also handles
+            // partially staged candidate resource rollback on exceptions.
+            m_Generation.Clear();
             if (m_Layout != VK_NULL_HANDLE)
                 vkDestroyDescriptorSetLayout(m_Device, m_Layout, nullptr);
         }
@@ -204,66 +210,60 @@ export namespace kairo::renderer
         VulkanMaterialDescriptors& operator=(const VulkanMaterialDescriptors&) = delete;
 
         [[nodiscard]] VkDescriptorSetLayout Layout() const noexcept { return m_Layout; }
-        [[nodiscard]] std::size_t Size() const noexcept { return m_Sets.size(); }
+        [[nodiscard]] std::size_t Size() const noexcept { return m_Generation.Sets.size(); }
         // Return a borrowed descriptor set indexed by current draw order.
         // Rebuild can invalidate the handle and reorder per-draw bindings;
         // never cache it across scene descriptor regeneration.
         [[nodiscard]] VkDescriptorSet Set(std::size_t index) const
         {
-            if (index >= m_Sets.size())
+            if (index >= m_Generation.Sets.size())
                 throw std::out_of_range("Material descriptor index is outside the current render scene.");
-            return m_Sets[index];
+            return m_Generation.Sets[index];
         }
 
         /// Precondition: the render fence has completed and every supplied
         /// image remains alive until the next rebuild. Rebuild is intentionally
         /// frame-boundary work; descriptor pools are never destroyed in flight.
-        // Release the previous pool and per-draw UBOs, allocate a fresh
-        // descriptor set for every submitted MeshDraw, then bind camera,
-        // shadow, PBR images, environment and optional copied joint matrices.
-        // CRITICAL: caller must have waited for the previous frame fence.
-        // Validate all borrowed handles, material factors and skin palettes
-        // BEFORE deleting the previous pool, so a malformed new scene does
-        // not invalidate existing descriptors. Native allocation failures
-        // later in Rebuild still lack a transactional old/new pool swap.
+        // Validate and construct a detached descriptor pool, sets, and UBOs
+        // before publishing. All failures, including native allocation and
+        // C++ bad_alloc, leave the prior generation unmodified. Only the
+        // fence-retired caller may retire the previous published pool.
         void Rebuild(const VulkanHostBuffer& camera, VkDeviceSize cameraRange,
             VkImageView shadowView, VkSampler shadowSampler,
             std::span<const VulkanMaterialImages> materials)
         {
-            // A malformed new scene must not destroy the old descriptor set
-            // generation before validation has identified the input error.
-            if (materials.empty())
-            {
-                ClearPool();
-                return;
-            }
-            if (cameraRange == 0u || shadowView == VK_NULL_HANDLE ||
-                shadowSampler == VK_NULL_HANDLE)
-                throw std::invalid_argument("Material descriptors require valid camera and shadow resources.");
-            if (materials.size() >
-                static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / 7u))
-                throw std::length_error("Material descriptor pool count would overflow Vulkan uint32 capacities.");
-            for (const auto& source : materials)
-            {
-                source.Material.Validate();
-                for (std::size_t channel = 0u; channel < 5u; ++channel)
-                    if (source.Views[channel] == VK_NULL_HANDLE ||
-                        source.Samplers[channel] == VK_NULL_HANDLE)
-                        throw std::invalid_argument("PBR material descriptors require five valid sampled images.");
-                if (source.EnvironmentView == VK_NULL_HANDLE ||
-                    source.EnvironmentSampler == VK_NULL_HANDLE)
-                    throw std::invalid_argument("PBR material descriptors require a valid environment fallback image.");
-                if (source.Skinning != nullptr && !source.Skinning->Empty())
-                    source.Skinning->Validate();
-            }
+            // The old generation is NEVER mutated while a candidate is being
+            // validated or allocated. A staged owner's destructor releases all
+            // partial VkDescriptorPool / VulkanHostBuffer allocations on throw.
+            // The no-throw swap publishes only a fully finished generation.
+            // The previous generation retires when staged leaves this scope.
+            // PRECONDITION: all previously submitted draws are fence-retired.
+            DescriptorGeneration staged(m_Device);
+            detail::BuildAndCommitResourceGeneration(m_Generation, staged,
+                [&](DescriptorGeneration& candidate)
+                {
+                    // An empty scene is a valid new generation with no sets.
+                    if (materials.empty()) return;
+                if (cameraRange == 0u || shadowView == VK_NULL_HANDLE ||
+                    shadowSampler == VK_NULL_HANDLE)
+                    throw std::invalid_argument("Material descriptors require valid camera and shadow resources.");
+                if (materials.size() >
+                    static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / 7u))
+                    throw std::length_error("Material descriptor pool count would overflow Vulkan uint32 capacities.");
+                for (const auto& source : materials)
+                {
+                    source.Material.Validate();
+                    for (std::size_t channel = 0u; channel < 5u; ++channel)
+                        if (source.Views[channel] == VK_NULL_HANDLE ||
+                            source.Samplers[channel] == VK_NULL_HANDLE)
+                            throw std::invalid_argument("PBR material descriptors require five valid sampled images.");
+                    if (source.EnvironmentView == VK_NULL_HANDLE ||
+                        source.EnvironmentSampler == VK_NULL_HANDLE)
+                        throw std::invalid_argument("PBR material descriptors require a valid environment fallback image.");
+                    if (source.Skinning != nullptr && !source.Skinning->Empty())
+                        source.Skinning->Validate();
+                }
 
-            ClearPool();
-            // Any native allocation/host-buffer failure during construction
-            // releases partially made UBOs and descriptor pool immediately.
-            // The previous pool was already retired, so this is the basic
-            // guarantee (empty consistent state), not a strong transaction.
-            try
-            {
                 const std::uint32_t count = static_cast<std::uint32_t>(materials.size());
                 const std::array poolSizes{
                     VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count * 3u },
@@ -274,24 +274,23 @@ export namespace kairo::renderer
                 pool.maxSets = count;
                 pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
                 pool.pPoolSizes = poolSizes.data();
-                if (vkCreateDescriptorPool(m_Device, &pool, nullptr, &m_Pool) != VK_SUCCESS)
+                if (vkCreateDescriptorPool(m_Device, &pool, nullptr, &candidate.Pool) != VK_SUCCESS)
                     throw std::runtime_error("vkCreateDescriptorPool for PBR materials failed.");
 
                 std::vector<VkDescriptorSetLayout> layouts(count, m_Layout);
-                m_Sets.resize(count);
+                candidate.Sets.resize(count);
                 VkDescriptorSetAllocateInfo allocation{};
                 allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-                allocation.descriptorPool = m_Pool;
+                allocation.descriptorPool = candidate.Pool;
                 allocation.descriptorSetCount = count;
                 allocation.pSetLayouts = layouts.data();
-                if (vkAllocateDescriptorSets(m_Device, &allocation, m_Sets.data()) != VK_SUCCESS)
+                if (vkAllocateDescriptorSets(m_Device, &allocation, candidate.Sets.data()) != VK_SUCCESS)
                 {
-                    ClearPool();
                     throw std::runtime_error("vkAllocateDescriptorSets for PBR materials failed.");
                 }
 
-                m_MaterialBuffers.reserve(count);
-                m_SkinBuffers.reserve(count);
+                candidate.MaterialBuffers.reserve(count);
+                candidate.SkinBuffers.reserve(count);
                 for (std::uint32_t index = 0u; index < count; ++index)
                 {
                     // All source factor/handle/palette validation completed
@@ -361,39 +360,34 @@ export namespace kairo::renderer
                     // The referenced VkBuffer/VkImageView/VkSampler handles remain
                     // borrowed and require longer GPU lifetime management.
                     std::array<VkWriteDescriptorSet, 10u> writes{};
-                    writes[0] = Write(m_Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                    writes[0] = Write(m_Generation.Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                     writes[0].pBufferInfo = &cameraInfo;
-                    writes[1] = Write(m_Sets[index], 1u,
+                    writes[1] = Write(m_Generation.Sets[index], 1u,
                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                     writes[1].pImageInfo = &shadowInfo;
                     for (std::uint32_t channel = 0u; channel < 5u; ++channel)
                     {
-                        writes[2u + channel] = Write(m_Sets[index], 2u + channel,
+                        writes[2u + channel] = Write(m_Generation.Sets[index], 2u + channel,
                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                         writes[2u + channel].pImageInfo = &imageInfos[channel];
                     }
-                    writes[7] = Write(m_Sets[index], 7u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                    writes[7] = Write(m_Generation.Sets[index], 7u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                     writes[7].pBufferInfo = &materialInfo;
-                    writes[8] = Write(m_Sets[index], 8u,
+                    writes[8] = Write(m_Generation.Sets[index], 8u,
                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                     writes[8].pImageInfo = &environmentInfo;
                     std::uint32_t writeCount = 9u;
                     if (skinBuffer)
                     {
-                        writes[9] = Write(m_Sets[index], 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                        writes[9] = Write(m_Generation.Sets[index], 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                         writes[9].pBufferInfo = &skinInfo;
                         writeCount = 10u;
                     }
                     vkUpdateDescriptorSets(m_Device, writeCount, writes.data(), 0u, nullptr);
-                    m_MaterialBuffers.push_back(std::move(buffer));
-                    m_SkinBuffers.push_back(std::move(skinBuffer));
+                    candidate.MaterialBuffers.push_back(std::move(buffer));
+                    candidate.SkinBuffers.push_back(std::move(skinBuffer));
                 }
-            }
-            catch (...)
-            {
-                ClearPool();
-                throw;
-            }
+                });
         }
 
     private:
@@ -405,10 +399,47 @@ export namespace kairo::renderer
         const VulkanDevice& m_DeviceObject;
         VkDevice m_Device = VK_NULL_HANDLE;
         VkDescriptorSetLayout m_Layout = VK_NULL_HANDLE;
-        VkDescriptorPool m_Pool = VK_NULL_HANDLE;
-        std::vector<VkDescriptorSet> m_Sets;
-        std::vector<std::unique_ptr<VulkanHostBuffer>> m_MaterialBuffers;
-        std::vector<std::unique_ptr<VulkanHostBuffer>> m_SkinBuffers;
+        // A complete and independent descriptor generation. Candidate
+        // allocation never writes into the current live resources; the old
+        // generation moves into staged on a noexcept swap and is destroyed
+        // only after successful publication at a retired frame boundary.
+        struct DescriptorGeneration final
+        {
+            explicit DescriptorGeneration(VkDevice device) noexcept
+                : Device(device) {}
+            ~DescriptorGeneration() { Clear(); }
+            DescriptorGeneration(const DescriptorGeneration&) = delete;
+            DescriptorGeneration& operator=(const DescriptorGeneration&) = delete;
+
+            VkDevice Device = VK_NULL_HANDLE;
+            VkDescriptorPool Pool = VK_NULL_HANDLE;
+            std::vector<VkDescriptorSet> Sets;
+            std::vector<std::unique_ptr<VulkanHostBuffer>> MaterialBuffers;
+            std::vector<std::unique_ptr<VulkanHostBuffer>> SkinBuffers;
+
+            void Clear() noexcept
+            {
+                SkinBuffers.clear();
+                MaterialBuffers.clear();
+                Sets.clear();
+                if (Pool != VK_NULL_HANDLE)
+                    vkDestroyDescriptorPool(Device, Pool, nullptr);
+                Pool = VK_NULL_HANDLE;
+            }
+
+            void Swap(DescriptorGeneration& other) noexcept
+            {
+                // Both generations borrow the SAME live VkDevice. Swapping
+                // numeric pool ownership + allocator-compatible STL vectors
+                // requires no allocation, so publication cannot fail.
+                std::swap(Pool, other.Pool);
+                Sets.swap(other.Sets);
+                MaterialBuffers.swap(other.MaterialBuffers);
+                SkinBuffers.swap(other.SkinBuffers);
+            }
+        };
+
+        DescriptorGeneration m_Generation;
 
         // Fill one descriptor-write header with a type, target set and slot;
         // callers add the matching buffer/image pointer before the update.
@@ -424,16 +455,5 @@ export namespace kairo::renderer
             return write;
         }
 
-        // Drop per-draw UBO owners and descriptor handles, then destroy pool.
-        // Requires prior GPU retirement; a VkDescriptorSet is not a CPU-only
-        // object once a pending draw has bound it.
-        void ClearPool() noexcept
-        {
-            m_SkinBuffers.clear();
-            m_MaterialBuffers.clear();
-            m_Sets.clear();
-            if (m_Pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(m_Device, m_Pool, nullptr);
-            m_Pool = VK_NULL_HANDLE;
-        }
     };
 }
