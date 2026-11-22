@@ -1,3 +1,8 @@
+// TEACHING NATIVE BOUNDARY: Objective-C++ adapter from GLFW Cocoa window
+// to CAMetalLayer and Metal command queue. MetalRenderer.cppm owns the CPU
+// facade while Impl owns native textures, mesh buffers and pipelines.
+// This is an explicit platform API; the C++23 RenderGraph is only a host
+// scheduling layer. See docs/NATIVE_GPU_SYNCHRONIZATION_AND_LIFETIMES_LAB.md.
 #define GLFW_EXPOSE_NATIVE_COCOA
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
@@ -32,6 +37,9 @@ namespace kairo::renderer::detail
         constexpr MTLPixelFormat DepthFormat = MTLPixelFormatDepth32Float;
         constexpr std::uint32_t ShadowResolution = 2048u;
 
+        // Native MTLBuffer ownership for positions, optional skin weights
+        // and indices. RequiredJoints caps palette input; this map is keyed
+        // by an opaque renderer handle, not an authored KairoAssets AssetID.
         struct GpuMesh final
         {
             id<MTLBuffer> Vertices = nil;
@@ -41,12 +49,18 @@ namespace kairo::renderer::detail
             std::size_t RequiredJoints = 0u;
         };
 
+        // Own the texture/sampler pair used by a material's fragment slots.
+        // The referenced texture remains usable only while GPU commands
+        // accessing it retain/finish their resource dependencies.
         struct GpuTexture final
         {
             id<MTLTexture> Texture = nil;
             id<MTLSamplerState> Sampler = nil;
         };
 
+        // CPU struct mirrors the Metal shader Frame layout in ShaderSource.
+        // Matrix orientation, 16-byte alignment and fixed-size light slots
+        // must stay ABI-compatible when adding new shader fields.
         struct alignas(16) FrameUniforms final
         {
             float View[16]{};
@@ -66,6 +80,9 @@ namespace kairo::renderer::detail
             MetalLight Lights[16]{};
         };
 
+        // Per-draw CPU/shader uniform ABI: model/normal matrices, material,
+        // object ID and shadow flags. ObjectID feeds the offscreen R32Uint
+        // picking attachment rather than a CPU ray cast.
         struct alignas(16) DrawUniforms final
         {
             float Model[16]{};
@@ -369,6 +386,10 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
         std::uint32_t ViewportHeight = 1u;
         MetalOverlayRecorder Overlay;
 
+        // Create default Metal device and one MTLCommandQueue, attach
+        // CAMetalLayer to the GLFW Cocoa NSWindow, compile pipelines and
+        // initialize offscreen targets/fallback textures. Device/Layer
+        // lifetime is native and independent of authored scene file state.
         Impl(GLFWwindow* window, std::uint32_t width, std::uint32_t height)
             : ViewportWidth(width), ViewportHeight(height)
         {
@@ -395,6 +416,9 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             }
         }
 
+        // Final GPU work must retire before destroying the backend's native
+        // MTLBuffer/MTLTexture and render state ownership. This destructor
+        // waits for LastCommand even when no CPU readback was requested.
         ~Impl()
         {
             // Metal retains encoded resources, but waiting here prevents the
@@ -403,6 +427,10 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             if (LastCommand != nil) [LastCommand waitUntilCompleted];
         }
 
+        // Establish actual GPU completion before CPU texture getBytes,
+        // freeing a referenced mesh/texture or replacing render targets.
+        // Report MTLCommandBufferStatusError with native NSError details.
+        // An ordinary return from MetalBackend::Draw is only submission.
         void WaitForLastCommand()
         {
             if (LastCommand == nil) return;
@@ -489,6 +517,10 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 throw std::runtime_error("Metal depth/sampler state creation failed.");
         }
 
+        // Wait for all previously submitted work referencing old targets,
+        // then replace offscreen RGBA16F scene color, R32Uint pick IDs and
+        // depth. ShadowDepth is a separate shared cached depth target.
+        // Resize belongs to native ownership, not logical graph alias slots.
         void BuildTargets(std::uint32_t width, std::uint32_t height)
         {
             WaitForLastCommand();
@@ -517,6 +549,10 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             return UploadTexture(upload);
         }
 
+        // Allocate a shader-readable MTLTexture, copy each mip's exact
+        // image byte range via replaceRegion, and create its sampler.
+        // Reject truncated/trailing mip payloads. These are CPU uploads to
+        // shared-mode textures, not a scheduled async blit benchmark.
         GpuTexture UploadTexture(const MetalTextureUpload& upload)
         {
             MTLTextureDescriptor* desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:PixelFormat(upload.Format)
@@ -641,6 +677,11 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             output.AlphaMode=draw.Material.AlphaMode;output.ObjectID=draw.Material.ObjectID;output.ReceiveShadows=draw.Material.ReceiveShadows?1u:0u; return output;
         }
 
+        // Encode the shadow pass first, then offscreen viewport color,
+        // object-ID and depth attachments in the SAME command buffer.
+        // Opaque draws precede stable back-to-front transparent draws;
+        // debug primitives are encoded last. Native pipeline/texture binds
+        // are performed here, not by the render-graph CPU state machine.
         void EncodeScene(id<MTLCommandBuffer> command,const MetalFrame& frame)
         {
             FrameUniforms frameUniforms=MakeFrame(frame);
@@ -674,6 +715,10 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             [encoder endEncoding];
         }
 
+        // Obtain CAMetalDrawable, encode fullscreen viewport compositing or
+        // host overlay, then schedule presentation on this command buffer.
+        // A missing drawable leaves no presentation but scene encoding can
+        // still be committed; this is distinct from a successful display.
         void Present(id<MTLCommandBuffer> command)
         {
             id<CAMetalDrawable> drawable=[Layer nextDrawable]; if(drawable==nil) return;
@@ -691,14 +736,32 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
     std::uint64_t MetalBackend::CreateMesh(std::span<const MetalVertex> vertices,std::span<const std::uint32_t> indices,std::span<const MetalSkinInfluence> skinning)
     { if(vertices.empty()||indices.empty())throw std::invalid_argument("Metal mesh upload requires vertices and indices.");if(!skinning.empty()&&skinning.size()!=vertices.size())throw std::invalid_argument("Metal skin stream must match the vertex count."); const std::uint64_t handle=m_Impl->NextMesh++;
       GpuMesh mesh;mesh.Vertices=[m_Impl->Device newBufferWithBytes:vertices.data() length:vertices.size_bytes() options:MTLResourceStorageModeShared];if(!skinning.empty()){mesh.Skinning=[m_Impl->Device newBufferWithBytes:skinning.data() length:skinning.size_bytes() options:MTLResourceStorageModeShared];for(const auto& influence:skinning)for(std::size_t slot=0u;slot<4u;++slot)if(influence.Weights[slot]>0.0f)mesh.RequiredJoints=std::max(mesh.RequiredJoints,static_cast<std::size_t>(influence.Joints[slot])+1u);}mesh.Indices=[m_Impl->Device newBufferWithBytes:indices.data() length:indices.size_bytes() options:MTLResourceStorageModeShared];mesh.IndexCount=indices.size();if(mesh.Vertices==nil||mesh.Indices==nil||(!skinning.empty()&&mesh.Skinning==nil))throw std::runtime_error("Metal mesh-buffer allocation failed.");if(mesh.RequiredJoints>255u)throw std::length_error("Metal skinned mesh exceeds 255 joints.");m_Impl->Meshes.emplace(handle,std::move(mesh));return handle;}
+    // Wait for LastCommand before dropping the backend-owned mesh entry.
+    // Invalid handles throw rather than deleting arbitrary native storage.
     void MetalBackend::DestroyMesh(std::uint64_t handle){m_Impl->WaitForLastCommand();if(m_Impl->Meshes.erase(handle)!=1u)throw std::out_of_range("Cannot destroy an unknown Metal mesh handle.");}
     std::uint64_t MetalBackend::CreateTexture(const MetalTextureUpload& upload){if(upload.Width==0u||upload.Height==0u||upload.MipLevels==0u||upload.Bytes==nullptr)throw std::invalid_argument("Metal texture upload is incomplete.");const auto handle=m_Impl->NextTexture++;m_Impl->Textures.emplace(handle,m_Impl->UploadTexture(upload));return handle;}
+    // Wait before releasing a material texture referenced by prior draws.
+    // Completion of previous work is separate from CPU handle validation.
     void MetalBackend::DestroyTexture(std::uint64_t handle){m_Impl->WaitForLastCommand();if(m_Impl->Textures.erase(handle)!=1u)throw std::out_of_range("Cannot destroy an unknown Metal texture handle.");}
+    // Reject zero extents; BuildTargets retires native work before replacing
+    // offscreen view/ID/depth textures. CPU graph resource IDs don't do that.
     void MetalBackend::Resize(std::uint32_t width,std::uint32_t height){if(width==0u||height==0u)throw std::invalid_argument("Metal viewport extent must be non-zero.");m_Impl->BuildTargets(width,height);}
     void MetalBackend::SetDrawableSize(std::uint32_t width,std::uint32_t height){if(width>0u&&height>0u)m_Impl->Layer.drawableSize=CGSizeMake(width,height);}
+    // Commit an encoded native MTLCommandBuffer and retain it as LastCommand.
+    // This call is asynchronous with respect to GPU completion; consumers
+    // waiting for pick/capture or resource destruction call WaitForLastCommand.
     void MetalBackend::Draw(const MetalFrame& frame){@autoreleasepool{id<MTLCommandBuffer> command=[m_Impl->Queue commandBuffer];if(command==nil)throw std::runtime_error("Metal command-buffer allocation failed.");m_Impl->EncodeScene(command,frame);m_Impl->Present(command);[command commit];m_Impl->LastCommand=command;}}
+    // Validate pixel bounds, wait for completed scene render, and copy one
+    // R32Uint object-ID texel into CPU memory. Returns a backend draw ID,
+    // not an authored scene/entity/physics identifier by itself.
     std::uint32_t MetalBackend::Pick(std::uint32_t x,std::uint32_t y){if(x>=m_Impl->ViewportWidth||y>=m_Impl->ViewportHeight)throw std::out_of_range("Metal viewport pick is outside the image.");m_Impl->WaitForLastCommand();std::uint32_t value=0u;[m_Impl->ViewportID getBytes:&value bytesPerRow:sizeof(value) fromRegion:MTLRegionMake2D(x,y,1,1) mipmapLevel:0];return value;}
+    // Wait for offscreen RGBA16F render completion, copy shared texture
+    // data to a temporary Float16 array, clamp/convert to owned 8-bit RGBA.
+    // This display conversion is not a lossless HDR texture export.
     MetalCapture MetalBackend::Capture(){m_Impl->WaitForLastCommand();MetalCapture result;result.Width=m_Impl->ViewportWidth;result.Height=m_Impl->ViewportHeight;result.ByteCount=static_cast<std::size_t>(result.Width)*result.Height*4u;result.RGBA=std::make_unique<std::uint8_t[]>(result.ByteCount);std::vector<std::uint16_t> half(static_cast<std::size_t>(result.Width)*result.Height*4u);[m_Impl->ViewportColor getBytes:half.data() bytesPerRow:static_cast<NSUInteger>(result.Width)*8u fromRegion:MTLRegionMake2D(0,0,result.Width,result.Height) mipmapLevel:0];for(std::size_t i=0;i<half.size();++i)result.RGBA[i]=static_cast<std::uint8_t>(std::clamp(HalfToFloat(half[i]),0.0f,1.0f)*255.0f+0.5f);return result;}
+    // Return a bridged NONOWNING native texture pointer for editor display.
+    // Its identity changes after BuildTargets/Resize; caller must not retain
+    // past backend destruction or resize without its own ownership policy.
     void* MetalBackend::ViewportTexture()const noexcept{return (__bridge void*)m_Impl->ViewportColor;}
     void* MetalBackend::Device()const noexcept{return (__bridge void*)m_Impl->Device;}
     std::uint32_t MetalBackend::Width()const noexcept{return m_Impl->ViewportWidth;}
