@@ -130,7 +130,7 @@ Metal's shared-resource behavior and the retention of encoded objects are not pe
 
 ## 8. Important error-path audits discovered in source
 
-The following are **source-level risks, not newly observed crashes**. Keep them as a separate correctness workstream from the teaching-comment commits:
+**Later repair status:** the command-pool, host-buffer, frame-sync, swapchain and depth-attachment partial-construction leak paths now have explicit cleanup logic. See [the completed Vulkan constructor-rollback source pass](VULKAN_PARTIAL_CONSTRUCTION_ROLLBACK_LAB.md). The table preserves the original **failure scenarios that still require native fault-injection tests**; the last row (frame fence reset before failed submission) is **not repaired**. These were source-audit findings, not observed driver crashes.
 
 | Location | Failure path to test | Why it matters |
 | --- | --- | --- |
@@ -140,7 +140,7 @@ The following are **source-level risks, not newly observed crashes**. Keep them 
 | [`VulkanSwapchain.cppm`](../VulkanSwapchain.cppm) | swapchain creation succeeds and later image-view creation fails | partial native state needs cleanup even though the enclosing constructor did not finish |
 | [`VulkanRenderer.cppm`](../VulkanRenderer.cppm) | fence resets after acquire, then recording or submit throws before a successful queue submission | no submission may signal the reset fence; the next `vkWaitForFences(...,UINT64_MAX)` can stall indefinitely unless frame-state recovery recreates/signals the fence |
 
-Correctness remediation should be proposed as a separate change with targeted injected-failure tests, strong lifetime guarantees, and appropriate Vulkan validation-layer/driver evidence. In particular, merely catching a Vulkan error without deciding which native resources may still be in flight can make cleanup worse.
+The local constructor-cleanup changes have now been committed, but require targeted injected-failure tests and Vulkan validation-layer evidence before they are certified. Merely catching a Vulkan error without deciding which native resources may still be in flight can make cleanup worse. Fence-reset recovery and queue/device-loss teardown remain separate tasks.
 
 On Metal, verify that asynchronous commit errors are surfaced in every intended error path, and test resizing/destroying while a prior frame is in flight. A successful normal draw does not establish that every failure/teardown path is correct.
 
