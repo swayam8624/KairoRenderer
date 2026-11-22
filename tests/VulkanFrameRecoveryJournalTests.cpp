@@ -159,6 +159,20 @@ int main()
             std::vector<std::string>{ "drain", "rebuild" },
             "An unsuccessful native rebuild was incorrectly treated as safe");
 
+        // A C++ RenderGraph compilation/profiling exception with no WSI
+        // acquisition (or after successful present) may safely be retried.
+        // Native fence/acquire errors must NOT be interpreted as host-only.
+        using kairo::renderer::detail::CanRetryWithoutVulkanRebuild;
+        Require(CanRetryWithoutVulkanRebuild(untouched, false, false),
+            "A pre-acquire CPU-only exception unnecessarily poisoned the device");
+        Require(CanRetryWithoutVulkanRebuild(completed, false, false),
+            "A post-present CPU-only exception unnecessarily poisoned the device");
+        Require(!CanRetryWithoutVulkanRebuild(untouched, false, true) &&
+            !CanRetryWithoutVulkanRebuild(untouched, true, false) &&
+            !CanRetryWithoutVulkanRebuild(recordFailed, false, false) &&
+            !CanRetryWithoutVulkanRebuild(presentFailed, false, false),
+            "Unsafe Vulkan state was incorrectly marked safe for host retry");
+
         std::puts("KairoRenderer Vulkan frame recovery journal tests passed");
         return 0;
     }
