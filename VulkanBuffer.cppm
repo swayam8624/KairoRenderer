@@ -7,6 +7,10 @@ module;
 #include <cstring>
 #include <stdexcept>
 
+// TEACHING VULKAN BUFFER: VulkanHostBuffer owns VkBuffer + VkDeviceMemory
+// + a persistent CPU mapping. HOST_VISIBLE|HOST_COHERENT means CPU writes
+// do not need explicit vkFlushMappedMemoryRanges; it does NOT replace
+// queue semaphore/fence synchronization for racing GPU reads/writes.
 export module Kairo.Renderer.VulkanBuffer;
 
 import Kairo.Renderer.VulkanDevice;
@@ -21,6 +25,12 @@ export namespace kairo::renderer
     class VulkanHostBuffer final
     {
     public:
+        // Create VkBuffer, query its memory requirements, choose a memory
+        // type satisfying required host visibility/coherence, allocate,
+        // bind and map the requested byte range. Device is borrowed.
+        // AUDIT: failure midway through construction can leak already
+        // created native objects, because this class's destructor runs only
+        // after successful construction. Prefer scoped RAII staging guards.
         VulkanHostBuffer(const VulkanDevice& device, VkDeviceSize bytes, VkBufferUsageFlags usage)
             : m_Device(device.Handle()), m_Size(bytes)
         {
@@ -55,6 +65,9 @@ export namespace kairo::renderer
             }
         }
 
+        // Unmap, free device memory and release VkBuffer after all GPU work
+        // referencing it retires. Persistent mapping does not pin a CPU
+        // pointer beyond this object's lifetime.
         ~VulkanHostBuffer()
         {
             if (m_Mapped != nullptr) vkUnmapMemory(m_Device, m_Memory);
@@ -68,6 +81,9 @@ export namespace kairo::renderer
 
         /// Precondition: byteCount does not exceed construction size.
         /// Task: copy CPU bytes into coherent GPU-visible storage.
+        // memcpy into mapped host-coherent storage. Guard source and size,
+        // but callers must ensure no simultaneous GPU read of overwritten
+        // bytes; CPU memory coherence is not execution-order synchronization.
         void Write(const void* source, VkDeviceSize byteCount) const
         {
             if (source == nullptr || byteCount > m_Size)
@@ -80,6 +96,9 @@ export namespace kairo::renderer
         /// Input: writable destination and requested byte count.
         /// Output: a snapshot of host-coherent GPU-written storage.
         /// Precondition: the queue operation writing this buffer has completed.
+        // memcpy after the GPU writer has signaled completion (typically
+        // the frame fence). The mapped address alone does not guarantee
+        // the producer command has finished or the layout is valid.
         void Read(void* destination, VkDeviceSize byteCount) const
         {
             if (destination == nullptr || byteCount > m_Size)
@@ -94,6 +113,10 @@ export namespace kairo::renderer
         void* m_Mapped = nullptr;
         VkDeviceSize m_Size = 0u;
 
+        // Select a physical-device memoryTypeIndex compatible with the
+        // buffer requirements bitmask AND host-visible/coherent properties.
+        // Failure means this simple host-buffer strategy is unavailable,
+        // not that every possible Vulkan staging strategy is unavailable.
         [[nodiscard]] static std::uint32_t FindMemoryType(VkPhysicalDevice physical, std::uint32_t bits, VkMemoryPropertyFlags required)
         {
             VkPhysicalDeviceMemoryProperties properties{};
