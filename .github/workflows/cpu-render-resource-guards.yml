@@ -10,22 +10,28 @@ on:
       - "detail/NativeResourcePublication.hpp"
       - "detail/VulkanFrameRecoveryJournal.hpp"
       - "detail/TransactionalResourceGeneration.hpp"
+      - "detail/TextureMipUploadPlan.hpp"
       - "tests/NativeResourcePublicationTests.cpp"
       - "tests/VulkanFrameRecoveryJournalTests.cpp"
       - "tests/TransactionalResourceGenerationTests.cpp"
+      - "tests/TextureMipUploadPlanTests.cpp"
       - "VulkanRenderer.cppm"
       - "VulkanDescriptor.cppm"
+      - "VulkanTexture.cppm"
       - ".github/workflows/cpu-render-resource-guards.yml"
   pull_request:
     paths:
       - "detail/NativeResourcePublication.hpp"
       - "detail/VulkanFrameRecoveryJournal.hpp"
       - "detail/TransactionalResourceGeneration.hpp"
+      - "detail/TextureMipUploadPlan.hpp"
       - "tests/NativeResourcePublicationTests.cpp"
       - "tests/VulkanFrameRecoveryJournalTests.cpp"
       - "tests/TransactionalResourceGenerationTests.cpp"
+      - "tests/TextureMipUploadPlanTests.cpp"
       - "VulkanRenderer.cppm"
       - "VulkanDescriptor.cppm"
+      - "VulkanTexture.cppm"
       - ".github/workflows/cpu-render-resource-guards.yml"
   workflow_dispatch:
 
@@ -63,5 +69,10 @@ jobs:
             tests/TransactionalResourceGenerationTests.cpp \
             -o "$RUNNER_TEMP/kairo-cpu/transactional-generation"
           "$RUNNER_TEMP/kairo-cpu/transactional-generation"
+
+          "$CXX" -std=c++23 -O0 -g -Wall -Wextra -Werror -pedantic \
+            tests/TextureMipUploadPlanTests.cpp \
+            -o "$RUNNER_TEMP/kairo-cpu/texture-mip-upload"
+          "$RUNNER_TEMP/kairo-cpu/texture-mip-upload"
 
           echo "GPU-independent regression checks passed; native driver tests remain separate."
