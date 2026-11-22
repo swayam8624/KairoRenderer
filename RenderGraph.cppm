@@ -9,8 +9,10 @@
 // CompiledRenderGraph::Execute invokes transition hooks/callbacks in that
 // CPU schedule and measures CPU time. These hooks DO NOT automatically
 // allocate Vulkan images, insert Metal barriers, or enforce native GPU sync.
-// RendererRuntime currently wraps native backend DrawFrame as an envelope
-// pass. Native pass-level graph integration is a separate engineering task.
+// RendererRuntime delegates DrawFrame to the selected native backend. Each
+// native backend owns its own scheduling and profile details; this standalone
+// graph compiler is not proof that every backend routes its passes through
+// precisely the same graph implementation.
 //
 // Handle values are graph-local indices. Resource IDs, pass IDs, alias slot
 // numbers and native Vk/MTL handles are not interchangeable. Read
