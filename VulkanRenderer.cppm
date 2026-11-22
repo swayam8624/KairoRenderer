@@ -2,6 +2,7 @@ module;
 
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
+#include "detail/VulkanFrameRecoveryJournal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -82,6 +83,9 @@ export namespace kairo::renderer
         // A zero-size framebuffer deliberately skips all native operations.
         void DrawFrame()
         {
+            if (!m_FrameUsable)
+                throw std::runtime_error(
+                    "Vulkan renderer cannot submit more frames after unrecoverable WSI/device failure.");
             const auto [width, height] = m_Window.FramebufferExtent();
             if (width == 0u || height == 0u)
             {
@@ -94,6 +98,8 @@ export namespace kairo::renderer
             std::uint32_t imageIndex = 0u;
             VkResult acquireResult = VK_SUCCESS;
             bool frameActive = true;
+            bool rebuildingSwapchain = false;
+            detail::VulkanFrameRecoveryJournal frameJournal;
 
             RenderGraph graph;
             const auto nativeFrame = graph.AddResource({ "VulkanNativeFrame",
@@ -115,28 +121,31 @@ export namespace kairo::renderer
                 CompleteViewportCapture();
             });
 
-            // Acquire a presentable image. OUT_OF_DATE triggers an idle
-            // swapchain rebuild; SUBOPTIMAL may still render. Reset the
-            // fence only after successful acquire, just before submission.
+            // Acquire a presentable image. OUT_OF_DATE triggers a swapchain
+            // rebuild; SUBOPTIMAL may still render. Do NOT reset the frame
+            // fence here: command recording may still fail without any GPU
+            // submission capable of signaling the reset fence.
             const auto acquirePass = graph.AddPass("Acquire", {
                 { nativeFrame, RenderAccessMode::ReadWrite,
                     RenderResourceState::Present }
-            }, [this, device, inFlight, &imageIndex, &acquireResult, &frameActive]
+            }, [this, device, &imageIndex, &acquireResult, &frameActive,
+                &rebuildingSwapchain, &frameJournal]
             {
                 acquireResult = vkAcquireNextImageKHR(
                     device, m_Swapchain.Handle(), UINT64_MAX,
                     m_Sync.ImageAvailable(), VK_NULL_HANDLE, &imageIndex);
                 if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
                 {
+                    rebuildingSwapchain = true;
                     RecreateSwapchain();
+                    rebuildingSwapchain = false;
                     frameActive = false;
                     return;
                 }
                 if (acquireResult != VK_SUCCESS &&
                     acquireResult != VK_SUBOPTIMAL_KHR)
                     throw std::runtime_error("vkAcquireNextImageKHR failed.");
-                if (vkResetFences(device, 1u, &inFlight) != VK_SUCCESS)
-                    throw std::runtime_error("vkResetFences failed.");
+                frameJournal.Acquired();
             });
             graph.DependsOn(acquirePass, retirePass);
 
@@ -151,13 +160,14 @@ export namespace kairo::renderer
             });
             graph.DependsOn(recordPass, acquirePass);
 
-            // vkQueueSubmit waits on ImageAvailable at COLOR_ATTACHMENT_OUTPUT,
-            // signals per-image RenderFinished and associates the CPU fence
-            // with this submission. A successful submit is NOT completion.
+            // ONLY after successful command recording, reset the signaled
+            // frame fence and submit the command buffer. If submit then fails,
+            // a recovery rebuild must replace the unsignaled fence rather than
+            // waiting on it the next frame. Successful submit is NOT completion.
             const auto submitPass = graph.AddPass("Submit", {
                 { nativeFrame, RenderAccessMode::Read,
                     RenderResourceState::ColorAttachment }
-            }, [this, &imageIndex, &frameActive]
+            }, [this, device, inFlight, &imageIndex, &frameActive, &frameJournal]
             {
                 if (!frameActive) return;
 
@@ -176,10 +186,13 @@ export namespace kairo::renderer
                 submit.pCommandBuffers = &command;
                 submit.signalSemaphoreCount = 1u;
                 submit.pSignalSemaphores = &renderFinished;
+                if (vkResetFences(device, 1u, &inFlight) != VK_SUCCESS)
+                    throw std::runtime_error("vkResetFences failed before submission.");
+                frameJournal.FenceReset();
                 if (vkQueueSubmit(
-                    m_Device.GraphicsQueue(), 1u, &submit,
-                    m_Sync.InFlight()) != VK_SUCCESS)
+                    m_Device.GraphicsQueue(), 1u, &submit, inFlight) != VK_SUCCESS)
                     throw std::runtime_error("vkQueueSubmit failed.");
+                frameJournal.Submitted();
 
                 if (m_PickRequested.has_value())
                 {
@@ -200,7 +213,8 @@ export namespace kairo::renderer
             const auto presentPass = graph.AddPass("Present", {
                 { nativeFrame, RenderAccessMode::ReadWrite,
                     RenderResourceState::Present }
-            }, [this, &imageIndex, &acquireResult, &frameActive]
+            }, [this, &imageIndex, &acquireResult, &frameActive,
+                &rebuildingSwapchain, &frameJournal]
             {
                 if (!frameActive) return;
 
@@ -220,16 +234,57 @@ export namespace kairo::renderer
                     result == VK_SUBOPTIMAL_KHR ||
                     acquireResult == VK_SUBOPTIMAL_KHR)
                 {
+                    rebuildingSwapchain = true;
                     RecreateSwapchain();
+                    rebuildingSwapchain = false;
+                    frameJournal.Completed();
                     frameActive = false;
                     return;
                 }
                 if (result != VK_SUCCESS)
                     throw std::runtime_error("vkQueuePresentKHR failed.");
+                frameJournal.Completed();
             });
             graph.DependsOn(presentPass, submitPass);
 
-            m_LastFrameProfile = graph.Compile().Execute();
+            try
+            {
+                m_LastFrameProfile = graph.Compile().Execute();
+            }
+            catch (...)
+            {
+                // No later frame may wait on a fence whose signal was never
+                // submitted, or reuse an acquired binary semaphore/image.
+                // Keep the renderer blocked unless a complete idle/recreate
+                // succeeds. Preserve the ORIGINAL exception for the caller.
+                m_FrameUsable = false;
+                m_LastFrameProfile = {};
+                if (frameJournal.RequiresSwapchainRecovery() &&
+                    !rebuildingSwapchain)
+                {
+                    try
+                    {
+                        RecreateSwapchain(); // vkDeviceWaitIdle before teardown
+                        // Failed-frame readbacks must not be consumed as if
+                        // their transfer commands had completed normally.
+                        m_PickRequested.reset();
+                        m_PickInFlight = false;
+                        m_CaptureRequested = false;
+                        m_CaptureInFlight = false;
+                        m_CaptureReadback.reset();
+                        m_CaptureExtent = {};
+                        m_FrameUsable = true;
+                    }
+                    catch (...)
+                    {
+                        // A device-lost / failed rebuild is not retriable
+                        // with the old semaphore, fence and swapchain state.
+                        // Future DrawFrame calls now fail fast instead of
+                        // hanging in vkWaitForFences(UINT64_MAX).
+                    }
+                }
+                throw;
+            }
         }
 
         [[nodiscard]] const RenderGraphExecutionProfile& LastFrameProfile()
@@ -432,6 +487,7 @@ export namespace kairo::renderer
         bool m_CaptureRequested = false;
         bool m_CaptureInFlight = false;
         RenderGraphExecutionProfile m_LastFrameProfile;
+        bool m_FrameUsable = true;
 
         /// Task: record the complete mesh and debug-line render pass.
         // Delegate actual native command recording (render pass, barriers,
