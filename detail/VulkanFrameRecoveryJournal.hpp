@@ -77,6 +77,16 @@ namespace kairo::renderer::detail
                 m_Phase == VulkanFramePhase::Submitted;
         }
 
+        [[nodiscard]] bool AcquireSemaphoreUnconsumed() const noexcept
+        {
+            // A successful real vkQueueSubmit waits on ImageAvailable.
+            // Recording failure / submit failure leaves that binary WSI
+            // signal without a queue wait. A synchronization-only submission
+            // must consume it before its semaphore/swapchain is destroyed.
+            return m_Phase == VulkanFramePhase::Acquired ||
+                m_Phase == VulkanFramePhase::FenceReset;
+        }
+
         [[nodiscard]] bool FenceResetWithoutSubmission() const noexcept
         {
             return m_Phase == VulkanFramePhase::FenceReset;
