@@ -8,6 +8,8 @@ Work from backend-neutral types and graph policies toward API-specific execution
 
 Read each phase in order. Every link goes to a source file or directory in this repository. For a directory, inspect its public interface and then its implementation files. After each phase, identify the caller, the state it owns, the inputs it validates, and its observable outputs.
 
+**Algorithm exercise:** [How RenderGraph compiles resource hazards, orders passes and reuses transient storage](RENDER_GRAPH_COMPILER_WORKED_EXAMPLES.md). It also documents declaration-error exception-safety limitations.
+
 ## 1. Foundational contracts and resource ownership
 
 The best starting point is the new
