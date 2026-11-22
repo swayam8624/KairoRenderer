@@ -1,3 +1,17 @@
+// TEACHING MODULE: Vulkan synchronization resources belong to a *device*
+// and must outlive the submitted GPU work that references them.
+// The acquire semaphore, render-complete semaphores (one per swapchain
+// image here), and frame fence bridge GPU queue ordering to CPU reuse.
+//
+// First-frame fence state and wait/reset order are essential: re-recording
+// a command buffer or freeing a swapchain-dependent semaphore before its
+// GPU usage completes can produce a host-visible race. Recreate requires
+// idle device state; VulkanRenderer and VulkanSwapchain enforce the wider
+// presentation lifecycle around this helper.
+//
+// These Vk handles are native objects, not the logical resource
+// transitions emitted by RenderGraph.cppm. Read VulkanRenderer.cppm
+// alongside this file before moving frame scheduling between backends.
 module;
 
 #include <vulkan/vulkan.h>
@@ -18,6 +32,9 @@ export namespace kairo::renderer
     /// Task: make the one-buffer renderer race-free before introducing a
     /// multi-frame scheduler. The fence begins signaled so the first frame can
     /// record immediately.
+    // RAII ownership for exactly one frame-in-flight scheduling scheme.
+    // Per-image completion semaphores scale with the swapchain image
+    // count; this is not a generic multi-frame synchronization ring.
     class VulkanFrameSync final
     {
     public:
