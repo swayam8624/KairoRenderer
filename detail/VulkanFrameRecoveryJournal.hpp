@@ -105,17 +105,19 @@ namespace kairo::renderer::detail
         }
     };
 
-    // An ordinary host exception BEFORE any Vulkan image acquisition does not
-    // invalidate a signaled frame fence or a binary WSI semaphore. Allow the
-    // caller to retry such a CPU-only failure. Device errors during the Retire
-    // fence wait or vkAcquireNextImageKHR, and incomplete swapchain rebuilds,
-    // still require a sticky unusable state rather than blind retries.
-    [[nodiscard]] inline bool CanRetryBeforeVulkanAcquire(
+    // CPU-only failures before acquisition cannot strand an image, semaphore
+    // or unsignaled fence. Likewise an error after a fully successful Present
+    // callback (such as host profile allocation) leaves no native work to
+    // recover. Real fence/acquire API failures and failed rebuilds are never
+    // silently retried against potentially invalid Vulkan device state.
+    [[nodiscard]] inline bool CanRetryWithoutVulkanRebuild(
         const VulkanFrameRecoveryJournal& frame,
         bool rebuildingAlreadyInProgress,
         bool nativeOperationFailed) noexcept
     {
-        return frame.Phase() == VulkanFramePhase::BeforeAcquire &&
+        const auto phase = frame.Phase();
+        return (phase == VulkanFramePhase::BeforeAcquire ||
+                phase == VulkanFramePhase::Completed) &&
             !rebuildingAlreadyInProgress && !nativeOperationFailed;
     }
 
