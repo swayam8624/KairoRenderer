@@ -138,7 +138,7 @@ For material channels with no authored texture, `VulkanTriangle::TextureOr` sele
 
 `VulkanTriangle::RebuildMaterialDescriptors` runs when the current scene/texture bindings change, after the prior submitted command buffer has retired at the frame fence. It builds all five sampled image bindings per draw, includes the environment texture, and asks `VulkanMaterialDescriptors::Rebuild` to replace its sets/pool/uniform buffers. The per-draw set is then bound by `BindMaterial(drawIndex)` while recording native draw calls.
 
-**Failure-path audit:** the rebuild routine destroys its previous pool before validating and allocating every new draw. A later invalid texture/material or allocation error can leave an incomplete set collection and no previous valid descriptors. This is **not strong exception safety**. A future transactional rebuild should build a complete new pool and buffers into local RAII holders and publish them only after all allocations and validation succeed.
+**Later correctness update:** the descriptor rebuild is now **transactional**, with a detached RAII candidate pool/set/UBO generation, full preflight and a non-throwing ownership swap. An invalid material or failed candidate allocation preserves the previous active generation. [Read the completed transaction laboratory](TRANSACTIONAL_VULKAN_DESCRIPTOR_GENERATIONS_LAB.md). Native Vulkan fault injection, borrowed-image lifetime and multiple frames in flight remain independent verification/design tasks.
 
 ## 7. Scene color, object IDs and depth are three different native images
 
