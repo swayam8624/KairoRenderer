@@ -28,9 +28,9 @@ export namespace kairo::renderer
         // Create VkBuffer, query its memory requirements, choose a memory
         // type satisfying required host visibility/coherence, allocate,
         // bind and map the requested byte range. Device is borrowed.
-        // AUDIT: failure midway through construction can leak already
-        // created native objects, because this class's destructor runs only
-        // after successful construction. Prefer scoped RAII staging guards.
+        // Constructor catches any later allocation/bind/map error and calls
+        // the same partial-handle-safe Destroy used by the destructor. This
+        // matters because the destructor does not run for a failed constructor.
         VulkanHostBuffer(const VulkanDevice& device, VkDeviceSize bytes, VkBufferUsageFlags usage)
             : m_Device(device.Handle()), m_Size(bytes)
         {
@@ -38,7 +38,9 @@ export namespace kairo::renderer
             {
                 throw std::invalid_argument("VulkanHostBuffer requires a non-zero byte count.");
             }
-            VkBufferCreateInfo create{};
+            try
+            {
+                VkBufferCreateInfo create{};
             create.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
             create.size = bytes;
             create.usage = usage;
@@ -63,17 +65,18 @@ export namespace kairo::renderer
             {
                 throw std::runtime_error("Failed to bind or map a Vulkan host buffer.");
             }
+            }
+            catch (...)
+            {
+                Destroy();
+                throw;
+            }
         }
 
-        // Unmap, free device memory and release VkBuffer after all GPU work
+        // Unmap, destroy buffer, then free device memory after all GPU work
         // referencing it retires. Persistent mapping does not pin a CPU
         // pointer beyond this object's lifetime.
-        ~VulkanHostBuffer()
-        {
-            if (m_Mapped != nullptr) vkUnmapMemory(m_Device, m_Memory);
-            if (m_Memory != VK_NULL_HANDLE) vkFreeMemory(m_Device, m_Memory, nullptr);
-            if (m_Buffer != VK_NULL_HANDLE) vkDestroyBuffer(m_Device, m_Buffer, nullptr);
-        }
+        ~VulkanHostBuffer() { Destroy(); }
 
         VulkanHostBuffer(const VulkanHostBuffer&) = delete;
         VulkanHostBuffer& operator=(const VulkanHostBuffer&) = delete;
@@ -112,6 +115,23 @@ export namespace kairo::renderer
         VkDeviceMemory m_Memory = VK_NULL_HANDLE;
         void* m_Mapped = nullptr;
         VkDeviceSize m_Size = 0u;
+
+        // A single noexcept rollback path handles a partially constructed
+        // buffer, a failed map, and normal destruction. The VkBuffer must be
+        // destroyed before freeing the VkDeviceMemory bound to it.
+        void Destroy() noexcept
+        {
+            if (m_Mapped != nullptr)
+                vkUnmapMemory(m_Device, m_Memory);
+            m_Mapped = nullptr;
+            if (m_Buffer != VK_NULL_HANDLE)
+                vkDestroyBuffer(m_Device, m_Buffer, nullptr);
+            m_Buffer = VK_NULL_HANDLE;
+            if (m_Memory != VK_NULL_HANDLE)
+                vkFreeMemory(m_Device, m_Memory, nullptr);
+            m_Memory = VK_NULL_HANDLE;
+            m_Size = 0u;
+        }
 
         // Select a physical-device memoryTypeIndex compatible with the
         // buffer requirements bitmask AND host-visible/coherent properties.
