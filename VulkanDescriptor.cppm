@@ -7,6 +7,7 @@ module;
 #include <bit>
 #include <cstddef>
 #include <memory>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -221,19 +222,42 @@ export namespace kairo::renderer
         // descriptor set for every submitted MeshDraw, then bind camera,
         // shadow, PBR images, environment and optional copied joint matrices.
         // CRITICAL: caller must have waited for the previous frame fence.
-        // Rebuild's clear-first strategy is not a strong-exception-safety
-        // transaction: a later invalid material can leave an incomplete set
-        // collection, so the next call must rebuild from a clean state.
+        // Validate all borrowed handles, material factors and skin palettes
+        // BEFORE deleting the previous pool, so a malformed new scene does
+        // not invalidate existing descriptors. Native allocation failures
+        // later in Rebuild still lack a transactional old/new pool swap.
         void Rebuild(const VulkanHostBuffer& camera, VkDeviceSize cameraRange,
             VkImageView shadowView, VkSampler shadowSampler,
             std::span<const VulkanMaterialImages> materials)
         {
-            ClearPool();
-            if (materials.empty()) return;
+            // A malformed new scene must not destroy the old descriptor set
+            // generation before validation has identified the input error.
+            if (materials.empty())
+            {
+                ClearPool();
+                return;
+            }
             if (cameraRange == 0u || shadowView == VK_NULL_HANDLE ||
                 shadowSampler == VK_NULL_HANDLE)
                 throw std::invalid_argument("Material descriptors require valid camera and shadow resources.");
+            if (materials.size() >
+                static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / 7u))
+                throw std::length_error("Material descriptor pool count would overflow Vulkan uint32 capacities.");
+            for (const auto& source : materials)
+            {
+                source.Material.Validate();
+                for (std::size_t channel = 0u; channel < 5u; ++channel)
+                    if (source.Views[channel] == VK_NULL_HANDLE ||
+                        source.Samplers[channel] == VK_NULL_HANDLE)
+                        throw std::invalid_argument("PBR material descriptors require five valid sampled images.");
+                if (source.EnvironmentView == VK_NULL_HANDLE ||
+                    source.EnvironmentSampler == VK_NULL_HANDLE)
+                    throw std::invalid_argument("PBR material descriptors require a valid environment fallback image.");
+                if (source.Skinning != nullptr && !source.Skinning->Empty())
+                    source.Skinning->Validate();
+            }
 
+            ClearPool();
             const std::uint32_t count = static_cast<std::uint32_t>(materials.size());
             const std::array poolSizes{
                 VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count * 3u },
