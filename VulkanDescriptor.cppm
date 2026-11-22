@@ -11,6 +11,11 @@ module;
 #include <stdexcept>
 #include <vector>
 
+// TEACHING DESCRIPTORS: VkDescriptorSetLayout declares shader-visible
+// bindings, VkDescriptorPool allocates set storage, and each VkDescriptorSet
+// BORROWS the referenced image views, samplers and uniform buffers.
+// VulkanTriangle builds per-draw bindings only after frame-fence retirement.
+// The descriptor's declared image layout must match actual native barriers.
 export module Kairo.Renderer.VulkanDescriptor;
 
 import Kairo.Renderer.VulkanBuffer;
@@ -26,9 +31,15 @@ export namespace kairo::renderer
     /// Task: keep frame-global descriptor ownership out of pipeline recording.
     /// The descriptor does not own the buffer, image view, or sampler; those
     /// resources must outlive this object.
+    // One global camera/shadow set: binding 0 uniform buffer, binding 1
+    // sampled depth shadow texture. No ownership of either referenced input.
     class VulkanUniformDescriptor final
     {
     public:
+        // Allocate stable layout+pool+set and write two borrowed bindings.
+        // The constructor catches mid-build failure and destroys owned Vulkan
+        // descriptor objects; it never frees the caller's uniform/shadow GPU
+        // memory. Resource lifetime must exceed all in-flight draws.
         VulkanUniformDescriptor(const VulkanDevice& device, const VulkanHostBuffer& buffer, VkDeviceSize range,
             VkImageView shadowView, VkSampler shadowSampler)
             : m_Device(device.Handle())
@@ -130,6 +141,9 @@ export namespace kairo::renderer
 
     /// Non-owning texture views used to assemble one per-draw material set.
     /// Order is base color, normal, metallic-roughness, emissive, occlusion.
+    // Per-draw INPUT bundle of five borrowed PBR image/sampler pairs, a
+    // borrowed environment image, a validated CPU material, and optionally
+    // a borrowed SkinPalette. Rebuild copies numeric skin data into owned UBOs.
     struct VulkanMaterialImages final
     {
         std::array<VkImageView, 5u> Views{};
@@ -145,9 +159,16 @@ export namespace kairo::renderer
     /// Owns a stable descriptor-set layout and a fence-safe, rebuildable pool
     /// of per-draw material sets. Camera and shadow resources are shared; each
     /// set owns a small coherent material uniform and five sampled channels.
+    // Ten-slot shader interface: 0 camera, 1 directional shadow, 2-6 five
+    // PBR samplers, 7 material uniform, 8 environment, 9 optional skin UBO.
+    // The descriptor-set layout persists; the set pool and uniform buffers
+    // are rebuilt per scene version after prior frame work completes.
     class VulkanMaterialDescriptors final
     {
     public:
+        // Declare set layout ONCE with fixed descriptor types and shader
+        // visibility. VulkanTriangle::BindMaterial relies on this same layout;
+        // adding a binding requires a shader and pipeline-layout update.
         explicit VulkanMaterialDescriptors(const VulkanDevice& device)
             : m_DeviceObject(device), m_Device(device.Handle())
         {
@@ -183,6 +204,9 @@ export namespace kairo::renderer
 
         [[nodiscard]] VkDescriptorSetLayout Layout() const noexcept { return m_Layout; }
         [[nodiscard]] std::size_t Size() const noexcept { return m_Sets.size(); }
+        // Return a borrowed descriptor set indexed by current draw order.
+        // Rebuild can invalidate the handle and reorder per-draw bindings;
+        // never cache it across scene descriptor regeneration.
         [[nodiscard]] VkDescriptorSet Set(std::size_t index) const
         {
             if (index >= m_Sets.size())
@@ -193,6 +217,13 @@ export namespace kairo::renderer
         /// Precondition: the render fence has completed and every supplied
         /// image remains alive until the next rebuild. Rebuild is intentionally
         /// frame-boundary work; descriptor pools are never destroyed in flight.
+        // Release the previous pool and per-draw UBOs, allocate a fresh
+        // descriptor set for every submitted MeshDraw, then bind camera,
+        // shadow, PBR images, environment and optional copied joint matrices.
+        // CRITICAL: caller must have waited for the previous frame fence.
+        // Rebuild's clear-first strategy is not a strong-exception-safety
+        // transaction: a later invalid material can leave an incomplete set
+        // collection, so the next call must rebuild from a clean state.
         void Rebuild(const VulkanHostBuffer& camera, VkDeviceSize cameraRange,
             VkImageView shadowView, VkSampler shadowSampler,
             std::span<const VulkanMaterialImages> materials)
@@ -244,6 +275,10 @@ export namespace kairo::renderer
                     throw std::invalid_argument(
                         "PBR material descriptors require a valid environment fallback image.");
 
+                // Pack material factors in the exact shader uniform slot
+                // sequence: base RGBA, emissive RGB/normal scale, metallic,
+                // roughness, AO, alpha threshold/mode and double-sided bit.
+                // The temporary CPU array is copied into a per-draw UBO.
                 MaterialUniform uniform{};
                 uniform.Values[0] = source.Material.BaseColor.x;
                 uniform.Values[1] = source.Material.BaseColor.y;
@@ -266,6 +301,9 @@ export namespace kairo::renderer
                 const VkDescriptorBufferInfo cameraInfo{ camera.Handle(), 0u, cameraRange };
                 const VkDescriptorImageInfo shadowInfo{ shadowSampler, shadowView,
                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL };
+                // The five sampled views must already be in native
+                // SHADER_READ_ONLY_OPTIMAL layout, established by the texture
+                // uploader or a later explicit render-pass transition.
                 std::array<VkDescriptorImageInfo, 5u> imageInfos{};
                 for (std::size_t channel = 0u; channel < imageInfos.size(); ++channel)
                     imageInfos[channel] = { source.Samplers[channel], source.Views[channel],
@@ -275,6 +313,9 @@ export namespace kairo::renderer
                 const VkDescriptorImageInfo environmentInfo{ source.EnvironmentSampler,
                     source.EnvironmentView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 
+                // Copy the caller-owned SkinPalette into a new persistent
+                // host-coherent uniform buffer. Vulkan shaders read a stable
+                // GPU allocation, never the transient CPU palette pointer.
                 std::unique_ptr<VulkanHostBuffer> skinBuffer;
                 VkDescriptorBufferInfo skinInfo{};
                 if (source.Skinning != nullptr && !source.Skinning->Empty())
@@ -292,6 +333,10 @@ export namespace kairo::renderer
                     skinInfo = { skinBuffer->Handle(), 0u, sizeof(SkinUniform) };
                 }
 
+                // DescriptorWrite arrays hold pointers to local VkDescriptor*
+                // structs ONLY until vkUpdateDescriptorSets copies the values.
+                // The referenced VkBuffer/VkImageView/VkSampler handles remain
+                // borrowed and require longer GPU lifetime management.
                 std::array<VkWriteDescriptorSet, 10u> writes{};
                 writes[0] = Write(m_Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                 writes[0].pBufferInfo = &cameraInfo;
@@ -336,6 +381,8 @@ export namespace kairo::renderer
         std::vector<std::unique_ptr<VulkanHostBuffer>> m_MaterialBuffers;
         std::vector<std::unique_ptr<VulkanHostBuffer>> m_SkinBuffers;
 
+        // Fill one descriptor-write header with a type, target set and slot;
+        // callers add the matching buffer/image pointer before the update.
         [[nodiscard]] static VkWriteDescriptorSet Write(VkDescriptorSet set,
             std::uint32_t binding, VkDescriptorType type) noexcept
         {
@@ -348,6 +395,9 @@ export namespace kairo::renderer
             return write;
         }
 
+        // Drop per-draw UBO owners and descriptor handles, then destroy pool.
+        // Requires prior GPU retirement; a VkDescriptorSet is not a CPU-only
+        // object once a pending draw has bound it.
         void ClearPool() noexcept
         {
             m_SkinBuffers.clear();
