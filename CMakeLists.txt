@@ -365,6 +365,17 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     add_test(NAME KairoRendererTextureMipUploadPlanTests
         COMMAND KairoRendererTextureMipUploadPlanTests)
 
+    # The SAME error classification policy called by VulkanTexture2D::Upload.
+    # Pure C++23 callbacks emulate rejected submit, lost device, uncertain
+    # completion and successful device-idle fallback without Vulkan.
+    add_executable(KairoRendererVulkanUploadRetirementPolicyTests
+        tests/VulkanUploadRetirementPolicyTests.cpp)
+    target_compile_features(KairoRendererVulkanUploadRetirementPolicyTests PRIVATE cxx_std_23)
+    set_property(TARGET KairoRendererVulkanUploadRetirementPolicyTests
+        PROPERTY COMPILE_WARNING_AS_ERROR ON)
+    add_test(NAME KairoRendererVulkanUploadRetirementPolicyTests
+        COMMAND KairoRendererVulkanUploadRetirementPolicyTests)
+
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
     if(UNIX AND NOT APPLE)
         add_executable(KairoRendererOpenGLSkinningSmoke tests/OpenGLSkinningSmoke.cpp)
