@@ -1,4 +1,18 @@
-// TEACHING MAP: RENDERER FACADE: The C++23 public runtime module delegates backend-neutral scene, render and debug operations to Vulkan, Metal, OpenGL or D3D12 through a tagged variant. Imports name interface dependencies. Actual device/swapchain lifetime remains inside each backend. Player and Editor consume this façade; native backend tests validate platform execution.
+// TEACHING MAP: RendererRuntime is the backend-selecting *facade* between
+// EngineCore/Editor/Player and platform GPU implementations. GraphicsBackend
+// selects only among compiled+platform-compatible implementations; no
+// automatic fallback is allowed for an explicit unsupported API request.
+//
+// Scene/mesh/texture/camera are backend-neutral *inputs*. The chosen native
+// runtime owns GPU objects, swapchain/viewport, upload, synchronization and
+// readback. RendererRuntime::DrawFrame wraps native work in a logical
+// RenderGraph execution envelope: CPU timings/transition plan do not imply
+// that shadows, PBR, debug draw and presentation are each graph-scheduled
+// native passes. This distinction matters when interpreting profiler output.
+//
+// The std::variant stores exactly one native runtime; backend-specific
+// editor overlay helpers reject mismatched backends. Tests for backend policy
+// are not equivalent to native Windows D3D12 / macOS Metal execution.
 module;
 
 #include <cstdint>
@@ -99,6 +113,10 @@ export namespace kairo::renderer
         [[nodiscard]] GraphicsBackend Backend() const noexcept { return m_Backend; }
 
         /// TEACHING METHOD: Delegate a full present/render cycle and record that backend's completed CPU render-stage profile.
+        // Facade-level frame entry: create/execute the graph envelope,
+        // delegate to the selected backend, and preserve CPU graph profile.
+        // GPU completion, picking, readback and presentation contracts
+        // belong to that backend, not to this CPU-only graph timing.
         void DrawFrame()
         {
 #if defined(KAIRO_RENDERER_HAS_OPENGL_BACKEND)
@@ -187,6 +205,9 @@ export namespace kairo::renderer
         }
 
         /// TEACHING METHOD: Hand the same authored RenderScene to each native implementation; renderer-specific draw extraction occurs downstream.
+        // RenderScene contains renderer-owned mesh handles and validated
+        // draw records, not stable KairoAssets IDs. AssetAdapters maps
+        // authored artifacts into those runtime handles beforehand.
         void SubmitRenderScene(const RenderScene& scene)
         {
             Visit([&](auto& runtime) { runtime.SubmitRenderScene(scene); });
