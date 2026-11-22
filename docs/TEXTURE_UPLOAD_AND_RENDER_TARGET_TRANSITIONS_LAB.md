@@ -172,6 +172,12 @@ Two external subpass dependencies publish fragment reads and depth writes across
 
 The sampler uses nearest filtering and clamp-to-border, with an opaque-white border value. The descriptor declares `DEPTH_STENCIL_READ_ONLY_OPTIMAL`. The shadow pass must actually run (or otherwise initialize the depth image appropriately) before the material shader relies on its contents. A declared image layout is not evidence that valid depth data was written.
 
+### Companion: a depth-only attachment is not a sampled shadow map
+
+[`VulkanDepth.cppm`](../VulkanDepth.cppm) has a separate `VulkanDepthAttachment` RAII object for simple framebuffer depth. Its `D32_SFLOAT` image uses **only** `VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT`, has one mip, and exposes a depth-aspect view. It does not have a texture sampler or sampled-image usage; trying to bind it as if it were `VulkanDirectionalShadowMap` would break the usage contract.
+
+This small class has an important C++ exception-safety difference from `VulkanTexture2D`: its constructor calls `Create` without an enclosing catch-and-`Destroy`. If `vkCreateImage` succeeds but allocation/binding/image-view creation throws, the incomplete object's destructor is not invoked, so already-created Vulkan resources may leak. Its `Recreate` also destroys the old attachment before building a replacement; a failed rebuild cannot preserve the previous view. Correct these separately with scoped native handle guards and injected-allocation-failure tests.
+
 ## 9. Three different ownership boundaries to trace while debugging
 
 **Authored ownership:** KairoAssets produces canonical texture bytes and a stable source-asset reference. It does not own the current renderer's VkImage.
