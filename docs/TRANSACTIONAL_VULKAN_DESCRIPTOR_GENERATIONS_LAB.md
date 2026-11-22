@@ -168,7 +168,7 @@ The new [`TransactionalResourceGenerationTests.cpp`](../tests/TransactionalResou
 
 This is not just a test of a separately invented model: `VulkanDescriptor.cppm` calls the exact same `BuildAndCommitResourceGeneration` template. The test is portable because the template depends only on host ownership and `Swap`, not on Vulkan driver calls.
 
-The source is registered as `KairoRendererTransactionalGenerationTests` in [`CMakeLists.txt`](../CMakeLists.txt). The [GCC/Clang portable CI workflow](../.github/workflows/cpu-render-resource-guards.yml) compiles it alongside native-publication and Vulkan frame-journal regressions. The [KairoGameEngine standalone regression script](https://github.com/swayam8624/KairoGameEngine/blob/main/scripts/run_renderer_resource_lifetime_regressions.sh) includes it as the **fifth** CPU-only check.
+The source is registered as `KairoRendererTransactionalGenerationTests` in [`CMakeLists.txt`](../CMakeLists.txt). The [GCC/Clang portable CI workflow](../.github/workflows/cpu-render-resource-guards.yml) compiles it alongside native-publication and Vulkan frame-journal regressions. The [KairoGameEngine standalone regression script](https://github.com/swayam8624/KairoGameEngine/blob/main/scripts/run_renderer_resource_lifetime_regressions.sh) includes it among **six** CPU-only checks (including texture mip staging).
 
 ## 8. Native GPU verification still matters
 
