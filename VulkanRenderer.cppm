@@ -83,7 +83,7 @@ export namespace kairo::renderer
         // A zero-size framebuffer deliberately skips all native operations.
         void DrawFrame()
         {
-            if (!m_FrameUsable)
+            if (!m_FrameUsable || !m_Device.IsUsable())
                 throw std::runtime_error(
                     "Vulkan renderer cannot submit more frames after unrecoverable WSI/device failure.");
             const auto [width, height] = m_Window.FramebufferExtent();
@@ -326,6 +326,7 @@ export namespace kairo::renderer
         /// keeping the public handle free of native API types.
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
+            m_Device.CheckUsable();
             return m_Triangle.CreateMesh(mesh);
         }
 
@@ -346,6 +347,7 @@ export namespace kairo::renderer
             const kairo::assets::TextureArtifactData& texture,
             TextureSampler sampling = {})
         {
+            m_Device.CheckUsable();
             return m_Triangle.CreateTexture(texture, sampling);
         }
 
@@ -413,6 +415,7 @@ export namespace kairo::renderer
         /// makes a device idle point simple and correct for this boundary.
         void ResizeViewport(std::uint32_t width, std::uint32_t height)
         {
+            m_Device.CheckUsable();
             const auto current = m_Triangle.ViewportTexture().Extent;
             if (current.width == width && current.height == height) return;
             if (width == 0u || height == 0u) return;
@@ -442,6 +445,7 @@ export namespace kairo::renderer
         /// current frame. Completion is available after the next fence wait.
         void RequestViewportCapture()
         {
+            m_Device.CheckUsable();
             if (m_CaptureRequested || m_CaptureInFlight)
                 throw std::logic_error("A viewport capture is already pending.");
             const VkExtent2D extent = m_Triangle.ViewportTexture().Extent;
