@@ -11,7 +11,7 @@ module;
 // object selection and D32 depth. Color's final layout is shader-readable;
 // object ID's is TRANSFER_SRC for the following GPU pick copy.
 // Resizing replaces native images; editor clients use Generation to refresh
-// borrowed VkImageView/VkSampler descriptors. See TEXTURE_UPLOAD_LAB.md.
+// borrowed VkImageView/VkSampler descriptors. See TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md.
 export module Kairo.Renderer.VulkanViewportTarget;
 
 import Kairo.Renderer.VulkanDevice;
