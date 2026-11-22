@@ -130,7 +130,7 @@ Metal's shared-resource behavior and the retention of encoded objects are not pe
 
 ## 8. Important error-path audits discovered in source
 
-**Later repair status:** the command-pool, host-buffer, frame-sync, swapchain and depth-attachment partial-construction leak paths now have explicit cleanup logic. See [the completed Vulkan constructor-rollback source pass](VULKAN_PARTIAL_CONSTRUCTION_ROLLBACK_LAB.md). The table preserves the original **failure scenarios that still require native fault-injection tests**; the last row (frame fence reset before failed submission) is **not repaired**. These were source-audit findings, not observed driver crashes.
+**Later repair status:** the command-pool, host-buffer, frame-sync, swapchain and depth-attachment partial-construction leak paths now have explicit cleanup logic. See [the completed Vulkan constructor-rollback source pass](VULKAN_PARTIAL_CONSTRUCTION_ROLLBACK_LAB.md). The table preserves the original **failure scenarios that still require native fault-injection tests**; the last row's original fence-reset failure now has a [source-level recovery fix](VULKAN_FRAME_FAILURE_RECOVERY_LAB.md), but **live Vulkan fault-injection verification is still pending**. These were source-audit findings, not observed driver crashes.
 
 | Location | Failure path to test | Why it matters |
 | --- | --- | --- |
@@ -138,9 +138,9 @@ Metal's shared-resource behavior and the retention of encoded objects are not pe
 | [`VulkanBuffer.cppm`](../VulkanBuffer.cppm) | `vkAllocateMemory`, `vkBindBufferMemory` or `vkMapMemory` fails mid-construction | already-created VkBuffer/VkDeviceMemory needs explicit local cleanup on failure |
 | [`VulkanSync.cppm`](../VulkanSync.cppm) | initial semaphore succeeds, fence creation fails | early failure is outside the per-image `try/catch` cleanup scope; successfully created handles can be leaked |
 | [`VulkanSwapchain.cppm`](../VulkanSwapchain.cppm) | swapchain creation succeeds and later image-view creation fails | partial native state needs cleanup even though the enclosing constructor did not finish |
-| [`VulkanRenderer.cppm`](../VulkanRenderer.cppm) | fence resets after acquire, then recording or submit throws before a successful queue submission | no submission may signal the reset fence; the next `vkWaitForFences(...,UINT64_MAX)` can stall indefinitely unless frame-state recovery recreates/signals the fence |
+| [`VulkanRenderer.cppm`](../VulkanRenderer.cppm) | historical reset-on-acquire and failed-submit fence loss | Reset moved to the Submit phase; acquired-but-unsubmitted semaphore is drained and a whole synchronization/swapchain generation rebuilt on recoverable errors. [Review the repair and its unverified native gates](VULKAN_FRAME_FAILURE_RECOVERY_LAB.md). |
 
-The local constructor-cleanup changes have now been committed, but require targeted injected-failure tests and Vulkan validation-layer evidence before they are certified. Merely catching a Vulkan error without deciding which native resources may still be in flight can make cleanup worse. Fence-reset recovery and queue/device-loss teardown remain separate tasks.
+The local constructor-cleanup changes have now been committed, but require targeted injected-failure tests and Vulkan validation-layer evidence before they are certified. Merely catching a Vulkan error without deciding which native resources may still be in flight can make cleanup worse. Source-level fence-reset and acquired-semaphore recovery is now committed, while **device-loss teardown and real WSI fault-injection remain separate tasks**.
 
 On Metal, verify that asynchronous commit errors are surfaced in every intended error path, and test resizing/destroying while a prior frame is in flight. A successful normal draw does not establish that every failure/teardown path is correct.
 
@@ -167,6 +167,6 @@ ctest --test-dir build --output-on-failure
 
 For *real GPU* validation, record the selected backend, exact commit SHA, OS, compiler, loader/driver, GPU, validation messages and actual test names/results. Run Metal smoke on macOS with a usable Metal device, Vulkan smoke with a Vulkan present-capable surface/device, and D3D12 smoke on Windows when supported. Neither cross-platform policy tests nor a CPU-only render graph compile substitute for those native gates.
 
-To validate failure paths, inject allocation errors at distinct stages, force an out-of-date swapchain, minimize/restores windows, destroy/resize during pending GPU work, and deliberately fail a recording callback after fence reset. Assert cleanup and recovery rather than waiting on a fence that cannot be signaled. Run leak detectors and native GPU validation where practical.
+To validate failure paths, inject allocation errors at distinct stages, force an out-of-date swapchain, minimize/restore windows, destroy/resize during pending GPU work, and deliberately fail recording **after image acquire but before fence reset**, then queue submit **after fence reset**. Assert cleanup and recovery rather than waiting on a fence that cannot be signaled. Run leak detectors and native GPU validation where practical.
 
-**Next implementation improvement:** scoped native handle guards for partially constructed Vulkan resources; explicit frame state/error recovery for reset fences; per-flight-frame buffers and fences; timestamp queries to distinguish CPU waiting from GPU execution; accurate/efficient transient resource allocation behind the compiled render graph. These would be new runtime changes, not merely documentation.
+**Next implementation improvement:** native fault-injection and validation of the newly landed constructor/frame recovery guards; full device-loss reinitialization; per-flight-frame buffers and fences; timestamp queries separating CPU wait from GPU execution; and actual native transient resource allocations. These are still future runtime/test changes.
