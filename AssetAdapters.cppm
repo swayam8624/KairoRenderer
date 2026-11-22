@@ -1,3 +1,17 @@
+// TEACHING MODULE: Conversion boundary between persistent KairoAssets
+// artifacts/identities and renderer-owned transient GPU resource handles.
+// A renderer texture handle is not the same as a KairoAssets AssetID;
+// the Editor/Player caller supplies a resolver that owns this mapping.
+//
+// MakePBRMaterial validates artifact semantics before conversion. A missing
+// optional texture channel can use a neutral fallback, but an explicitly
+// referenced texture that the resolver cannot resolve must be reported as
+// an error. glTF node/primitive transforms/materials are composed here so
+// every graphics backend receives the same authored content semantics.
+//
+// This module is not an importer: GltfImporter/MaterialArtifact and cache
+// management live in KairoAssets. GPU uploads/destruction remain inside
+// RendererRuntime and the chosen backend.
 module;
 
 #include <algorithm>
@@ -25,6 +39,8 @@ export namespace kairo::renderer
     /// Resolves a persistent texture asset reference to a renderer-owned GPU
     /// handle. Editor and Player therefore share conversion rules without
     /// sharing GPU ownership or import-cache policy.
+    // Resolver callback returns a runtime handle valid for the active
+    // renderer. Keep ownership and upload caching outside this converter.
     using MaterialTextureResolver =
         std::function<TextureHandle(kairo::assets::TextureAssetHandle)>;
 
