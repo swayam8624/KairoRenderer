@@ -15,6 +15,10 @@ module;
 #include <utility>
 #include <vector>
 
+// TEACHING METAL RUNTIME: EngineCore/Editor CPU draw data -> MetalFrame,
+// then native detail/MetalBackend.mm encodes MTLCommandBuffer/MTLTexture.
+// RenderGraph orders CPU draw/readback callbacks; native command completion
+// is explicitly awaited by the Metal backend before CPU texture reads.
 export module Kairo.Renderer.MetalRuntime;
 
 import Kairo.Foundation.Math;
@@ -86,6 +90,11 @@ export namespace kairo::renderer
         /// boundaries as real graph callbacks. The detail backend still owns
         /// command encoding internally; the runtime graph owns when rendering,
         /// picking, and capture execute relative to one another.
+        // Pack scene draws and skin palettes into per-frame CPU buffers,
+        // construct camera/light uniforms, and schedule RenderPresent plus
+        // optional PickReadback and CaptureReadback callbacks. Each readback
+        // calls MetalBackend::WaitForLastCommand before touching textures.
+        // The renderer's graph transitions are not native Metal barriers.
         void DrawFrame()
         {
             const auto [windowWidth, windowHeight] = m_Window.FramebufferExtent();
@@ -163,6 +172,9 @@ export namespace kairo::renderer
                 RenderResourceKind::External, 0u, false,
                 RenderResourceState::Present });
 
+            // MetalBackend::Draw commits an MTLCommandBuffer asynchronously;
+            // command-buffer completion is not implied by the return of
+            // this graph callback. Later optional readback explicitly waits.
             const auto renderPass = graph.AddPass("RenderPresent", {
                 { viewport, RenderAccessMode::Write,
                     RenderResourceState::ColorAttachment },
@@ -176,6 +188,8 @@ export namespace kairo::renderer
             std::optional<RenderPassHandle> tail;
             if (pickRequested)
             {
+                // Need completed RGBA/object-ID attachments; native Pick()
+                // performs its own command-buffer wait before CPU getBytes.
                 const auto pickPass = graph.AddPass("PickReadback", {
                     { viewport, RenderAccessMode::Read,
                         RenderResourceState::CopySource }
@@ -191,6 +205,9 @@ export namespace kairo::renderer
 
             if (captureRequested)
             {
+                // Read the completed offscreen viewport and transfer an
+                // owned RGBA copy to caller; frame-local scratch pointers
+                // must not escape this DrawFrame stack activation.
                 const auto capturePass = graph.AddPass("CaptureReadback", {
                     { viewport, RenderAccessMode::Read,
                         RenderResourceState::CopySource }
