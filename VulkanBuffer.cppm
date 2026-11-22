@@ -41,30 +41,30 @@ export namespace kairo::renderer
             try
             {
                 VkBufferCreateInfo create{};
-            create.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            create.size = bytes;
-            create.usage = usage;
-            create.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            if (vkCreateBuffer(m_Device, &create, nullptr, &m_Buffer) != VK_SUCCESS)
-            {
-                throw std::runtime_error("vkCreateBuffer failed.");
-            }
-            VkMemoryRequirements requirements{};
-            vkGetBufferMemoryRequirements(m_Device, m_Buffer, &requirements);
-            VkMemoryAllocateInfo allocate{};
-            allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            allocate.allocationSize = requirements.size;
-            allocate.memoryTypeIndex = FindMemoryType(device.PhysicalHandle(), requirements.memoryTypeBits,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            if (vkAllocateMemory(m_Device, &allocate, nullptr, &m_Memory) != VK_SUCCESS)
-            {
-                throw std::runtime_error("vkAllocateMemory for a host buffer failed.");
-            }
-            if (vkBindBufferMemory(m_Device, m_Buffer, m_Memory, 0u) != VK_SUCCESS ||
-                vkMapMemory(m_Device, m_Memory, 0u, bytes, 0u, &m_Mapped) != VK_SUCCESS)
-            {
-                throw std::runtime_error("Failed to bind or map a Vulkan host buffer.");
-            }
+                create.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+                create.size = bytes;
+                create.usage = usage;
+                create.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                if (vkCreateBuffer(m_Device, &create, nullptr, &m_Buffer) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("vkCreateBuffer failed.");
+                }
+                VkMemoryRequirements requirements{};
+                vkGetBufferMemoryRequirements(m_Device, m_Buffer, &requirements);
+                VkMemoryAllocateInfo allocate{};
+                allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                allocate.allocationSize = requirements.size;
+                allocate.memoryTypeIndex = FindMemoryType(device.PhysicalHandle(), requirements.memoryTypeBits,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                if (vkAllocateMemory(m_Device, &allocate, nullptr, &m_Memory) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("vkAllocateMemory for a host buffer failed.");
+                }
+                if (vkBindBufferMemory(m_Device, m_Buffer, m_Memory, 0u) != VK_SUCCESS ||
+                    vkMapMemory(m_Device, m_Memory, 0u, bytes, 0u, &m_Mapped) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Failed to bind or map a Vulkan host buffer.");
+                }
             }
             catch (...)
             {
