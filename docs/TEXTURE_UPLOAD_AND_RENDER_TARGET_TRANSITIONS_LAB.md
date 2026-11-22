@@ -176,7 +176,7 @@ The sampler uses nearest filtering and clamp-to-border, with an opaque-white bor
 
 [`VulkanDepth.cppm`](../VulkanDepth.cppm) has a separate `VulkanDepthAttachment` RAII object for simple framebuffer depth. Its `D32_SFLOAT` image uses **only** `VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT`, has one mip, and exposes a depth-aspect view. It does not have a texture sampler or sampled-image usage; trying to bind it as if it were `VulkanDirectionalShadowMap` would break the usage contract.
 
-This small class has an important C++ exception-safety difference from `VulkanTexture2D`: its constructor calls `Create` without an enclosing catch-and-`Destroy`. If `vkCreateImage` succeeds but allocation/binding/image-view creation throws, the incomplete object's destructor is not invoked, so already-created Vulkan resources may leak. Its `Recreate` also destroys the old attachment before building a replacement; a failed rebuild cannot preserve the previous view. Correct these separately with scoped native handle guards and injected-allocation-failure tests.
+**Later correctness update:** `VulkanDepthAttachment` now wraps constructor and `Recreate` creation in catch-and-`Destroy` rollback, preventing already-created depth image/memory/view handles from being forgotten on a later throw. [Read the Vulkan partial-construction recovery laboratory](VULKAN_PARTIAL_CONSTRUCTION_ROLLBACK_LAB.md). The `Recreate` path still destroys the old attachment before building a replacement, so a failed rebuild **does not preserve** the previous view. Native allocation-failure injection and validation-layer testing are still required.
 
 ## 9. Three different ownership boundaries to trace while debugging
 
