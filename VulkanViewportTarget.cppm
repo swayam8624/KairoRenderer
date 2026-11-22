@@ -6,6 +6,12 @@ module;
 #include <cstdint>
 #include <stdexcept>
 
+// TEACHING OFFSCREEN TARGET: unlike a swapchain, this renderer-OWNED scene
+// framebuffer contains three device-local images: RGBA16F color, R32_UINT
+// object selection and D32 depth. Color's final layout is shader-readable;
+// object ID's is TRANSFER_SRC for the following GPU pick copy.
+// Resizing replaces native images; editor clients use Generation to refresh
+// borrowed VkImageView/VkSampler descriptors. See TEXTURE_UPLOAD_LAB.md.
 export module Kairo.Renderer.VulkanViewportTarget;
 
 import Kairo.Renderer.VulkanDevice;
@@ -16,6 +22,9 @@ export namespace kairo::renderer
     /// generation changes whenever Resize() replaces image views, allowing a
     /// consumer to retire and recreate its descriptor without retaining stale
     /// Vulkan handles.
+    // Borrowed UI-facing view/sampler identity, NOT the image owner.
+    // A matching generation and live backend are required before binding;
+    // old views die when VulkanViewportTarget::Resize replaces attachments.
     struct VulkanViewportTexture final
     {
         VkSampler Sampler = VK_NULL_HANDLE;
@@ -38,9 +47,15 @@ export namespace kairo::renderer
     /// encoding. Depth remains renderer-owned and local to this viewport.
     /// Resize() preserves the compatible render pass and sampler while
     /// replacing only extent-dependent images and the framebuffer.
+    // Own framebuffer, attachment VkImages/allocations/views, render pass and
+    // sampler. Render-pass dependencies make the final color shader-readable
+    // and the object-ID image transfer-readable after scene drawing.
     class VulkanViewportTarget final
     {
     public:
+        // Validate bounded nonzero dimensions, then construct sampler,
+        // render pass, attachments and framebuffer. The catch cleans partial
+        // native allocations if construction fails midway.
         VulkanViewportTarget(const VulkanDevice& device, VkExtent2D extent)
             : m_Device(device.Handle()), m_Physical(device.PhysicalHandle())
         {
@@ -72,6 +87,8 @@ export namespace kairo::renderer
         [[nodiscard]] static constexpr VkFormat ObjectIDFormat() noexcept { return VK_FORMAT_R32_UINT; }
         [[nodiscard]] static constexpr VkFormat DepthFormat() noexcept { return VK_FORMAT_D32_SFLOAT; }
 
+        // Return a BORROWED descriptor with current extent and generation.
+        // The caller may bind the view only while this target generation lives.
         [[nodiscard]] VulkanViewportTexture Texture() const noexcept
         {
             return { m_Sampler, m_Color.View, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -80,6 +97,10 @@ export namespace kairo::renderer
 
         /// Precondition: callers have idled the device and retired commands
         /// using the current framebuffer. A no-op resize preserves generation.
+        // Requires externally completed GPU work. If dimensions change,
+        // invalidate/destroy previous views and images; create a new extent
+        // generation. This is not an atomic old/new swap on allocation failure:
+        // a failed rebuild may leave no current attachments.
         void Resize(VkExtent2D extent)
         {
             ValidateExtent(extent);
@@ -116,6 +137,8 @@ export namespace kairo::renderer
         Attachment m_Depth;
         std::uint64_t m_Generation = 0u;
 
+        // Reject zero dimensions or the current 16384-pixel-per-axis limit.
+        // Format/device support still must be checked during native creation.
         static void ValidateExtent(VkExtent2D extent)
         {
             if (extent.width == 0u || extent.height == 0u)
@@ -124,6 +147,8 @@ export namespace kairo::renderer
                 throw std::invalid_argument("VulkanViewportTarget extent exceeds the 16384 pixel safety limit.");
         }
 
+        // Sample linear offscreen color into the editor preview with edge
+        // clamping; object-ID/depth attachments are not sampled through it.
         void CreateSampler()
         {
             VkSamplerCreateInfo create{};
@@ -139,6 +164,11 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateSampler for editor viewport failed.");
         }
 
+        // Declare three attachment formats, clear/store policy, and Vulkan
+        // FINAL layouts: HDR color -> SHADER_READ_ONLY, object IDs ->
+        // TRANSFER_SRC, depth -> DEPTH_STENCIL_ATTACHMENT_OPTIMAL.
+        // External subpass dependencies publish color writes to shader and
+        // transfer stages. The CPU RenderGraph does not emit these barriers.
         void CreateRenderPass()
         {
             VkAttachmentDescription color{};
@@ -208,6 +238,9 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateRenderPass for editor viewport failed.");
         }
 
+        // Allocate three device-local images with different usage bits and
+        // increment Generation after successful allocation. The color image
+        // is sampled and copied; ID is copied only; depth is an attachment.
         void CreateAttachments(VkExtent2D extent)
         {
             m_Extent = extent;
@@ -222,6 +255,9 @@ export namespace kairo::renderer
             if (m_Generation == 0u) ++m_Generation;
         }
 
+        // For ONE attachment: VkImage -> memory requirements -> device-local
+        // VkDeviceMemory -> bind -> image view with correct color/depth aspect.
+        // Partial failures are rolled back by the constructor/Resize catch.
         void CreateAttachment(Attachment& target, VkFormat format,
             VkImageAspectFlags aspect, VkImageUsageFlags usage)
         {
@@ -263,6 +299,8 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateImageView for editor viewport failed.");
         }
 
+        // Bind color, object-ID and depth views to this compatible render
+        // pass. VkFramebuffer does not own or extend image-view lifetime.
         void CreateFramebuffer()
         {
             const std::array attachments{ m_Color.View, m_ObjectID.View, m_Depth.View };
@@ -289,6 +327,8 @@ export namespace kairo::renderer
             throw std::runtime_error("No device-local memory type supports the editor viewport.");
         }
 
+        // Release view BEFORE its VkImage, then free VkDeviceMemory.
+        // Reset the struct so a later cleanup is safe on partial creation.
         void DestroyAttachment(Attachment& attachment) noexcept
         {
             if (attachment.View != VK_NULL_HANDLE) vkDestroyImageView(m_Device, attachment.View, nullptr);
@@ -297,6 +337,9 @@ export namespace kairo::renderer
             attachment = {};
         }
 
+        // Framebuffer references all three image views: destroy it FIRST.
+        // Then drop depth/ID/color allocations and clear current extent.
+        // Call only after native render/transfer consumers finish.
         void DestroyAttachments() noexcept
         {
             if (m_Framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(m_Device, m_Framebuffer, nullptr);
@@ -307,6 +350,8 @@ export namespace kairo::renderer
             m_Extent = {};
         }
 
+        // Destroy extent-dependent resources then render pass and sampler.
+        // This is native Vulkan ownership, separate from graph alias plans.
         void Destroy() noexcept
         {
             DestroyAttachments();
