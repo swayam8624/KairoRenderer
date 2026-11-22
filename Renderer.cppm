@@ -5,10 +5,10 @@
 //
 // Scene/mesh/texture/camera are backend-neutral *inputs*. The chosen native
 // runtime owns GPU objects, swapchain/viewport, upload, synchronization and
-// readback. RendererRuntime::DrawFrame wraps native work in a logical
-// RenderGraph execution envelope: CPU timings/transition plan do not imply
-// that shadows, PBR, debug draw and presentation are each graph-scheduled
-// native passes. This distinction matters when interpreting profiler output.
+// readback. RendererRuntime::DrawFrame delegates directly to the selected
+// native runtime and copies *that backend's* CPU stage profile. Each native
+// renderer owns its actual pass/graph orchestration and synchronization;
+// facade timings must not be confused with GPU timestamp parity.
 //
 // The std::variant stores exactly one native runtime; backend-specific
 // editor overlay helpers reject mismatched backends. Tests for backend policy
@@ -102,6 +102,10 @@ export namespace kairo::renderer
 
     public:
         /// TEACHING METHOD: Validate/select an available backend from WindowDesc and instantiate it through CreateBackend; explicit unavailable choices should fail, not silently change APIs.
+        // Select compiled and host-compatible graphics API before
+        // constructing any native device. An explicit unsupported API
+        // fails rather than silently switching to another renderer.
+        // This unique_ptr variant owns exactly one backend runtime.
         explicit RendererRuntime(const WindowDesc& windowDesc)
             : m_Backend(SelectGraphicsBackend(
                   windowDesc.Backend, CompiledGraphicsBackends())),
@@ -113,10 +117,14 @@ export namespace kairo::renderer
         [[nodiscard]] GraphicsBackend Backend() const noexcept { return m_Backend; }
 
         /// TEACHING METHOD: Delegate a full present/render cycle and record that backend's completed CPU render-stage profile.
-        // Facade-level frame entry: create/execute the graph envelope,
-        // delegate to the selected backend, and preserve CPU graph profile.
-        // GPU completion, picking, readback and presentation contracts
-        // belong to that backend, not to this CPU-only graph timing.
+        // Facade-level frame entry: delegate directly to one active
+        // backend and expose its latest CPU render-stage profile.
+        // Rendering, readback, GPU completion and presentation lifetimes
+        // remain inside that native backend implementation.
+        // Although this has one shared public signature, the work
+        // and timing granularity differ by backend. The compiled
+        // KAIRO_RENDERER_HAS_* flags remove unsupported dispatch paths.
+        // LastFrameProfile is not a cross-API GPU timer.
         void DrawFrame()
         {
 #if defined(KAIRO_RENDERER_HAS_OPENGL_BACKEND)
@@ -176,12 +184,18 @@ export namespace kairo::renderer
         }
 
         /// TEACHING METHOD: Create backend-owned GPU/indexed mesh resources from a validated portable Mesh contract; handle lifetime must be released with DestroyMesh.
+        // Upload a validated CPU Mesh into the *selected* native
+        // backend. The opaque handle is not a KairoAssets AssetID and
+        // must be retired through the same RendererRuntime instance.
         [[nodiscard]] MeshHandle CreateMesh(const Mesh& mesh)
         {
             return Visit([&](auto& runtime) { return runtime.CreateMesh(mesh); });
         }
 
         /// TEACHING METHOD: Retire an existing backend mesh handle. Handle validity and resource synchronization are native-backend concerns.
+        // Retire backend-owned vertex/index resources. RenderScene
+        // must stop referring to this handle before future frames;
+        // synchronization of in-flight GPU work is backend-specific.
         void DestroyMesh(MeshHandle mesh)
         {
             Visit([&](auto& runtime) { runtime.DestroyMesh(mesh); });
@@ -208,6 +222,10 @@ export namespace kairo::renderer
         // RenderScene contains renderer-owned mesh handles and validated
         // draw records, not stable KairoAssets IDs. AssetAdapters maps
         // authored artifacts into those runtime handles beforehand.
+        // Scene contains process-local renderer handles and draw
+        // object IDs. KairoGameEngine's shared RealtimeSceneBridge and
+        // AssetAdapters resolve stable authored IDs beforehand.
+        // This method does not modify EngineCore scene persistence.
         void SubmitRenderScene(const RenderScene& scene)
         {
             Visit([&](auto& runtime) { runtime.SubmitRenderScene(scene); });
@@ -255,12 +273,18 @@ export namespace kairo::renderer
         }
 
         /// TEACHING METHOD: Request native render-target/swapchain-compatible viewport size; implementations manage GPU resource reallocation.
+        // Change the backend-owned offscreen target/viewport size.
+        // Native backends decide which attachments, depth buffers
+        // and readbacks need recreation or synchronization.
         void ResizeViewport(std::uint32_t width, std::uint32_t height)
         {
             Visit([&](auto& runtime) { runtime.ResizeViewport(width, height); });
         }
 
         /// TEACHING METHOD: Ask the GPU viewport to resolve an object ID at pixel coordinates; result is asynchronous or deferred.
+        // Queue object-ID readback in viewport pixel coordinates.
+        // Selection resolves ObjectID back to EngineCore Entity
+        // through the Editor/Player scene adapter, not by a mesh ID.
         void RequestViewportPick(std::uint32_t x, std::uint32_t y)
         {
             Visit([&](auto& runtime) { runtime.RequestViewportPick(x, y); });
@@ -268,6 +292,9 @@ export namespace kairo::renderer
 
         [[nodiscard]] std::optional<std::uint32_t>
         /// TEACHING METHOD: Consume the optional completed object-ID readback for Editor selection.
+        // Consume an optional completed readback. Nullopt means no
+        // result is ready/available; it is not a hit on object zero.
+        // Queue/latency semantics belong to each graphics backend.
         TakeViewportPickResult() noexcept
         {
             return Visit([](auto& runtime)
@@ -277,6 +304,9 @@ export namespace kairo::renderer
         }
 
         /// TEACHING METHOD: Schedule viewport readback for smoke tests or visual inspection, not an immediate screen image.
+        // Ask the backend for a future pixel capture; use the
+        // returned ViewportCapture for native visual smoke/inspection.
+        // This is separate from an immediate CPU texture read.
         void RequestViewportCapture()
         {
             Visit([](auto& runtime) { runtime.RequestViewportCapture(); });
@@ -284,6 +314,9 @@ export namespace kairo::renderer
 
         [[nodiscard]] std::optional<ViewportCapture>
         /// TEACHING METHOD: Take optional completed image data; the Player smoke fixture checks it for nonblank content.
+        // Retrieve a completed capture, if one exists. A nonblank
+        // screenshot is limited native evidence, not proof of correct
+        // lighting, color space or all-platform feature parity.
         TakeViewportCapture() noexcept
         {
             return Visit([](auto& runtime)
@@ -404,6 +437,9 @@ export namespace kairo::renderer
 
     private:
         /// TEACHING METHOD: Instantiate only the selected compiled graphics API; backend guards keep impossible platform choices explicit.
+        // Construct exactly the selected implementation. Compile
+        // guards remove absent implementations; unsupported requests
+        // must throw instead of constructing a different API by guess.
         [[nodiscard]] static BackendRuntime CreateBackend(
             GraphicsBackend backend, WindowDesc windowDesc)
         {
