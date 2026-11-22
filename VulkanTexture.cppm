@@ -7,6 +7,7 @@ module;
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
+#include "detail/TextureMipUploadPlan.hpp"
 
 // TEACHING UPLOAD: validated KairoAssets TextureArtifactData -> host-coherent
 // Vulkan staging bytes -> device-local VkImage mips -> sampled image view and
@@ -203,7 +204,8 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateSampler for texture failed.");
         }
 
-        // Serialize all mip payloads contiguously in a CPU staging buffer.
+        // Derive contiguous upload bytes plus explicit per-mip offsets through
+        // the same GPU-independent helper exercised by the C++23 regressions.
         // Record one transient command buffer with two VkImageMemoryBarriers:
         // UNDEFINED -> TRANSFER_DST_OPTIMAL, copy each VkBufferImageCopy mip,
         // TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL. Wait for the entire
@@ -214,15 +216,15 @@ export namespace kairo::renderer
         void Upload(const VulkanDevice& device,
             const kairo::assets::TextureArtifactData& texture)
         {
-            std::size_t totalBytes = 0u;
-            for (const auto& mip : texture.Mips) totalBytes += mip.Pixels.size();
-            VulkanHostBuffer staging(device, static_cast<VkDeviceSize>(totalBytes),
+            // KairoAssets checked canonical mip dimensions and exact bytes.
+            // This extra gate rejects overflow before VkDeviceSize conversion
+            // and keeps the byte offsets tested independently from Vulkan.
+            const auto upload = detail::MakeTextureMipUploadPlan(texture.Mips);
+            VulkanHostBuffer staging(device,
+                static_cast<VkDeviceSize>(upload.PackedBytes.size()),
                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-            std::vector<std::byte> packed;
-            packed.reserve(totalBytes);
-            for (const auto& mip : texture.Mips)
-                packed.insert(packed.end(), mip.Pixels.begin(), mip.Pixels.end());
-            staging.Write(packed.data(), static_cast<VkDeviceSize>(packed.size()));
+            staging.Write(upload.PackedBytes.data(),
+                static_cast<VkDeviceSize>(upload.PackedBytes.size()));
 
             VkCommandPool pool = VK_NULL_HANDLE;
             VkCommandBuffer command = VK_NULL_HANDLE;
@@ -268,17 +270,15 @@ export namespace kairo::renderer
                 // to the corresponding VkImage mipLevel and extent. Correct
                 // ordering depends on the validated texture's Mips sequence.
                 std::vector<VkBufferImageCopy> copies;
-                copies.reserve(texture.Mips.size());
-                VkDeviceSize offset = 0u;
+                copies.reserve(upload.Regions.size());
                 for (std::uint32_t level = 0u; level < m_MipLevels; ++level)
                 {
-                    const auto& mip = texture.Mips[level];
+                    const auto& region = upload.Regions[level];
                     VkBufferImageCopy copy{};
-                    copy.bufferOffset = offset;
+                    copy.bufferOffset = static_cast<VkDeviceSize>(region.ByteOffset);
                     copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0u, 1u };
-                    copy.imageExtent = { mip.Width, mip.Height, 1u };
+                    copy.imageExtent = { region.Width, region.Height, 1u };
                     copies.push_back(copy);
-                    offset += static_cast<VkDeviceSize>(mip.Pixels.size());
                 }
                 vkCmdCopyBufferToImage(command, staging.Handle(), m_Image,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
