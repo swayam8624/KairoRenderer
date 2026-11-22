@@ -24,9 +24,9 @@ export namespace kairo::renderer
     public:
         // Create a RESET_COMMAND_BUFFER-capable command pool for the queue
         // family selected by VulkanDevice, then allocate ONE primary buffer.
-        // AUDIT: if allocation throws after pool creation, the class
-        // destructor does not run for the incomplete constructor; a local
-        // guard is needed for robust constructor-failure cleanup.
+        // If command-buffer allocation fails after pool creation, explicitly
+        // destroy the pool BEFORE throwing: the enclosing C++ destructor is
+        // not called for a constructor that never completed.
         explicit VulkanCommandBuffer(const VulkanDevice& device)
             : m_Device(device.Handle())
         {
@@ -46,6 +46,8 @@ export namespace kairo::renderer
             allocate.commandBufferCount = 1u;
             if (vkAllocateCommandBuffers(m_Device, &allocate, &m_Handle) != VK_SUCCESS)
             {
+                vkDestroyCommandPool(m_Device, m_Pool, nullptr);
+                m_Pool = VK_NULL_HANDLE;
                 throw std::runtime_error("vkAllocateCommandBuffers failed.");
             }
         }
