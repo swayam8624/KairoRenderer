@@ -264,6 +264,12 @@ export namespace kairo::renderer
                 {
                     try
                     {
+                        // When recording or vkQueueSubmit failed, acquire's
+                        // binary ImageAvailable signal was never consumed.
+                        // A valid synchronization-only queue submission waits
+                        // on it before vkDeviceWaitIdle destroys old semaphores.
+                        if (frameJournal.AcquireSemaphoreUnconsumed())
+                            DrainUnsubmittedAcquire();
                         RecreateSwapchain(); // vkDeviceWaitIdle before teardown
                         // Failed-frame readbacks must not be consumed as if
                         // their transfer commands had completed normally.
@@ -488,6 +494,29 @@ export namespace kairo::renderer
         bool m_CaptureInFlight = false;
         RenderGraphExecutionProfile m_LastFrameProfile;
         bool m_FrameUsable = true;
+
+        // Consume a WSI acquire semaphore even when no draw submission was
+        // accepted (recording threw or vkQueueSubmit failed). Vulkan permits a
+        // VkSubmitInfo with zero command buffers: its semaphore wait still
+        // enters the graphics queue and vkDeviceWaitIdle later retires it.
+        // If this submission fails, the renderer remains permanently blocked
+        // rather than destroying a possibly pending acquire signal.
+        void DrainUnsubmittedAcquire()
+        {
+            const VkSemaphore imageAvailable = m_Sync.ImageAvailable();
+            const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            VkSubmitInfo drain{};
+            drain.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            drain.waitSemaphoreCount = 1u;
+            drain.pWaitSemaphores = &imageAvailable;
+            drain.pWaitDstStageMask = &waitStage;
+            // No graphics commands, fence, or completion semaphore: the
+            // following RecreateSwapchain's device idle wait is the CPU gate.
+            if (vkQueueSubmit(m_Device.GraphicsQueue(), 1u, &drain,
+                VK_NULL_HANDLE) != VK_SUCCESS)
+                throw std::runtime_error(
+                    "Cannot retire the Vulkan WSI acquire semaphore after a failed frame.");
+        }
 
         /// Task: record the complete mesh and debug-line render pass.
         // Delegate actual native command recording (render pass, barriers,
