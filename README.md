@@ -2,6 +2,8 @@
 
 **Cross-repository integration lab:** [AssetID → PBR conversion → runtime handles and glTF skin palettes](https://github.com/swayam8624/KairoGameEngine/blob/main/docs/ASSET_SCENE_TO_GPU_LIFETIME_LAB.md). Read the authored/CPU contracts before following the native GPU backend; source inspection is not a native test result.
 
+**Checked Vulkan mip uploads:** [byte-accurate 4×4/2×2/1×1 staging plan, overflow guards and GPU-independent regression](docs/VULKAN_TEXTURE_MIP_UPLOAD_PLAN_AND_FAILURE_LAB.md). The native command-pool/queue-error cleanup remains a separate validation target.
+
 **Transactional Vulkan descriptors:** [build, validate and publish a complete new GPU descriptor generation without losing the previous pool on failure](docs/TRANSACTIONAL_VULKAN_DESCRIPTOR_GENERATIONS_LAB.md). The [historical failure/cleanup analysis](docs/VULKAN_DESCRIPTOR_REBUILD_ERROR_SAFETY_LAB.md) now links the landed fix. **Portable CI:** [GCC/Clang resource guards](.github/workflows/cpu-render-resource-guards.yml) including the new transaction regression.
 
 **Vulkan failed-frame recovery:** [acquired WSI image, unconsumed binary semaphore, fence-reset/submission and swapchain rebuild laboratory](docs/VULKAN_FRAME_FAILURE_RECOVERY_LAB.md). A CPU journal test is registered; native validation is still required.
