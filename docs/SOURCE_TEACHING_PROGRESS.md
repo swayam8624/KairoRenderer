@@ -2,6 +2,8 @@
 
 **Dated:** November 22, 2026. This ledger records comments and documentation present on the active `main` branch; it is **not** a claim of native GPU test success, complete source annotation or an automatically merged historic PR.
 
+**Later Vulkan repair update:** [partial constructor allocation rollback for five native wrappers](VULKAN_PARTIAL_CONSTRUCTION_ROLLBACK_LAB.md) is now committed. The older audit list below records the original findings; native fault-injection/validation-layer evidence and fence-reset recovery remain outstanding.
+
 ## Later functional GPU resource cleanup repairs
 
 [Cross-repository rollback/teardown guide](https://github.com/swayam8624/KairoGameEngine/blob/main/docs/GPU_RESOURCE_ROLLBACK_AND_RENDERER_TEARDOWN_LAB.md) records subsequent functional changes: native Metal and Direct3D12 CreateMesh/CreateTexture use a tested publish-or-rollback helper; OpenGL cleans GL names on post-upload map/handle allocation failure; KairoPlayer now tracks created handles before binding and unbinds the submitted scene before release. [CPU-only native-publication regression test](../tests/NativeResourcePublicationTests.cpp) is registered in [CMake](../CMakeLists.txt). This source-level status is distinct from native GPU-driver testing.
