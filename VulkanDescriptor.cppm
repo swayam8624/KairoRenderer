@@ -244,25 +244,25 @@ export namespace kairo::renderer
                 {
                     // An empty scene is a valid new generation with no sets.
                     if (materials.empty()) return;
-                if (cameraRange == 0u || shadowView == VK_NULL_HANDLE ||
-                    shadowSampler == VK_NULL_HANDLE)
-                    throw std::invalid_argument("Material descriptors require valid camera and shadow resources.");
-                if (materials.size() >
-                    static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / 7u))
-                    throw std::length_error("Material descriptor pool count would overflow Vulkan uint32 capacities.");
-                for (const auto& source : materials)
-                {
-                    source.Material.Validate();
-                    for (std::size_t channel = 0u; channel < 5u; ++channel)
-                        if (source.Views[channel] == VK_NULL_HANDLE ||
-                            source.Samplers[channel] == VK_NULL_HANDLE)
-                            throw std::invalid_argument("PBR material descriptors require five valid sampled images.");
-                    if (source.EnvironmentView == VK_NULL_HANDLE ||
-                        source.EnvironmentSampler == VK_NULL_HANDLE)
-                        throw std::invalid_argument("PBR material descriptors require a valid environment fallback image.");
-                    if (source.Skinning != nullptr && !source.Skinning->Empty())
-                        source.Skinning->Validate();
-                }
+                    if (cameraRange == 0u || shadowView == VK_NULL_HANDLE ||
+                        shadowSampler == VK_NULL_HANDLE)
+                        throw std::invalid_argument("Material descriptors require valid camera and shadow resources.");
+                    if (materials.size() >
+                        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max() / 7u))
+                        throw std::length_error("Material descriptor pool count would overflow Vulkan uint32 capacities.");
+                    for (const auto& source : materials)
+                    {
+                        source.Material.Validate();
+                        for (std::size_t channel = 0u; channel < 5u; ++channel)
+                            if (source.Views[channel] == VK_NULL_HANDLE ||
+                                source.Samplers[channel] == VK_NULL_HANDLE)
+                                throw std::invalid_argument("PBR material descriptors require five valid sampled images.");
+                        if (source.EnvironmentView == VK_NULL_HANDLE ||
+                            source.EnvironmentSampler == VK_NULL_HANDLE)
+                            throw std::invalid_argument("PBR material descriptors require a valid environment fallback image.");
+                        if (source.Skinning != nullptr && !source.Skinning->Empty())
+                            source.Skinning->Validate();
+                    }
 
                 const std::uint32_t count = static_cast<std::uint32_t>(materials.size());
                 const std::array poolSizes{
@@ -360,26 +360,26 @@ export namespace kairo::renderer
                     // The referenced VkBuffer/VkImageView/VkSampler handles remain
                     // borrowed and require longer GPU lifetime management.
                     std::array<VkWriteDescriptorSet, 10u> writes{};
-                    writes[0] = Write(m_Generation.Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                    writes[0] = Write(candidate.Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                     writes[0].pBufferInfo = &cameraInfo;
-                    writes[1] = Write(m_Generation.Sets[index], 1u,
+                    writes[1] = Write(candidate.Sets[index], 1u,
                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                     writes[1].pImageInfo = &shadowInfo;
                     for (std::uint32_t channel = 0u; channel < 5u; ++channel)
                     {
-                        writes[2u + channel] = Write(m_Generation.Sets[index], 2u + channel,
+                        writes[2u + channel] = Write(candidate.Sets[index], 2u + channel,
                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                         writes[2u + channel].pImageInfo = &imageInfos[channel];
                     }
-                    writes[7] = Write(m_Generation.Sets[index], 7u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                    writes[7] = Write(candidate.Sets[index], 7u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                     writes[7].pBufferInfo = &materialInfo;
-                    writes[8] = Write(m_Generation.Sets[index], 8u,
+                    writes[8] = Write(candidate.Sets[index], 8u,
                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                     writes[8].pImageInfo = &environmentInfo;
                     std::uint32_t writeCount = 9u;
                     if (skinBuffer)
                     {
-                        writes[9] = Write(m_Generation.Sets[index], 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                        writes[9] = Write(candidate.Sets[index], 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                         writes[9].pBufferInfo = &skinInfo;
                         writeCount = 10u;
                     }
