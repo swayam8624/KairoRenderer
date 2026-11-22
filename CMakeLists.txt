@@ -323,6 +323,16 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     endif()
     set_property(TARGET KairoRendererTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
     enable_testing()
+    # Pure C++ fault injection of the exact native resource publication helper;
+    # no graphics device is needed to exercise map-allocation rollback.
+    add_executable(KairoRendererNativeResourcePublicationTests
+        tests/NativeResourcePublicationTests.cpp)
+    target_compile_features(KairoRendererNativeResourcePublicationTests PRIVATE cxx_std_23)
+    set_property(TARGET KairoRendererNativeResourcePublicationTests
+        PROPERTY COMPILE_WARNING_AS_ERROR ON)
+    add_test(NAME KairoRendererNativeResourcePublicationTests
+        COMMAND KairoRendererNativeResourcePublicationTests)
+
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
     if(UNIX AND NOT APPLE)
         add_executable(KairoRendererOpenGLSkinningSmoke tests/OpenGLSkinningSmoke.cpp)
