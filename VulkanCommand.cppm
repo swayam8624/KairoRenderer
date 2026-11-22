@@ -4,6 +4,10 @@ module;
 
 #include <stdexcept>
 
+// TEACHING VULKAN OWNERSHIP: a primary VkCommandBuffer belongs to a
+// VkCommandPool which belongs to the VkDevice/graphics queue family.
+// VulkanRenderer::DrawFrame waits its frame fence before Begin(); a graph
+// pass declaration alone cannot establish GPU recording safety.
 export module Kairo.Renderer.VulkanCommand;
 
 import Kairo.Renderer.VulkanDevice;
@@ -18,6 +22,11 @@ export namespace kairo::renderer
     class VulkanCommandBuffer final
     {
     public:
+        // Create a RESET_COMMAND_BUFFER-capable command pool for the queue
+        // family selected by VulkanDevice, then allocate ONE primary buffer.
+        // AUDIT: if allocation throws after pool creation, the class
+        // destructor does not run for the incomplete constructor; a local
+        // guard is needed for robust constructor-failure cleanup.
         explicit VulkanCommandBuffer(const VulkanDevice& device)
             : m_Device(device.Handle())
         {
@@ -41,6 +50,9 @@ export namespace kairo::renderer
             }
         }
 
+        // Destroying the pool implicitly releases its command buffers.
+        // Caller must ensure all submitted GPU uses have completed and
+        // VulkanDevice outlives this object; VulkanRenderer owns that order.
         ~VulkanCommandBuffer()
         {
             if (m_Pool != VK_NULL_HANDLE)
@@ -56,6 +68,9 @@ export namespace kairo::renderer
 
         /// Precondition: GPU work submitted with this buffer has completed.
         /// Task: reset and begin recording the next primary command sequence.
+        // Reset and begin recording the single reusable command buffer.
+        // This is only legal AFTER the previous submitted work has signaled
+        // the VkFence; VulkanRenderer Retire/Acquire owns that precondition.
         void Begin() const
         {
             if (vkResetCommandBuffer(m_Handle, 0u) != VK_SUCCESS)
@@ -71,6 +86,8 @@ export namespace kairo::renderer
         }
 
         /// Task: finalize the recorded commands for queue submission.
+        // Finish host command recording, not GPU execution. The recorded
+        // buffer remains pending after vkQueueSubmit until the fence signals.
         void End() const
         {
             if (vkEndCommandBuffer(m_Handle) != VK_SUCCESS)
