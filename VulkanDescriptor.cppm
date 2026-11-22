@@ -264,129 +264,129 @@ export namespace kairo::renderer
                             source.Skinning->Validate();
                     }
 
-                const std::uint32_t count = static_cast<std::uint32_t>(materials.size());
-                const std::array poolSizes{
-                    VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count * 3u },
-                    VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count * 7u }
-                };
-                VkDescriptorPoolCreateInfo pool{};
-                pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-                pool.maxSets = count;
-                pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
-                pool.pPoolSizes = poolSizes.data();
-                if (vkCreateDescriptorPool(m_Device, &pool, nullptr, &candidate.Pool) != VK_SUCCESS)
-                    throw std::runtime_error("vkCreateDescriptorPool for PBR materials failed.");
+                    const std::uint32_t count = static_cast<std::uint32_t>(materials.size());
+                    const std::array poolSizes{
+                        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, count * 3u },
+                        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count * 7u }
+                    };
+                    VkDescriptorPoolCreateInfo pool{};
+                    pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+                    pool.maxSets = count;
+                    pool.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
+                    pool.pPoolSizes = poolSizes.data();
+                    if (vkCreateDescriptorPool(m_Device, &pool, nullptr, &candidate.Pool) != VK_SUCCESS)
+                        throw std::runtime_error("vkCreateDescriptorPool for PBR materials failed.");
 
-                std::vector<VkDescriptorSetLayout> layouts(count, m_Layout);
-                candidate.Sets.resize(count);
-                VkDescriptorSetAllocateInfo allocation{};
-                allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-                allocation.descriptorPool = candidate.Pool;
-                allocation.descriptorSetCount = count;
-                allocation.pSetLayouts = layouts.data();
-                if (vkAllocateDescriptorSets(m_Device, &allocation, candidate.Sets.data()) != VK_SUCCESS)
-                {
-                    throw std::runtime_error("vkAllocateDescriptorSets for PBR materials failed.");
-                }
-
-                candidate.MaterialBuffers.reserve(count);
-                candidate.SkinBuffers.reserve(count);
-                for (std::uint32_t index = 0u; index < count; ++index)
-                {
-                    // All source factor/handle/palette validation completed
-                    // before the old descriptor pool was retired. No repeated
-                    // per-draw validation is necessary during native creation.
-                    const auto& source = materials[index];
-
-                    // Pack material factors in the exact shader uniform slot
-                    // sequence: base RGBA, emissive RGB/normal scale, metallic,
-                    // roughness, AO, alpha threshold/mode and double-sided bit.
-                    // The temporary CPU array is copied into a per-draw UBO.
-                    MaterialUniform uniform{};
-                    uniform.Values[0] = source.Material.BaseColor.x;
-                    uniform.Values[1] = source.Material.BaseColor.y;
-                    uniform.Values[2] = source.Material.BaseColor.z;
-                    uniform.Values[3] = source.Material.BaseColorAlpha;
-                    uniform.Values[4] = source.Material.Emissive.x;
-                    uniform.Values[5] = source.Material.Emissive.y;
-                    uniform.Values[6] = source.Material.Emissive.z;
-                    uniform.Values[7] = source.Material.NormalScale;
-                    uniform.Values[8] = source.Material.Metallic;
-                    uniform.Values[9] = source.Material.Roughness;
-                    uniform.Values[10] = source.Material.AmbientOcclusion;
-                    uniform.Values[11] = source.Material.AlphaCutoff;
-                    uniform.Values[12] = static_cast<float>(source.Material.AlphaMode);
-                    uniform.Values[13] = source.Material.DoubleSided ? 1.0f : 0.0f;
-                    auto buffer = std::make_unique<VulkanHostBuffer>(m_DeviceObject,
-                        sizeof(MaterialUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-                    buffer->Write(&uniform, sizeof(uniform));
-
-                    const VkDescriptorBufferInfo cameraInfo{ camera.Handle(), 0u, cameraRange };
-                    const VkDescriptorImageInfo shadowInfo{ shadowSampler, shadowView,
-                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL };
-                    // The five sampled views must already be in native
-                    // SHADER_READ_ONLY_OPTIMAL layout, established by the texture
-                    // uploader or a later explicit render-pass transition.
-                    std::array<VkDescriptorImageInfo, 5u> imageInfos{};
-                    for (std::size_t channel = 0u; channel < imageInfos.size(); ++channel)
-                        imageInfos[channel] = { source.Samplers[channel], source.Views[channel],
-                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-                    const VkDescriptorBufferInfo materialInfo{ buffer->Handle(), 0u,
-                        sizeof(MaterialUniform) };
-                    const VkDescriptorImageInfo environmentInfo{ source.EnvironmentSampler,
-                        source.EnvironmentView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-
-                    // Copy the caller-owned SkinPalette into a new persistent
-                    // host-coherent uniform buffer. Vulkan shaders read a stable
-                    // GPU allocation, never the transient CPU palette pointer.
-                    std::unique_ptr<VulkanHostBuffer> skinBuffer;
-                    VkDescriptorBufferInfo skinInfo{};
-                    if (source.Skinning != nullptr && !source.Skinning->Empty())
+                    std::vector<VkDescriptorSetLayout> layouts(count, m_Layout);
+                    candidate.Sets.resize(count);
+                    VkDescriptorSetAllocateInfo allocation{};
+                    allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+                    allocation.descriptorPool = candidate.Pool;
+                    allocation.descriptorSetCount = count;
+                    allocation.pSetLayouts = layouts.data();
+                    if (vkAllocateDescriptorSets(m_Device, &allocation, candidate.Sets.data()) != VK_SUCCESS)
                     {
-                        SkinUniform skin{};
-                        for (std::size_t joint = 0u; joint < source.Skinning->Size(); ++joint)
-                            for (std::size_t row = 0u; row < 4u; ++row)
-                                for (std::size_t column = 0u; column < 4u; ++column)
-                                    skin.Values[joint * 16u + column * 4u + row] =
-                                        source.Skinning->JointMatrices[joint](row, column);
-                        skinBuffer = std::make_unique<VulkanHostBuffer>(m_DeviceObject,
-                            sizeof(SkinUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-                        skinBuffer->Write(&skin, sizeof(skin));
-                        skinInfo = { skinBuffer->Handle(), 0u, sizeof(SkinUniform) };
+                        throw std::runtime_error("vkAllocateDescriptorSets for PBR materials failed.");
                     }
 
-                    // DescriptorWrite arrays hold pointers to local VkDescriptor*
-                    // structs ONLY until vkUpdateDescriptorSets copies the values.
-                    // The referenced VkBuffer/VkImageView/VkSampler handles remain
-                    // borrowed and require longer GPU lifetime management.
-                    std::array<VkWriteDescriptorSet, 10u> writes{};
-                    writes[0] = Write(candidate.Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-                    writes[0].pBufferInfo = &cameraInfo;
-                    writes[1] = Write(candidate.Sets[index], 1u,
-                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                    writes[1].pImageInfo = &shadowInfo;
-                    for (std::uint32_t channel = 0u; channel < 5u; ++channel)
+                    candidate.MaterialBuffers.reserve(count);
+                    candidate.SkinBuffers.reserve(count);
+                    for (std::uint32_t index = 0u; index < count; ++index)
                     {
-                        writes[2u + channel] = Write(candidate.Sets[index], 2u + channel,
+                        // All source factor/handle/palette validation completed
+                        // before any candidate native pool allocation. The
+                        // old generation remains alive until final publication.
+                        const auto& source = materials[index];
+
+                        // Pack material factors in the exact shader uniform slot
+                        // sequence: base RGBA, emissive RGB/normal scale, metallic,
+                        // roughness, AO, alpha threshold/mode and double-sided bit.
+                        // The temporary CPU array is copied into a per-draw UBO.
+                        MaterialUniform uniform{};
+                        uniform.Values[0] = source.Material.BaseColor.x;
+                        uniform.Values[1] = source.Material.BaseColor.y;
+                        uniform.Values[2] = source.Material.BaseColor.z;
+                        uniform.Values[3] = source.Material.BaseColorAlpha;
+                        uniform.Values[4] = source.Material.Emissive.x;
+                        uniform.Values[5] = source.Material.Emissive.y;
+                        uniform.Values[6] = source.Material.Emissive.z;
+                        uniform.Values[7] = source.Material.NormalScale;
+                        uniform.Values[8] = source.Material.Metallic;
+                        uniform.Values[9] = source.Material.Roughness;
+                        uniform.Values[10] = source.Material.AmbientOcclusion;
+                        uniform.Values[11] = source.Material.AlphaCutoff;
+                        uniform.Values[12] = static_cast<float>(source.Material.AlphaMode);
+                        uniform.Values[13] = source.Material.DoubleSided ? 1.0f : 0.0f;
+                        auto buffer = std::make_unique<VulkanHostBuffer>(m_DeviceObject,
+                            sizeof(MaterialUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+                        buffer->Write(&uniform, sizeof(uniform));
+
+                        const VkDescriptorBufferInfo cameraInfo{ camera.Handle(), 0u, cameraRange };
+                        const VkDescriptorImageInfo shadowInfo{ shadowSampler, shadowView,
+                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL };
+                        // The five sampled views must already be in native
+                        // SHADER_READ_ONLY_OPTIMAL layout, established by the texture
+                        // uploader or a later explicit render-pass transition.
+                        std::array<VkDescriptorImageInfo, 5u> imageInfos{};
+                        for (std::size_t channel = 0u; channel < imageInfos.size(); ++channel)
+                            imageInfos[channel] = { source.Samplers[channel], source.Views[channel],
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+                        const VkDescriptorBufferInfo materialInfo{ buffer->Handle(), 0u,
+                            sizeof(MaterialUniform) };
+                        const VkDescriptorImageInfo environmentInfo{ source.EnvironmentSampler,
+                            source.EnvironmentView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+
+                        // Copy the caller-owned SkinPalette into a new persistent
+                        // host-coherent uniform buffer. Vulkan shaders read a stable
+                        // GPU allocation, never the transient CPU palette pointer.
+                        std::unique_ptr<VulkanHostBuffer> skinBuffer;
+                        VkDescriptorBufferInfo skinInfo{};
+                        if (source.Skinning != nullptr && !source.Skinning->Empty())
+                        {
+                            SkinUniform skin{};
+                            for (std::size_t joint = 0u; joint < source.Skinning->Size(); ++joint)
+                                for (std::size_t row = 0u; row < 4u; ++row)
+                                    for (std::size_t column = 0u; column < 4u; ++column)
+                                        skin.Values[joint * 16u + column * 4u + row] =
+                                            source.Skinning->JointMatrices[joint](row, column);
+                            skinBuffer = std::make_unique<VulkanHostBuffer>(m_DeviceObject,
+                                sizeof(SkinUniform), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+                            skinBuffer->Write(&skin, sizeof(skin));
+                            skinInfo = { skinBuffer->Handle(), 0u, sizeof(SkinUniform) };
+                        }
+
+                        // DescriptorWrite arrays hold pointers to local VkDescriptor*
+                        // structs ONLY until vkUpdateDescriptorSets copies the values.
+                        // The referenced VkBuffer/VkImageView/VkSampler handles remain
+                        // borrowed and require longer GPU lifetime management.
+                        std::array<VkWriteDescriptorSet, 10u> writes{};
+                        writes[0] = Write(candidate.Sets[index], 0u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                        writes[0].pBufferInfo = &cameraInfo;
+                        writes[1] = Write(candidate.Sets[index], 1u,
                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                        writes[2u + channel].pImageInfo = &imageInfos[channel];
+                        writes[1].pImageInfo = &shadowInfo;
+                        for (std::uint32_t channel = 0u; channel < 5u; ++channel)
+                        {
+                            writes[2u + channel] = Write(candidate.Sets[index], 2u + channel,
+                                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                            writes[2u + channel].pImageInfo = &imageInfos[channel];
+                        }
+                        writes[7] = Write(candidate.Sets[index], 7u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                        writes[7].pBufferInfo = &materialInfo;
+                        writes[8] = Write(candidate.Sets[index], 8u,
+                            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                        writes[8].pImageInfo = &environmentInfo;
+                        std::uint32_t writeCount = 9u;
+                        if (skinBuffer)
+                        {
+                            writes[9] = Write(candidate.Sets[index], 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                            writes[9].pBufferInfo = &skinInfo;
+                            writeCount = 10u;
+                        }
+                        vkUpdateDescriptorSets(m_Device, writeCount, writes.data(), 0u, nullptr);
+                        candidate.MaterialBuffers.push_back(std::move(buffer));
+                        candidate.SkinBuffers.push_back(std::move(skinBuffer));
                     }
-                    writes[7] = Write(candidate.Sets[index], 7u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-                    writes[7].pBufferInfo = &materialInfo;
-                    writes[8] = Write(candidate.Sets[index], 8u,
-                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                    writes[8].pImageInfo = &environmentInfo;
-                    std::uint32_t writeCount = 9u;
-                    if (skinBuffer)
-                    {
-                        writes[9] = Write(candidate.Sets[index], 9u, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-                        writes[9].pBufferInfo = &skinInfo;
-                        writeCount = 10u;
-                    }
-                    vkUpdateDescriptorSets(m_Device, writeCount, writes.data(), 0u, nullptr);
-                    candidate.MaterialBuffers.push_back(std::move(buffer));
-                    candidate.SkinBuffers.push_back(std::move(skinBuffer));
-                }
                 });
         }
 
