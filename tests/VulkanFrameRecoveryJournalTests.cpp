@@ -36,7 +36,8 @@ int main()
         VulkanFrameRecoveryJournal untouched;
         Require(untouched.Phase() == VulkanFramePhase::BeforeAcquire &&
             !untouched.RequiresSwapchainRecovery() &&
-            !untouched.FenceResetWithoutSubmission(),
+            !untouched.FenceResetWithoutSubmission() &&
+            !untouched.AcquireSemaphoreUnconsumed(),
             "Pre-acquisition execution should need no image recovery");
         RequireLogicError([&] { untouched.FenceReset(); },
             "Fence reset before image acquisition was allowed");
@@ -53,6 +54,7 @@ int main()
         recordFailed.Acquired();
         Require(recordFailed.HasAcquiredImage() &&
             recordFailed.RequiresSwapchainRecovery() &&
+            recordFailed.AcquireSemaphoreUnconsumed() &&
             !recordFailed.FenceResetWithoutSubmission(),
             "Recording failure did not require acquired-image recovery");
         RequireLogicError([&] { recordFailed.Acquired(); },
@@ -65,7 +67,8 @@ int main()
         submitFailed.Acquired();
         submitFailed.FenceReset();
         Require(submitFailed.FenceResetWithoutSubmission() &&
-            submitFailed.RequiresSwapchainRecovery(),
+            submitFailed.RequiresSwapchainRecovery() &&
+            submitFailed.AcquireSemaphoreUnconsumed(),
             "Unsignaled fence with failed submit was not identified");
         RequireLogicError([&] { submitFailed.Completed(); },
             "A frame with no successful submission was marked presented");
@@ -78,6 +81,7 @@ int main()
         presentFailed.Submitted();
         Require(presentFailed.HasPendingPresentation() &&
             presentFailed.RequiresSwapchainRecovery() &&
+            !presentFailed.AcquireSemaphoreUnconsumed() &&
             !presentFailed.FenceResetWithoutSubmission(),
             "Failed presentation did not request safe retirement");
 
@@ -91,6 +95,7 @@ int main()
         Require(completed.Phase() == VulkanFramePhase::Completed &&
             !completed.HasAcquiredImage() &&
             !completed.HasPendingPresentation() &&
+            !completed.AcquireSemaphoreUnconsumed() &&
             !completed.FenceResetWithoutSubmission() &&
             !completed.RequiresSwapchainRecovery(),
             "Successful frame incorrectly requests recovery");
