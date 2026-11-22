@@ -1,0 +1,58 @@
+name: CPU-only renderer resource guards
+
+# Native GPU smoke tests live in the normal build/CI lanes. These two focused
+# regression programs compile with no GLFW/Vulkan/Metal/D3D12 SDK and catch
+# exception-safety/state-machine regressions before expensive native builds.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "detail/NativeResourcePublication.hpp"
+      - "detail/VulkanFrameRecoveryJournal.hpp"
+      - "tests/NativeResourcePublicationTests.cpp"
+      - "tests/VulkanFrameRecoveryJournalTests.cpp"
+      - "VulkanRenderer.cppm"
+      - "VulkanDescriptor.cppm"
+      - ".github/workflows/cpu-render-resource-guards.yml"
+  pull_request:
+    paths:
+      - "detail/NativeResourcePublication.hpp"
+      - "detail/VulkanFrameRecoveryJournal.hpp"
+      - "tests/NativeResourcePublicationTests.cpp"
+      - "tests/VulkanFrameRecoveryJournalTests.cpp"
+      - "VulkanRenderer.cppm"
+      - "VulkanDescriptor.cppm"
+      - ".github/workflows/cpu-render-resource-guards.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-regressions:
+    name: "${{ matrix.compiler }} / CPU resource lifetime"
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run native-publication and Vulkan-frame checks
+        env:
+          CXX: ${{ matrix.compiler }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kairo-cpu"
+          "$CXX" -std=c++23 -O0 -g -Wall -Wextra -Werror -pedantic \
+            tests/NativeResourcePublicationTests.cpp \
+            -o "$RUNNER_TEMP/kairo-cpu/native-publication"
+          "$RUNNER_TEMP/kairo-cpu/native-publication"
+
+          "$CXX" -std=c++23 -O0 -g -Wall -Wextra -Werror -pedantic \
+            tests/VulkanFrameRecoveryJournalTests.cpp \
+            -o "$RUNNER_TEMP/kairo-cpu/vulkan-frame-recovery"
+          "$RUNNER_TEMP/kairo-cpu/vulkan-frame-recovery"
+
+          echo "GPU-independent regression checks passed; native driver tests remain separate."
