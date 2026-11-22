@@ -259,35 +259,25 @@ export namespace kairo::renderer
                 // succeeds. Preserve the ORIGINAL exception for the caller.
                 m_FrameUsable = false;
                 m_LastFrameProfile = {};
-                if (frameJournal.RequiresSwapchainRecovery() &&
-                    !rebuildingSwapchain)
+                // The same CPU-only policy is exercised by
+                // VulkanFrameRecoveryJournalTests: an unconsumed WSI acquire
+                // must be drained BEFORE the old generation is destroyed.
+                // A failed drain/rebuild never clears sticky unusable state.
+                if (detail::TryRecoverFailedVulkanFrame(frameJournal,
+                    rebuildingSwapchain,
+                    [this] { DrainUnsubmittedAcquire(); },
+                    [this] { RecreateSwapchain(); }))
                 {
-                    try
-                    {
-                        // When recording or vkQueueSubmit failed, acquire's
-                        // binary ImageAvailable signal was never consumed.
-                        // A valid synchronization-only queue submission waits
-                        // on it before vkDeviceWaitIdle destroys old semaphores.
-                        if (frameJournal.AcquireSemaphoreUnconsumed())
-                            DrainUnsubmittedAcquire();
-                        RecreateSwapchain(); // vkDeviceWaitIdle before teardown
-                        // Failed-frame readbacks must not be consumed as if
-                        // their transfer commands had completed normally.
-                        m_PickRequested.reset();
-                        m_PickInFlight = false;
-                        m_CaptureRequested = false;
-                        m_CaptureInFlight = false;
-                        m_CaptureReadback.reset();
-                        m_CaptureExtent = {};
-                        m_FrameUsable = true;
-                    }
-                    catch (...)
-                    {
-                        // A device-lost / failed rebuild is not retriable
-                        // with the old semaphore, fence and swapchain state.
-                        // Future DrawFrame calls now fail fast instead of
-                        // hanging in vkWaitForFences(UINT64_MAX).
-                    }
+                    // Failed-frame readbacks cannot be consumed as if their
+                    // transfer commands had completed normally. The entire
+                    // native sync/swapchain generation was rebuilt first.
+                    m_PickRequested.reset();
+                    m_PickInFlight = false;
+                    m_CaptureRequested = false;
+                    m_CaptureInFlight = false;
+                    m_CaptureReadback.reset();
+                    m_CaptureExtent = {};
+                    m_FrameUsable = true;
                 }
                 throw;
             }
