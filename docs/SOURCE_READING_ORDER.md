@@ -8,6 +8,8 @@ Work from backend-neutral types and graph policies toward API-specific execution
 
 Read each phase in order. Every link goes to a source file or directory in this repository. For a directory, inspect its public interface and then its implementation files. After each phase, identify the caller, the state it owns, the inputs it validates, and its observable outputs.
 
+**Source teaching status:** [annotated native files and outstanding correctness/test evidence](SOURCE_TEACHING_PROGRESS.md).
+
 **Cross-subsystem texture laboratory:** [Texture upload, mip offsets, descriptor sets and native viewport/shadow transitions](TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md). Read `TextureArtifact.cppm` and its tests before studying GPU image ownership, color-space interpretation and native layout barriers.
 
 **Native synchronization and ownership:** [Vulkan acquire/submit/present fences, Metal command completion, readbacks, native teardown and error-path audits](NATIVE_GPU_SYNCHRONIZATION_AND_LIFETIMES_LAB.md). Start this after the render-graph overview to distinguish logical transitions from actual GPU ordering.
