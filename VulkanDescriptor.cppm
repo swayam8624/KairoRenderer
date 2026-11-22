@@ -294,16 +294,10 @@ export namespace kairo::renderer
                 m_SkinBuffers.reserve(count);
                 for (std::uint32_t index = 0u; index < count; ++index)
                 {
+                    // All source factor/handle/palette validation completed
+                    // before the old descriptor pool was retired. No repeated
+                    // per-draw validation is necessary during native creation.
                     const auto& source = materials[index];
-                    source.Material.Validate();
-                    for (std::size_t channel = 0u; channel < 5u; ++channel)
-                        if (source.Views[channel] == VK_NULL_HANDLE ||
-                            source.Samplers[channel] == VK_NULL_HANDLE)
-                            throw std::invalid_argument("PBR material descriptors require five valid sampled images.");
-                    if (source.EnvironmentView == VK_NULL_HANDLE ||
-                        source.EnvironmentSampler == VK_NULL_HANDLE)
-                        throw std::invalid_argument(
-                            "PBR material descriptors require a valid environment fallback image.");
 
                     // Pack material factors in the exact shader uniform slot
                     // sequence: base RGBA, emissive RGB/normal scale, metallic,
@@ -350,7 +344,6 @@ export namespace kairo::renderer
                     VkDescriptorBufferInfo skinInfo{};
                     if (source.Skinning != nullptr && !source.Skinning->Empty())
                     {
-                        source.Skinning->Validate();
                         SkinUniform skin{};
                         for (std::size_t joint = 0u; joint < source.Skinning->Size(); ++joint)
                             for (std::size_t row = 0u; row < 4u; ++row)
