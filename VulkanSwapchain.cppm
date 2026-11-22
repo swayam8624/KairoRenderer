@@ -35,7 +35,11 @@ export namespace kairo::renderer
               m_GraphicsFamily(device.GraphicsFamily()),
               m_PresentFamily(device.PresentFamily())
         {
-            Create(window);
+            // If image enumeration/view creation fails after the VkSwapchain
+            // exists, the enclosing destructor will NOT run: roll back the
+            // successfully created native swapchain/images/views now.
+            try { Create(window); }
+            catch (...) { Destroy(); throw; }
         }
 
         ~VulkanSwapchain() { Destroy(); }
@@ -63,7 +67,8 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkDeviceWaitIdle failed during swapchain recreation.");
             }
             Destroy();
-            Create(window);
+            try { Create(window); }
+            catch (...) { Destroy(); throw; }
         }
 
     private:
@@ -81,8 +86,9 @@ export namespace kairo::renderer
         // Query surface caps, select compatible format and present mode,
         // clamp framebuffer extent, choose an allowed image count, and
         // configure EXCLUSIVE vs CONCURRENT queue sharing if families differ.
-        // AUDIT: failed image-view creation partway through an incomplete
-        // constructor needs scoped cleanup for previously allocated views.
+        // Constructor/Recreate now call Destroy on failures. Pre-reserving
+        // image-view storage additionally prevents a vector allocation error
+        // after vkCreateImageView succeeds but before its handle is tracked.
         void Create(const Window& window)
         {
             VkSurfaceCapabilitiesKHR capabilities{};
@@ -137,6 +143,10 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkGetSwapchainImagesKHR image query failed.");
             }
             m_Format = format.format;
+            // Reserve before creating any VkImageView. Each successful view
+            // must be pushed into this vector without a throwing allocation
+            // so Destroy can see it even on later native creation failure.
+            m_ImageViews.reserve(m_Images.size());
 
             for (const VkImage image : m_Images)
             {
