@@ -9,6 +9,9 @@ import Kairo.Renderer;
 
 using namespace kairo::renderer;
 
+// TEACHING TEST: 256 logical resources across a dependency chain should fit two planned
+// 4096-byte transient slots. This is a graph-planning upper bound, not measured GPU
+// memory.
 TEST_CASE("render graph aliases long transient chains under bounded physical capacity",
     "[KairoRenderer][RenderGraph][Scale]")
 {
