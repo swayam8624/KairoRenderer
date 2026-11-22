@@ -46,7 +46,7 @@ The first repair is to **move `vkResetFences` to the Submit callback after succe
 
 ## 3. A small explicit recovery journal
 
-The CPU-only [`VulkanFrameRecoveryJournal`](../detail/VulkanFrameRecoveryJournal.hpp) records only facts established by successful native calls:
+The CPU-only [`VulkanFrameRecoveryJournal`](../detail/VulkanFrameRecoveryJournal.hpp) records facts established by successful native calls and exposes a **`TryRecoverFailedVulkanFrame` policy helper used by the real renderer**:
 
 | Phase | Last successful native milestone | Acquired image outstanding? | ImageAvailable consumed by successful draw submit? |
 | --- | --- | --- | --- |
@@ -108,8 +108,10 @@ This is **best-effort recovery of a frame**, not a full device-loss recovery imp
 4. Submit accepted but present failure: GPU/WSI retirement needed, but ImageAvailable already consumed by submission.
 5. Normal acquire → reset → submit → present: no extra recreation required.
 6. Illegal state transitions: second acquire, early completion and submission without fence reset rejected.
+7. The production `TryRecoverFailedVulkanFrame` helper calls **drain then rebuild** for recording/submission failure, **rebuild only** after a submitted frame, and never rebuilds when no image was acquired or a rebuild is already failing.
+8. Injected drain failures prevent the rebuild callback; injected rebuild failures return failure, leaving the renderer in its fail-fast state.
 
-The new CTest name is `KairoRendererVulkanFrameRecoveryJournalTests`. It is a **header-only policy test**; it cannot exercise real `vkQueueSubmit` validation, driver queue semantics or image lifetime.
+The new CTest name is `KairoRendererVulkanFrameRecoveryJournalTests`. It exercises the **same header-only recovery policy invoked by the renderer**, including its injected callback ordering, but cannot exercise real `vkQueueSubmit` validation, driver queue semantics or image lifetime.
 
 With sibling repositories checked out, [the KairoGameEngine standalone runner](https://github.com/swayam8624/KairoGameEngine/blob/main/scripts/run_renderer_resource_lifetime_regressions.sh) compiles four pure CPU regressions (Player ownership, native resource publication, Vulkan frame journal, material file size budget) on a C++23 compiler.
 
