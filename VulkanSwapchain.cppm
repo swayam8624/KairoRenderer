@@ -25,6 +25,9 @@ export namespace kairo::renderer
     class VulkanSwapchain final
     {
     public:
+        // Borrow device and surface lifetimes; own VkSwapchainKHR and its
+        // per-image VkImageViews. Swapchain VkImages themselves are acquired
+        // from the swapchain, NOT separately allocated or freed here.
         VulkanSwapchain(const VulkanDevice& device, const VulkanSurface& surface, const Window& window)
             : m_Device(device.Handle()),
               m_Physical(device.PhysicalHandle()),
@@ -49,6 +52,10 @@ export namespace kairo::renderer
         /// Task: idle the device and rebuild surface-owned images after resize
         /// or presentation invalidation. Idling is correct for one frame in
         /// flight; a future multi-frame scheduler will retire old resources.
+        // Globally idle the device, destroy owned image views/swapchain,
+        // then negotiate a new image generation from the current surface.
+        // The higher VulkanRenderer first retires dependent render passes
+        // and recreates sync objects/attachments after new image selection.
         void Recreate(const Window& window)
         {
             if (vkDeviceWaitIdle(m_Device) != VK_SUCCESS)
@@ -71,6 +78,11 @@ export namespace kairo::renderer
         std::vector<VkImage> m_Images;
         std::vector<VkImageView> m_ImageViews;
 
+        // Query surface caps, select compatible format and present mode,
+        // clamp framebuffer extent, choose an allowed image count, and
+        // configure EXCLUSIVE vs CONCURRENT queue sharing if families differ.
+        // AUDIT: failed image-view creation partway through an incomplete
+        // constructor needs scoped cleanup for previously allocated views.
         void Create(const Window& window)
         {
             VkSurfaceCapabilitiesKHR capabilities{};
@@ -145,6 +157,9 @@ export namespace kairo::renderer
             }
         }
 
+        // Prefer SRGB nonlinear B8G8R8A8 when available; otherwise use the
+        // first advertised surface format. Format choice affects framebuffer
+        // views and color-space interpretation downstream.
         [[nodiscard]] VkSurfaceFormatKHR ChooseFormat() const
         {
             std::uint32_t count = 0u;
@@ -165,6 +180,8 @@ export namespace kairo::renderer
             return formats.front();
         }
 
+        // Prefer MAILBOX low-latency mode when supported, otherwise FIFO.
+        // FIFO is the universally required Vulkan present mode.
         [[nodiscard]] VkPresentModeKHR ChoosePresentMode() const
         {
             std::uint32_t count = 0u;
@@ -176,6 +193,9 @@ export namespace kairo::renderer
                 : VK_PRESENT_MODE_FIFO_KHR;
         }
 
+        // The surface may prescribe a fixed currentExtent; otherwise clamp
+        // the window framebuffer size within surface min/max bounds.
+        // Zero extent is rejected before swapchain construction.
         [[nodiscard]] static VkExtent2D ChooseExtent(const VkSurfaceCapabilitiesKHR& capabilities, const Window& window)
         {
             if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max())
@@ -189,6 +209,9 @@ export namespace kairo::renderer
             };
         }
 
+        // Destroy owned VkImageViews before their parent VkSwapchainKHR;
+        // borrowed VkImages cease to be valid when the swapchain dies.
+        // Requires all users of these image views to have retired first.
         void Destroy() noexcept
         {
             for (const VkImageView view : m_ImageViews)
