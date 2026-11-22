@@ -7,6 +7,11 @@ import Kairo.Renderer;
 import Kairo.Foundation.Math;
 import Kairo.Assets;
 
+// TEACHING NATIVE SMOKE (Vulkan): request a real Vulkan backend, upload a
+// skinned asset, render/capture twice with a modified joint palette, and
+// require the output pixels to change. DrawFrame submission and readback
+// retire on separate frames, so two calls precede each captured result.
+// A skipped/unavailable presentation is not a positive device test.
 int main()
 {
     try
