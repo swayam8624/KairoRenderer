@@ -333,6 +333,17 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     add_test(NAME KairoRendererNativeResourcePublicationTests
         COMMAND KairoRendererNativeResourcePublicationTests)
 
+    # CPU-only companion for VulkanRendererRuntime::DrawFrame. It asserts that
+    # image acquisition, fence reset, successful queue submission and present
+    # have a state-machine order even on machines without a Vulkan GPU.
+    add_executable(KairoRendererVulkanFrameRecoveryJournalTests
+        tests/VulkanFrameRecoveryJournalTests.cpp)
+    target_compile_features(KairoRendererVulkanFrameRecoveryJournalTests PRIVATE cxx_std_23)
+    set_property(TARGET KairoRendererVulkanFrameRecoveryJournalTests
+        PROPERTY COMPILE_WARNING_AS_ERROR ON)
+    add_test(NAME KairoRendererVulkanFrameRecoveryJournalTests
+        COMMAND KairoRendererVulkanFrameRecoveryJournalTests)
+
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
     if(UNIX AND NOT APPLE)
         add_executable(KairoRendererOpenGLSkinningSmoke tests/OpenGLSkinningSmoke.cpp)
