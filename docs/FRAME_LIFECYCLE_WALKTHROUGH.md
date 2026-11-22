@@ -5,6 +5,8 @@ This is a source-linked teaching companion to the
 backend-neutral and platform-native responsibilities. It is not a claim of
 successful GPU execution or CI verification on every operating system.
 
+**Follow actual texture bytes:** [Vulkan texture upload, material descriptors, viewport and shadow layouts](TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md). Connect the portable KairoAssets artifact with the native sampled image and its lifetime.
+
 **Deep native continuation:** [Vulkan/Metal synchronization and resource lifetime laboratory](NATIVE_GPU_SYNCHRONIZATION_AND_LIFETIMES_LAB.md) — the concrete command, semaphore/fence, texture readback and constructor-failure boundaries underneath this walkthrough.
 
 ## 1. Separate authored identity from runtime GPU ownership
