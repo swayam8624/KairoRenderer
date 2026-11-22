@@ -355,6 +355,16 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     add_test(NAME KairoRendererTransactionalGenerationTests
         COMMAND KairoRendererTransactionalGenerationTests)
 
+    # Exact CPU mip/offset packing contract used by VulkanTexture2D::Upload.
+    # Works without a native VkDevice, loader, or presentation surface.
+    add_executable(KairoRendererTextureMipUploadPlanTests
+        tests/TextureMipUploadPlanTests.cpp)
+    target_compile_features(KairoRendererTextureMipUploadPlanTests PRIVATE cxx_std_23)
+    set_property(TARGET KairoRendererTextureMipUploadPlanTests
+        PROPERTY COMPILE_WARNING_AS_ERROR ON)
+    add_test(NAME KairoRendererTextureMipUploadPlanTests
+        COMMAND KairoRendererTextureMipUploadPlanTests)
+
     add_test(NAME KairoRendererTests COMMAND KairoRendererTests)
     if(UNIX AND NOT APPLE)
         add_executable(KairoRendererOpenGLSkinningSmoke tests/OpenGLSkinningSmoke.cpp)
