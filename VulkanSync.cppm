@@ -44,7 +44,11 @@ export namespace kairo::renderer
         VulkanFrameSync(const VulkanDevice& device, std::uint32_t swapchainImageCount)
             : m_Device(device.Handle())
         {
-            Create(swapchainImageCount);
+            // Create can fail after ImageAvailable was allocated but before
+            // InFlight or the per-image semaphores exist. The destructor of
+            // this incomplete VulkanFrameSync would NOT run, so clean here.
+            try { Create(swapchainImageCount); }
+            catch (...) { Destroy(); throw; }
         }
 
         ~VulkanFrameSync() { Destroy(); }
@@ -59,7 +63,8 @@ export namespace kairo::renderer
         void Recreate(std::uint32_t swapchainImageCount)
         {
             Destroy();
-            Create(swapchainImageCount);
+            try { Create(swapchainImageCount); }
+            catch (...) { Destroy(); throw; }
         }
 
         [[nodiscard]] VkSemaphore ImageAvailable() const noexcept { return m_ImageAvailable; }
@@ -74,9 +79,9 @@ export namespace kairo::renderer
 
         // Start fence signaled: first Retire is a no-op rather than deadlock.
         // Create one acquire semaphore, one frame fence and one per-image
-        // render-complete semaphore. AUDIT: errors before entering the
-        // per-image try/catch can leave successfully created native handles
-        // in an incomplete constructor; add failure-injection coverage.
+        // render-complete semaphore. Constructor and Recreate catch any
+        // early semaphore/fence creation failure and call idempotent Destroy;
+        // the inner per-image catch retains its partial-vector cleanup.
         void Create(std::uint32_t swapchainImageCount)
         {
             if (swapchainImageCount == 0u)
