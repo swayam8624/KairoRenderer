@@ -4,6 +4,7 @@
 #include "../detail/VulkanUploadRetirementPolicy.hpp"
 
 #include <cstdio>
+#include <initializer_list>
 #include <stdexcept>
 
 namespace
