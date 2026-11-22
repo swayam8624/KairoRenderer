@@ -340,6 +340,9 @@ TEST_CASE("Renderer material validates complete metallic roughness channels",
     REQUIRE_THROWS_AS(material.Validate(), std::invalid_argument);
 }
 
+// TEACHING TEST: MakePBRMaterial preserves alpha, metallic, roughness, emissive,
+// normal/AO factors and typed texture resolution to fake handle 17. Missing resolver
+// for a present channel throws before GPU submission.
 TEST_CASE("Asset material conversion preserves every PBR channel",
     "[KairoRenderer][Material][Assets]")
 {
@@ -377,6 +380,9 @@ TEST_CASE("Asset material conversion preserves every PBR channel",
     CHECK_THROWS_AS(MakePBRMaterial(source), std::invalid_argument);
 }
 
+// TEACHING TEST: Resolve a parent X=2, child Y=3 matrix into the CPU primitive;
+// verify glTF albedo URI requests Color semantics and normal URI requests Normal
+// semantics, yielding separate fake GPU handles.
 TEST_CASE("glTF scene conversion preserves hierarchy materials and texture semantics",
     "[KairoRenderer][Assets][glTF]")
 {
