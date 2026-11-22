@@ -27,7 +27,7 @@ namespace
         if (!condition) throw std::runtime_error(message);
     }
 
-    template<class Action, class Exception>
+    template<class Exception, class Action>
     void RequireThrows(Action&& action, const char* message)
     {
         bool thrown = false;
@@ -73,33 +73,28 @@ int main()
         // fail before any large std::vector staging allocation occurs.
         Require(MakeTextureMipUploadPlan(mips, 84u).PackedBytes.size() == 84u,
             "Exact-boundary payload incorrectly rejected");
-        RequireThrows<decltype([&] { (void)MakeTextureMipUploadPlan(mips, 83u); }),
-            std::length_error>(
+        RequireThrows<std::length_error>(
                 [&] { (void)MakeTextureMipUploadPlan(mips, 83u); },
                 "One byte above upload budget was accepted");
 
-        RequireThrows<decltype([&] { (void)MakeTextureMipUploadPlan(std::vector<Mip>{}); }),
-            std::invalid_argument>(
+        RequireThrows<std::invalid_argument>(
                 [&] { (void)MakeTextureMipUploadPlan(std::vector<Mip>{}); },
                 "Empty mip chain was accepted");
         const std::vector<Mip> missingBytes{
             { 1u, 1u, {} }
         };
-        RequireThrows<decltype([&] { (void)MakeTextureMipUploadPlan(missingBytes); }),
-            std::invalid_argument>(
+        RequireThrows<std::invalid_argument>(
                 [&] { (void)MakeTextureMipUploadPlan(missingBytes); },
                 "Mip with missing bytes was accepted");
         const std::vector<Mip> zeroWidth{
             { 0u, 1u, std::vector<std::byte>(1u, std::byte{1}) }
         };
-        RequireThrows<decltype([&] { (void)MakeTextureMipUploadPlan(zeroWidth); }),
-            std::invalid_argument>(
+        RequireThrows<std::invalid_argument>(
                 [&] { (void)MakeTextureMipUploadPlan(zeroWidth); },
                 "Zero-width source mip was accepted");
 
         // No need to allocate a huge image to exercise the budget gate.
-        RequireThrows<decltype([&] { (void)MakeTextureMipUploadPlan(mips, 1u); }),
-            std::length_error>(
+        RequireThrows<std::length_error>(
                 [&] { (void)MakeTextureMipUploadPlan(mips, 1u); },
                 "A too-small device upload budget was accepted");
 
