@@ -99,6 +99,7 @@ export namespace kairo::renderer
             VkResult acquireResult = VK_SUCCESS;
             bool frameActive = true;
             bool rebuildingSwapchain = false;
+            bool nativeFailureBeforeAcquire = false;
             detail::VulkanFrameRecoveryJournal frameJournal;
 
             RenderGraph graph;
@@ -112,11 +113,14 @@ export namespace kairo::renderer
             const auto retirePass = graph.AddPass("Retire", {
                 { nativeFrame, RenderAccessMode::Read,
                     RenderResourceState::Present }
-            }, [this, device, inFlight]
+            }, [this, device, inFlight, &nativeFailureBeforeAcquire]
             {
                 if (vkWaitForFences(
                     device, 1u, &inFlight, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+                {
+                    nativeFailureBeforeAcquire = true;
                     throw std::runtime_error("vkWaitForFences failed.");
+                }
                 CompleteViewportPick();
                 CompleteViewportCapture();
             });
@@ -129,7 +133,7 @@ export namespace kairo::renderer
                 { nativeFrame, RenderAccessMode::ReadWrite,
                     RenderResourceState::Present }
             }, [this, device, &imageIndex, &acquireResult, &frameActive,
-                &rebuildingSwapchain, &frameJournal]
+                &rebuildingSwapchain, &frameJournal, &nativeFailureBeforeAcquire]
             {
                 acquireResult = vkAcquireNextImageKHR(
                     device, m_Swapchain.Handle(), UINT64_MAX,
@@ -144,7 +148,10 @@ export namespace kairo::renderer
                 }
                 if (acquireResult != VK_SUCCESS &&
                     acquireResult != VK_SUBOPTIMAL_KHR)
+                {
+                    nativeFailureBeforeAcquire = true;
                     throw std::runtime_error("vkAcquireNextImageKHR failed.");
+                }
                 frameJournal.Acquired();
             });
             graph.DependsOn(acquirePass, retirePass);
@@ -277,6 +284,13 @@ export namespace kairo::renderer
                     m_CaptureInFlight = false;
                     m_CaptureReadback.reset();
                     m_CaptureExtent = {};
+                    m_FrameUsable = true;
+                }
+                else if (detail::CanRetryWithoutVulkanRebuild(frameJournal,
+                    rebuildingSwapchain, nativeFailureBeforeAcquire))
+                {
+                    // No acquired WSI image or pending native submission:
+                    // only CPU work failed. Preserve the usable Vulkan state.
                     m_FrameUsable = true;
                 }
                 throw;
