@@ -7,6 +7,11 @@ import Kairo.Renderer;
 import Kairo.Foundation.Math;
 import Kairo.Assets;
 
+// TEACHING NATIVE SMOKE (Metal): request an actual Metal backend on a
+// supported macOS host, upload a skinned asset, render/capture twice with
+// different joint palettes and require a visible pixel difference.
+// Capture explicitly waits for the previous native MTLCommandBuffer; this
+// test checks a rendered result, not general GPU performance or timing.
 int main()
 {
     try
