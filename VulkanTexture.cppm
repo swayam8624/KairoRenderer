@@ -8,6 +8,11 @@ module;
 #include <stdexcept>
 #include <vector>
 
+// TEACHING UPLOAD: validated KairoAssets TextureArtifactData -> host-coherent
+// Vulkan staging bytes -> device-local VkImage mips -> sampled image view and
+// sampler. This module performs REAL native barriers, unlike logical
+// RenderGraph transitions. Its native resources are owned by VulkanTexture2D
+// and borrowed by VulkanMaterialDescriptors. See TEXTURE_UPLOAD_LAB.md.
 export module Kairo.Renderer.VulkanTexture;
 
 import Kairo.Assets.TextureArtifact;
@@ -20,9 +25,17 @@ export namespace kairo::renderer
     /// Owning Vulkan sampled image built from the canonical KairoAssets texture
     /// artifact. Input mip bytes are copied exactly once through a host staging
     /// buffer; the resulting image is device-local and shader-read-only.
+    // VkImage+VkDeviceMemory+VkImageView+VkSampler all belong to this one
+    // move-disabled RAII value. VulkanTriangle holds it via unique_ptr;
+    // descriptor bindings borrow View()/Sampler() without taking ownership.
     class VulkanTexture2D final
     {
     public:
+        // Validate authored pixels/mips FIRST. Then select a device format,
+        // allocate image+view+sampler and synchronously upload all mip bytes.
+        // The explicit try/catch invokes Destroy if native construction fails
+        // partway through: unlike a default C++ destructor, this covers
+        // partially built VulkanTexture2D instances.
         VulkanTexture2D(const VulkanDevice& device,
             const kairo::assets::TextureArtifactData& texture,
             TextureSampler sampling = {})
@@ -68,6 +81,10 @@ export namespace kairo::renderer
         std::uint32_t m_Height = 0u;
         std::uint32_t m_MipLevels = 0u;
 
+        // Preserve the asset's color-space semantics: sRGB for encoded color,
+        // UNORM for linear sampled channels, and float16 where requested.
+        // Applying sRGB interpretation to normal/metallic channels is a
+        // data bug even when the Vulkan image dimensions are valid.
         [[nodiscard]] static VkFormat SelectFormat(
             const kairo::assets::TextureArtifactData& texture)
         {
@@ -85,6 +102,9 @@ export namespace kairo::renderer
             throw std::invalid_argument("Texture artifact has no Vulkan format mapping.");
         }
 
+        // Intersect VkImage memoryTypeBits with the physical device's
+        // supported DEVICE_LOCAL properties. A format can be supported yet
+        // the chosen allocation requirements still lack a compatible type.
         [[nodiscard]] static std::uint32_t FindMemoryType(VkPhysicalDevice physical,
             std::uint32_t bits, VkMemoryPropertyFlags required)
         {
@@ -97,6 +117,9 @@ export namespace kairo::renderer
             throw std::runtime_error("No Vulkan memory type supports a device-local texture.");
         }
 
+        // Allocate a 2D optimal-tiling VkImage with all artifact mip levels,
+        // device-local storage and TRANSFER_DST|SAMPLED usage. Initial layout
+        // is UNDEFINED; content becomes valid only after Upload barriers/copy.
         void CreateImage(const VulkanDevice& device)
         {
             VkFormatProperties properties{};
@@ -133,6 +156,8 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkBindImageMemory for texture failed.");
         }
 
+        // Create one sampled color-aspect image view spanning ALL mip levels.
+        // This is a view/format contract; it does not transfer or decode bytes.
         void CreateView()
         {
             VkImageViewCreateInfo create{};
@@ -145,6 +170,8 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateImageView for texture failed.");
         }
 
+        // Map canonical address modes to Vulkan repeat/mirror/clamp enums.
+        // Invalid enum values fail rather than silently changing UV behavior.
         [[nodiscard]] static VkSamplerAddressMode Address(TextureAddressMode mode)
         {
             switch (mode)
@@ -156,6 +183,9 @@ export namespace kairo::renderer
             throw std::invalid_argument("Texture address mode is invalid.");
         }
 
+        // Request linear min/mag and trilinear mip interpolation with LOD
+        // clamped to the authored mip-count-1. AddressU/V follow the asset;
+        // W is clamped. Anisotropy is not enabled by this simple sampler.
         void CreateSampler(TextureSampler sampling)
         {
             VkSamplerCreateInfo create{};
@@ -173,6 +203,14 @@ export namespace kairo::renderer
                 throw std::runtime_error("vkCreateSampler for texture failed.");
         }
 
+        // Serialize all mip payloads contiguously in a CPU staging buffer.
+        // Record one transient command buffer with two VkImageMemoryBarriers:
+        // UNDEFINED -> TRANSFER_DST_OPTIMAL, copy each VkBufferImageCopy mip,
+        // TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL. Wait for the entire
+        // graphics queue to idle before staging buffer/pool destruction.
+        // AUDIT: queue-submit succeeded but vkQueueWaitIdle fails: the catch
+        // immediately destroys the command pool, so check native in-flight
+        // lifetime behavior under device-lost/error injection separately.
         void Upload(const VulkanDevice& device,
             const kairo::assets::TextureArtifactData& texture)
         {
@@ -209,6 +247,9 @@ export namespace kairo::renderer
                 if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS)
                     throw std::runtime_error("vkBeginCommandBuffer for texture upload failed.");
 
+                // First real native layout/access transition for every mip:
+                // initial undefined bytes -> valid transfer-write destination.
+                // This Vulkan command is not generated by RenderGraph.
                 VkImageMemoryBarrier toTransfer{};
 
                 toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -223,6 +264,9 @@ export namespace kairo::renderer
                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0u, 0u, nullptr, 0u, nullptr,
                     1u, &toTransfer);
 
+                // Every VkBufferImageCopy maps an authored mip byte offset
+                // to the corresponding VkImage mipLevel and extent. Correct
+                // ordering depends on the validated texture's Mips sequence.
                 std::vector<VkBufferImageCopy> copies;
                 copies.reserve(texture.Mips.size());
                 VkDeviceSize offset = 0u;
@@ -240,6 +284,9 @@ export namespace kairo::renderer
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     static_cast<std::uint32_t>(copies.size()), copies.data());
 
+                // Publish transfer writes as fragment-shader reads. The
+                // descriptor later declares SHADER_READ_ONLY_OPTIMAL and
+                // requires this actual per-subresource layout to be true.
                 VkImageMemoryBarrier toShader{};
 
                 toShader.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -272,6 +319,9 @@ export namespace kairo::renderer
             vkDestroyCommandPool(m_Device, pool, nullptr);
         }
 
+        // Reverse native ownership: sampler, view, image, then VkDeviceMemory.
+        // Caller must retire every descriptor/draw referencing this texture
+        // before destroying the underlying VkImage/VkImageView.
         void Destroy() noexcept
         {
             if (m_Sampler != VK_NULL_HANDLE) vkDestroySampler(m_Device, m_Sampler, nullptr);
