@@ -57,6 +57,8 @@ Why this is not cosmetic: an albedo value encoded with the sRGB transfer functio
 
 KairoAssets' CPU mip generator also treats data semantics appropriately: sRGB colors are averaged in linear space, while normal-map vectors are renormalized. **The GPU upload does not generate missing mips.** It consumes the validated precomputed bytes in the artifact's existing order.
 
+**Later implementation:** [`TextureMipUploadPlan.hpp`](../detail/TextureMipUploadPlan.hpp) computes the staging bytes and offsets used by the live [Vulkan uploader](../VulkanTexture.cppm); [the regression](../tests/TextureMipUploadPlanTests.cpp) verifies the example below. The [dedicated staging and failure-path lab](VULKAN_TEXTURE_MIP_UPLOAD_PLAN_AND_FAILURE_LAB.md) goes deeper into arithmetic and queue retirement.
+
 ## 3. Derive the staging offsets by hand
 
 A simple RGBA8 4×4 texture with a complete down-to-one mip chain has three mip extents:
