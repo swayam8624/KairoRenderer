@@ -38,6 +38,9 @@ export namespace kairo::renderer
     class VulkanFrameSync final
     {
     public:
+        // The device is borrowed; this object OWNS native semaphores/fence.
+        // ImageAvailable is for acquire; RenderFinished is indexed by the
+        // image returned from acquire; InFlight is the CPU reuse gate.
         VulkanFrameSync(const VulkanDevice& device, std::uint32_t swapchainImageCount)
             : m_Device(device.Handle())
         {
@@ -50,6 +53,9 @@ export namespace kairo::renderer
 
         /// Precondition: the device is idle. This is satisfied by swapchain
         /// recreation before image-count-dependent semaphores are released.
+        // Replace per-image semaphores when the swapchain image count changes.
+        // The caller must idle the device FIRST; old VkSemaphores could still
+        // be used by graphics submission/present otherwise.
         void Recreate(std::uint32_t swapchainImageCount)
         {
             Destroy();
@@ -66,6 +72,11 @@ export namespace kairo::renderer
         std::vector<VkSemaphore> m_RenderFinished;
         VkFence m_InFlight = VK_NULL_HANDLE;
 
+        // Start fence signaled: first Retire is a no-op rather than deadlock.
+        // Create one acquire semaphore, one frame fence and one per-image
+        // render-complete semaphore. AUDIT: errors before entering the
+        // per-image try/catch can leave successfully created native handles
+        // in an incomplete constructor; add failure-injection coverage.
         void Create(std::uint32_t swapchainImageCount)
         {
             if (swapchainImageCount == 0u)
@@ -101,6 +112,9 @@ export namespace kairo::renderer
             }
         }
 
+        // Release only native handles owned here; reset them to null for
+        // idempotent internal cleanup. Requires GPU work and presentation
+        // using these semaphores/fence to have finished externally.
         void Destroy() noexcept
         {
             if (m_InFlight != VK_NULL_HANDLE) vkDestroyFence(m_Device, m_InFlight, nullptr);
