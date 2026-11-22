@@ -1,6 +1,6 @@
 # KairoRenderer
 
-**Learn through the source:** [complete reading order](docs/SOURCE_READING_ORDER.md) · [authored mesh → frame presentation walkthrough](docs/FRAME_LIFECYCLE_WALKTHROUGH.md) · [RenderGraph compiler hazard and aliasing lab](docs/RENDER_GRAPH_COMPILER_WORKED_EXAMPLES.md) · [native Vulkan/Metal ownership, synchronization and failure recovery](docs/NATIVE_GPU_SYNCHRONIZATION_AND_LIFETIMES_LAB.md).
+**Learn through the source:** [complete reading order](docs/SOURCE_READING_ORDER.md) · [authored mesh → frame presentation walkthrough](docs/FRAME_LIFECYCLE_WALKTHROUGH.md) · [RenderGraph compiler hazard and aliasing lab](docs/RENDER_GRAPH_COMPILER_WORKED_EXAMPLES.md) · [native Vulkan/Metal ownership, synchronization and failure recovery](docs/NATIVE_GPU_SYNCHRONIZATION_AND_LIFETIMES_LAB.md) · [texture mip bytes → GPU upload, layout transitions and descriptor ownership](docs/TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md).
 
 The walkthrough identifies what the cross-backend facade guarantees, where
 native API ownership begins, and how to interpret CPU versus GPU telemetry.
