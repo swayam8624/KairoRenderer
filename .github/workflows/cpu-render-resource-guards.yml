@@ -9,8 +9,10 @@ on:
     paths:
       - "detail/NativeResourcePublication.hpp"
       - "detail/VulkanFrameRecoveryJournal.hpp"
+      - "detail/TransactionalResourceGeneration.hpp"
       - "tests/NativeResourcePublicationTests.cpp"
       - "tests/VulkanFrameRecoveryJournalTests.cpp"
+      - "tests/TransactionalResourceGenerationTests.cpp"
       - "VulkanRenderer.cppm"
       - "VulkanDescriptor.cppm"
       - ".github/workflows/cpu-render-resource-guards.yml"
@@ -18,8 +20,10 @@ on:
     paths:
       - "detail/NativeResourcePublication.hpp"
       - "detail/VulkanFrameRecoveryJournal.hpp"
+      - "detail/TransactionalResourceGeneration.hpp"
       - "tests/NativeResourcePublicationTests.cpp"
       - "tests/VulkanFrameRecoveryJournalTests.cpp"
+      - "tests/TransactionalResourceGenerationTests.cpp"
       - "VulkanRenderer.cppm"
       - "VulkanDescriptor.cppm"
       - ".github/workflows/cpu-render-resource-guards.yml"
@@ -54,5 +58,10 @@ jobs:
             tests/VulkanFrameRecoveryJournalTests.cpp \
             -o "$RUNNER_TEMP/kairo-cpu/vulkan-frame-recovery"
           "$RUNNER_TEMP/kairo-cpu/vulkan-frame-recovery"
+
+          "$CXX" -std=c++23 -O0 -g -Wall -Wextra -Werror -pedantic \
+            tests/TransactionalResourceGenerationTests.cpp \
+            -o "$RUNNER_TEMP/kairo-cpu/transactional-generation"
+          "$RUNNER_TEMP/kairo-cpu/transactional-generation"
 
           echo "GPU-independent regression checks passed; native driver tests remain separate."
