@@ -13,6 +13,10 @@ module;
 #include <utility>
 #include <vector>
 
+// TEACHING VULKAN FRAME: EngineCore/Editor submit scene data to this backend;
+// RenderGraph schedules host callbacks, while VkFence, VkSemaphore,
+// VkCommandBuffer and VkSwapchainKHR implement actual GPU ordering.
+// See docs/NATIVE_GPU_SYNCHRONIZATION_AND_LIFETIMES_LAB.md.
 export module Kairo.Renderer.VulkanRuntime;
 
 import Kairo.Renderer.Types;
@@ -49,6 +53,10 @@ export namespace kairo::renderer
     class VulkanRendererRuntime final
     {
     public:
+        // C++ member declaration order establishes reverse destruction:
+        // native render targets/pipelines and synchronization objects are
+        // destroyed before swapchain/device, before surface/instance/window.
+        // The constructor holds one reusable frame command buffer and fence.
         explicit VulkanRendererRuntime(const WindowDesc& windowDesc)
             : m_Glfw(),
               m_Window(windowDesc, GraphicsBackend::Vulkan),
@@ -67,6 +75,11 @@ export namespace kairo::renderer
         /// stages. The command recorder still owns its internal render-pass
         /// substructure; this runtime graph owns synchronization, acquire,
         /// recording, queue submission, and presentation boundaries.
+        // Build a short-lived CPU graph of Retire -> Acquire -> Record ->
+        // Submit -> Present callbacks. These dependencies sequence CPU work;
+        // actual GPU ordering is via fence wait, binary semaphore waits/
+        // signals and Vulkan queue submission, not graph state labels.
+        // A zero-size framebuffer deliberately skips all native operations.
         void DrawFrame()
         {
             const auto [width, height] = m_Window.FramebufferExtent();
@@ -87,6 +100,9 @@ export namespace kairo::renderer
                 RenderResourceKind::External, 0u, false,
                 RenderResourceState::Present });
 
+            // Wait until the previously submitted command buffer finishes
+            // before reading pick/capture results or re-recording it.
+            // The fence starts signaled for the first frame.
             const auto retirePass = graph.AddPass("Retire", {
                 { nativeFrame, RenderAccessMode::Read,
                     RenderResourceState::Present }
@@ -99,6 +115,9 @@ export namespace kairo::renderer
                 CompleteViewportCapture();
             });
 
+            // Acquire a presentable image. OUT_OF_DATE triggers an idle
+            // swapchain rebuild; SUBOPTIMAL may still render. Reset the
+            // fence only after successful acquire, just before submission.
             const auto acquirePass = graph.AddPass("Acquire", {
                 { nativeFrame, RenderAccessMode::ReadWrite,
                     RenderResourceState::Present }
@@ -121,6 +140,8 @@ export namespace kairo::renderer
             });
             graph.DependsOn(acquirePass, retirePass);
 
+            // Record the render pass to the single reusable primary
+            // VkCommandBuffer. The fence gate above must have completed.
             const auto recordPass = graph.AddPass("Record", {
                 { nativeFrame, RenderAccessMode::Write,
                     RenderResourceState::ColorAttachment }
@@ -130,6 +151,9 @@ export namespace kairo::renderer
             });
             graph.DependsOn(recordPass, acquirePass);
 
+            // vkQueueSubmit waits on ImageAvailable at COLOR_ATTACHMENT_OUTPUT,
+            // signals per-image RenderFinished and associates the CPU fence
+            // with this submission. A successful submit is NOT completion.
             const auto submitPass = graph.AddPass("Submit", {
                 { nativeFrame, RenderAccessMode::Read,
                     RenderResourceState::ColorAttachment }
@@ -170,6 +194,9 @@ export namespace kairo::renderer
             });
             graph.DependsOn(submitPass, recordPass);
 
+            // Present queue waits for RenderFinished; handle invalidation
+            // after resize. This is a separate queue/presentation operation,
+            // not the same thing as CPU graph execution ending.
             const auto presentPass = graph.AddPass("Present", {
                 { nativeFrame, RenderAccessMode::ReadWrite,
                     RenderResourceState::Present }
@@ -407,6 +434,9 @@ export namespace kairo::renderer
         RenderGraphExecutionProfile m_LastFrameProfile;
 
         /// Task: record the complete mesh and debug-line render pass.
+        // Delegate actual native command recording (render pass, barriers,
+        // draw commands, optional copy-to-readback) to VulkanTriangle.
+        // CPU graph transitions alone do not emit VkImageMemoryBarrier.
         void RecordFrameCommands(std::uint32_t imageIndex)
         {
             m_Triangle.Record(m_Command, imageIndex, m_Swapchain.Extent(), m_OverlayRecorder,
@@ -415,6 +445,9 @@ export namespace kairo::renderer
                 m_CaptureRequested ? m_CaptureReadback->Handle() : VK_NULL_HANDLE);
         }
 
+        // The Retire fence wait makes the prior GPU transfer readable from
+        // the persistent HOST_COHERENT staging buffer. Result is one object
+        // ID from the previously submitted frame, not a live GPU query.
         void CompleteViewportPick()
         {
             if (!m_PickInFlight) return;
@@ -438,6 +471,9 @@ export namespace kairo::renderer
             return negative ? -value : value;
         }
 
+        // Convert GPU-written RGBA16F readback to 8-bit display pixels
+        // only after the fence signals. Drop NaN/Infinity and apply an
+        // approximate gamma transform; color conversion is not HDR archival.
         void CompleteViewportCapture()
         {
             if (!m_CaptureInFlight) return;
@@ -463,6 +499,11 @@ export namespace kairo::renderer
             m_CaptureInFlight = false;
         }
 
+        // Device idle point protects old framebuffer/depth/pipeline and
+        // sync object teardown. Recreate dependent resources in order:
+        // release VulkanTriangle attachments -> rebuild swapchain -> recreate
+        // per-image semaphores -> create new render targets/pipelines.
+        // This conservative one-frame policy sacrifices resize throughput.
         void RecreateSwapchain()
         {
             const auto [width, height] = m_Window.FramebufferExtent();
