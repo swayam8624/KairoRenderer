@@ -18,6 +18,11 @@ module;
 #include <unordered_map>
 #include <vector>
 
+// TEACHING DRAW PATH: renderer-owned MeshHandle/TextureHandle -> GPU buffers,
+// VulkanTexture2D and descriptor sets -> native VkCommandBuffer recording.
+// VulkanRenderer owns fence/acquire/submit; this module owns scene render
+// passes, shadow/viewport attachments and sampled material bindings.
+// See docs/TEXTURE_UPLOAD_AND_RENDER_TARGET_TRANSITIONS_LAB.md.
 export module Kairo.Renderer.VulkanTriangle;
 
 import Kairo.Renderer.Camera;
@@ -46,6 +51,10 @@ export namespace kairo::renderer
     /// Owns the current swapchain render pass, renderer-owned indexed mesh
     /// buffers, a lit mesh pipeline, and dynamic world-space debug lines. It
     /// remains a focused forward-pass unit rather than a general render graph.
+    // Runtime owner of mesh/texture maps, PBR descriptor pool, shadow depth
+    // target, viewport color/ID/depth images and graphics pipelines.
+    // Its swapchain-specific resources must retire before swapchain rebuild;
+    // the VulkanRenderer facade controls frame-level GPU idle/fence waits.
     class VulkanTriangle final
     {
     public:
@@ -110,6 +119,9 @@ export namespace kairo::renderer
             return handle;
         }
 
+        // Turn a validated portable texture artifact into one device-local
+        // VulkanTexture2D. Keep its unique_ptr in the handle map; the
+        // descriptor sets borrow native View()/Sampler() and do not own it.
         [[nodiscard]] TextureHandle CreateTexture(
             const kairo::assets::TextureArtifactData& texture,
             TextureSampler sampling = {})
@@ -122,6 +134,10 @@ export namespace kairo::renderer
             return handle;
         }
 
+        // Reject unknown handles and textures referenced by the CURRENT
+        // submitted render scene/environment. RendererRuntime's native
+        // deletion path must also retire earlier submitted work first.
+        // Erasing a texture invalidates its image view/sampler descriptors.
         void DestroyTexture(TextureHandle texture)
         {
             if (texture == InvalidTextureHandle || !m_Textures.contains(texture))
@@ -149,6 +165,11 @@ export namespace kairo::renderer
             std::erase_if(m_Draws, [mesh](const MeshDraw& draw) { return draw.Mesh == mesh; });
         }
 
+        // Validate each draw's mesh ownership, skin palette coverage and
+        // all five PBR texture handles before copying scene draw records.
+        // Environment texture has separate validation. Mark material
+        // descriptors dirty so next recorded frame regenerates borrowed
+        // VkImageView and VkSampler bindings against this scene version.
         void SetRenderScene(const RenderScene& scene)
         {
             const auto validateTexture = [this](TextureHandle texture)
@@ -232,6 +253,11 @@ export namespace kairo::renderer
         /// caller has waited for this command buffer's completion fence.
         /// Task: render the scene into the sampled editor viewport, then record
         /// tooling UI into the swapchain presentation pass.
+        // Encode the REAL native shadow -> offscreen viewport -> optional
+        // object-ID/capture copy -> swapchain presentation command sequence.
+        // RebuildMaterialDescriptors must occur after a completed frame fence;
+        // render-pass layout dependencies and explicit VkImageMemoryBarriers
+        // (not the CPU RenderGraph alone) make GPU reads/copies legal.
         void Record(VulkanCommandBuffer& command, std::uint32_t imageIndex, VkExtent2D extent,
             const VulkanOverlayRecorder& overlayRecorder,
             VkBuffer pickDestination = VK_NULL_HANDLE,
@@ -280,6 +306,10 @@ export namespace kairo::renderer
             DrawDebugLines(command);
             vkCmdEndRenderPass(command.Handle());
 
+            // Object-ID attachment is R32Uint, not the HDR scene color.
+            // The viewport render pass supplies transfer-source layout for
+            // a single pixel; caller reads mapped VkBuffer next frame ONLY
+            // after VulkanRenderer::Retire waits for the completion fence.
             if (pickDestination != VK_NULL_HANDLE && pickPixel.has_value())
             {
                 VkBufferImageCopy copy{};
@@ -289,6 +319,10 @@ export namespace kairo::renderer
                 vkCmdCopyImageToBuffer(command.Handle(), m_Viewport.ObjectIDImage(),
                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pickDestination, 1u, &copy);
             }
+            // The offscreen viewport color is ordinarily shader-readable.
+            // Explicitly transition it to TRANSFER_SRC_OPTIMAL, copy the full
+            // RGBA16F image to a host-visible buffer, and transition it back
+            // for editor sampling. The readback consumer waits on the fence.
             if (captureDestination != VK_NULL_HANDLE)
             {
                 VkImageMemoryBarrier toTransfer{};
@@ -660,6 +694,10 @@ export namespace kairo::renderer
             return pipeline;
         }
 
+        // Bind the set associated with MeshDraw index: camera, shadow map,
+        // base/normal/metallic-roughness/emissive/occlusion, material factors,
+        // environment and optional skin palette. This does not create a new
+        // set; RebuildMaterialDescriptors already populated each binding.
         void BindMaterial(const VulkanCommandBuffer& command, std::size_t index) const
         {
             const VkDescriptorSet descriptor = m_MaterialDescriptors.Set(index);
@@ -793,6 +831,9 @@ export namespace kairo::renderer
             return texture;
         }
 
+        // Missing optional texture -> purpose-selected fallback texture.
+        // Explicit nonzero unknown handles throw in map::at. Never treat an
+        // authored missing reference as a silently valid fallback handle.
         [[nodiscard]] const VulkanTexture2D& TextureOr(
             TextureHandle handle, const VulkanTexture2D& fallback) const
         {
@@ -800,6 +841,12 @@ export namespace kairo::renderer
             return *m_Textures.at(handle);
         }
 
+        // On scene/texture/palette changes, resolve every submitted draw's
+        // five texture handles into native VkImageView+VkSampler pairs; use
+        // owned 1x1 fallback textures for optional channels. Pass borrowed
+        // views and source palette pointers into VulkanMaterialDescriptors,
+        // which COPIES palette bytes to GPU-visible UBO storage. Set must be
+        // rebuilt only after old GPU submissions no longer reference it.
         void RebuildMaterialDescriptors()
         {
             if (!m_DescriptorsDirty) return;
@@ -960,6 +1007,10 @@ export namespace kairo::renderer
             return words;
         }
 
+        // Release swapchain-dependent framebuffers, graphics pipelines,
+        // layout and render pass. Texture/mesh maps are kept across resize;
+        // their ultimate destruction comes from this object's member RAII.
+        // VulkanRenderer guarantees device idle before calling release.
         void Destroy() noexcept
         {
             m_DebugVertexBuffer.reset(); m_DebugVertexCapacity = 0u;
