@@ -8,50 +8,74 @@ Work from backend-neutral types and graph policies toward API-specific execution
 
 Read each phase in order. Every link goes to a source file or directory in this repository. For a directory, inspect its public interface and then its implementation files. After each phase, identify the caller, the state it owns, the inputs it validates, and its observable outputs.
 
-## 1. API and scene contracts
+## 1. Foundational contracts and resource ownership
 
-1. [`README.md`](../README.md)
-2. [`KairoRenderer.cppm`](../KairoRenderer.cppm)
-3. [`RendererTypes.cppm`](../RendererTypes.cppm)
-4. [`GraphicsBackend.cppm`](../GraphicsBackend.cppm)
-5. [`Window.cppm`](../Window.cppm)
-6. [`Camera.cppm`](../Camera.cppm)
-7. [`RenderScene.cppm`](../RenderScene.cppm)
-8. [`Mesh.cppm`](../Mesh.cppm)
-9. [`Material.cppm`](../Material.cppm)
-10. [`Texture.cppm`](../Texture.cppm)
+The best starting point is the new
+[frame-lifecycle walkthrough](FRAME_LIFECYCLE_WALKTHROUGH.md). This guide is
+the complete navigation index; the walkthrough connects API calls, ownership
+and backend runtime behavior in one example.
 
-## 2. Rendering algorithms
+1. [`README.md`](../README.md) and [`CMakeLists.txt`](../CMakeLists.txt): milestones, host compiler requirements and native backend build flags.
+2. [`KairoRenderer.cppm`](../KairoRenderer.cppm): umbrella exports and CPU-only telemetry meanings.
+3. [`GraphicsBackend.cppm`](../GraphicsBackend.cppm): compiled availability, host compatibility and auto-versus-explicit selection.
+4. [`RendererTypes.cppm`](../RendererTypes.cppm): shared settings/viewport status.
+5. [`Window.cppm`](../Window.cppm): platform window lifetime and backend selection before GPU creation.
+6. [`Camera.cppm`](../Camera.cppm): camera pose, projection and matrix convention.
+7. [`Mesh.cppm`](../Mesh.cppm): CPU mesh payloads and buffer description.
+8. [`Skinning.cppm`](../Skinning.cppm): joint palettes, bounds and vertex/skin contract.
+9. [`Material.cppm`](../Material.cppm) and [`Texture.cppm`](../Texture.cppm): PBR channels, formats and sampler conventions.
+10. [`RenderScene.cppm`](../RenderScene.cppm): draw/lighting submission and object IDs.
 
-1. [`RenderGraph.cppm`](../RenderGraph.cppm)
-2. [`ShadowSettings.cppm`](../ShadowSettings.cppm)
-3. [`Skinning.cppm`](../Skinning.cppm)
-4. [`DebugDraw.cppm`](../DebugDraw.cppm)
-5. [`AssetAdapters.cppm`](../AssetAdapters.cppm)
-6. [`PhysicsDebugBridge.cppm`](../PhysicsDebugBridge.cppm)
+**Checkpoint:** distinguish authored AssetID, CPU artifact, uploaded MeshHandle,
+draw-object ID and native GPU allocation. Read RenderScene::Validate and
+explain what should fail before recording any graphics commands.
 
-## 3. Backends
+## 2. Cross-repository scene translation and logical scheduling
 
-1. [`Renderer.cppm`](../Renderer.cppm)
-2. [`VulkanInstance.cppm`](../VulkanInstance.cppm)
-3. [`VulkanDevice.cppm`](../VulkanDevice.cppm)
-4. [`VulkanSwapchain.cppm`](../VulkanSwapchain.cppm)
-5. [`VulkanSync.cppm`](../VulkanSync.cppm)
-6. [`VulkanDescriptor.cppm`](../VulkanDescriptor.cppm)
-7. [`VulkanRenderer.cppm`](../VulkanRenderer.cppm)
-8. [`MetalRenderer.cppm`](../MetalRenderer.cppm)
-9. [`OpenGLRenderer.cppm`](../OpenGLRenderer.cppm)
-10. [`Direct3D12Renderer.cppm`](../Direct3D12Renderer.cppm)
+11. [`AssetAdapters.cppm`](../AssetAdapters.cppm): converting portable KairoAssets artifacts to runtime renderer data.
+12. [`ShadowSettings.cppm`](../ShadowSettings.cppm): directional depth and PCF tuning contracts.
+13. [`DebugDraw.cppm`](../DebugDraw.cppm): debug line data rather than authoritative game state.
+14. [`PhysicsDebugBridge.cppm`](../PhysicsDebugBridge.cppm): read-only PhysicsEngine shape/contact visualization.
+15. [`RenderGraph.cppm`](../RenderGraph.cppm): passes, hazard detection, topological order, resource lifetimes and planned alias slots.
+16. [`tests/RenderGraphExecutionPlanTests.cpp`](../tests/RenderGraphExecutionPlanTests.cpp) and [`tests/RenderGraphScaleTests.cpp`](../tests/RenderGraphScaleTests.cpp): validate graph behavior and complexity cases.
 
-## 4. Tests
+**Checkpoint:** create three logical passes using a shared resource. Explain
+why a read-before-write is invalid; identify the explicit dependency and
+logical state transition. These are CPU scheduling contracts, not automatic
+native GPU barriers.
 
-1. [`tests/RendererTests.cpp`](../tests/RendererTests.cpp)
-2. [`tests/RenderGraphExecutionPlanTests.cpp`](../tests/RenderGraphExecutionPlanTests.cpp)
-3. [`tests/SkinningContractTests.cpp`](../tests/SkinningContractTests.cpp)
-4. [`tests/VulkanSkinningSmoke.cpp`](../tests/VulkanSkinningSmoke.cpp)
-5. [`tests/MetalSkinningSmoke.cpp`](../tests/MetalSkinningSmoke.cpp)
-6. [`tests/OpenGLSkinningSmoke.cpp`](../tests/OpenGLSkinningSmoke.cpp)
-7. [`tests/Direct3D12SkinningSmoke.cpp`](../tests/Direct3D12SkinningSmoke.cpp)
+## 3. Runtime facade and explicit Vulkan backend
+
+17. [`Renderer.cppm`](../Renderer.cppm): RendererRuntime facade, std::variant selection and DrawFrame envelope.
+18. [`VulkanInstance.cppm`](../VulkanInstance.cppm): VkInstance extension and validation lifetime.
+19. [`VulkanSurface.cppm`](../VulkanSurface.cppm): window/native surface contract.
+20. [`VulkanDevice.cppm`](../VulkanDevice.cppm): physical/logical device and queue selection.
+21. [`VulkanSwapchain.cppm`](../VulkanSwapchain.cppm): image format, extent, acquisition and presentation.
+22. [`VulkanCommand.cppm`](../VulkanCommand.cppm): command recording/reuse.
+23. [`VulkanSync.cppm`](../VulkanSync.cppm): fences, semaphores and frame reuse.
+24. [`VulkanBuffer.cppm`](../VulkanBuffer.cppm), [`VulkanTexture.cppm`](../VulkanTexture.cppm) and [`VulkanDescriptor.cppm`](../VulkanDescriptor.cppm): upload, lifetime, format/layout and bindings.
+25. [`VulkanDepth.cppm`](../VulkanDepth.cppm), [`VulkanShadowMap.cppm`](../VulkanShadowMap.cppm) and [`VulkanViewportTarget.cppm`](../VulkanViewportTarget.cppm): offscreen and depth attachment ownership.
+26. [`VulkanBackendContext.cppm`](../VulkanBackendContext.cppm), [`VulkanTriangle.cppm`](../VulkanTriangle.cppm) and [`VulkanRenderer.cppm`](../VulkanRenderer.cppm): execution flow.
+27. [`shaders/triangle.vert`](../shaders/triangle.vert), [`shaders/triangle.frag`](../shaders/triangle.frag), [`shaders/shadow.vert`](../shaders/shadow.vert) and [`shaders/debug_line.vert`](../shaders/debug_line.vert): CPU/GPU data-layout boundary.
+
+**Checkpoint:** follow acquire -> record -> submit -> wait/reuse -> present
+and explain what happens on swapchain recreation. Never equate a logical
+render-graph transition with a Vulkan image-layout barrier without tracing
+native command recording.
+
+## 4. Compare other backends and validate platform gates
+
+28. [`MetalRenderer.cppm`](../MetalRenderer.cppm) and [`detail/MetalBackend.mm`](../detail/MetalBackend.mm): cross-language Metal ownership and asynchronous completion.
+29. [`OpenGLRenderer.cppm`](../OpenGLRenderer.cppm) and [`OpenGLShaders.cppm`](../OpenGLShaders.cppm): context-bound pipeline/state.
+30. [`Direct3D12Renderer.cppm`](../Direct3D12Renderer.cppm) and [`detail/Direct3D12Backend.cpp`](../detail/Direct3D12Backend.cpp): Windows/DXGI/D3D12 command/resource lifetime.
+31. [`examples/clear_window.cpp`](../examples/clear_window.cpp): simple runtime entry and observed backend.
+32. [`tests/RendererTests.cpp`](../tests/RendererTests.cpp), [`tests/SkinningContractTests.cpp`](../tests/SkinningContractTests.cpp) and [`tests/PhysicsDebugBridgeTests.cpp`](../tests/PhysicsDebugBridgeTests.cpp): shared behavior.
+33. [`tests/VulkanSkinningSmoke.cpp`](../tests/VulkanSkinningSmoke.cpp), [`tests/MetalSkinningSmoke.cpp`](../tests/MetalSkinningSmoke.cpp), [`tests/OpenGLSkinningSmoke.cpp`](../tests/OpenGLSkinningSmoke.cpp) and [`tests/Direct3D12SkinningSmoke.cpp`](../tests/Direct3D12SkinningSmoke.cpp): host-native smoke gates.
+34. Read the remaining first-party shaders, helpers and automation in the complete source inventory below.
+
+**Checkpoint:** document the exact OS, compiler, GPU/driver, backend,
+image result and tests actually executed. Synthetic platform-policy
+success is not a substitute for native backend validation.
 
 ## End-to-end interaction map
 
