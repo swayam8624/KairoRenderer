@@ -323,6 +323,10 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     endif()
     set_property(TARGET KairoRendererTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
     enable_testing()
+    add_executable(KairoDescriptorSceneInvalidationTests tests/DescriptorSceneInvalidationTests.cpp)
+    target_compile_features(KairoDescriptorSceneInvalidationTests PRIVATE cxx_std_23)
+    set_property(TARGET KairoDescriptorSceneInvalidationTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
+    add_test(NAME KairoDescriptorSceneInvalidationTests COMMAND KairoDescriptorSceneInvalidationTests)
     # Pure C++ fault injection of the exact native resource publication helper;
     # no graphics device is needed to exercise map-allocation rollback.
     add_executable(KairoRendererNativeResourcePublicationTests

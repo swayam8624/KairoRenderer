@@ -18,6 +18,8 @@ module;
 #include <unordered_map>
 #include <vector>
 
+#include "detail/DescriptorSceneInvalidation.hpp"
+
 // TEACHING DRAW PATH: renderer-owned MeshHandle/TextureHandle -> GPU buffers,
 // VulkanTexture2D and descriptor sets -> native VkCommandBuffer recording.
 // VulkanRenderer owns fence/acquire/submit; this module owns scene render
@@ -162,14 +164,17 @@ export namespace kairo::renderer
         void DestroyMesh(MeshHandle mesh)
         {
             if (mesh == InvalidMeshHandle || m_Meshes.erase(mesh) == 0u) throw std::out_of_range("Renderer does not own this mesh handle.");
-            std::erase_if(m_Draws, [mesh](const MeshDraw& draw) { return draw.Mesh == mesh; });
+            // Descriptor sets are indexed by draw position. Removing even a
+            // middle draw changes that mapping for the following draws.
+            if (std::erase_if(m_Draws, [mesh](const MeshDraw& draw) { return draw.Mesh == mesh; }) != 0u)
+                m_DescriptorsDirty = true;
         }
 
         // Validate each draw's mesh ownership, skin palette coverage and
         // all five PBR texture handles before copying scene draw records.
-        // Environment texture has separate validation. Mark material
-        // descriptors dirty so next recorded frame regenerates borrowed
-        // VkImageView and VkSampler bindings against this scene version.
+        // Environment texture has separate validation. Only descriptor-backed
+        // inputs invalidate the native generation: transform-only submissions
+        // and camera/light changes use push constants or the frame uniform.
         void SetRenderScene(const RenderScene& scene)
         {
             const auto validateTexture = [this](TextureHandle texture)
@@ -200,10 +205,13 @@ export namespace kairo::renderer
                 validateTexture(draw.Material.OcclusionTexture);
             }
             validateTexture(scene.Environment().EnvironmentTexture);
+            // Latch before assigning potentially allocating vectors. A failed
+            // publication or earlier native rebuild must not clear dirty.
+            detail::InvalidateDescriptorInputs(m_DescriptorsDirty, m_Draws, scene.Draws(),
+                m_Environment.EnvironmentTexture, scene.Environment().EnvironmentTexture);
             m_Draws = scene.Draws();
             m_Lights = scene.Lights();
             m_Environment = scene.Environment();
-            m_DescriptorsDirty = true;
         }
 
         /// Task: accept a host-controlled scene camera while retaining matrix
