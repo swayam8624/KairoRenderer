@@ -90,6 +90,47 @@ int main()
         if (restored.RGBA != baseline.RGBA)
             throw std::runtime_error("Ordinary draw fallback changed after instancing");
 
+        // Exceed the static hierarchy threshold with invisible geometry.
+        // Two frames build the BVH; compare against the small ordinary scene.
+        const auto largeScene = [&](bool moved)
+        {
+            auto scene = makeScene(false);
+            MeshDraw extra;
+            extra.Mesh = shared;
+            extra.CastShadows = false;
+            extra.ObjectID = 0xCAFEBABEu;
+            extra.Model = MakeTranslation(moved ? Vec3f{0.0f,0.0f,2.0f} :
+                Vec3f{20.0f,0.0f,0.0f});
+            scene.Add(extra);
+            for (unsigned i = 0u; i < 256u; ++i)
+            {
+                extra.ObjectID = 1000u + i;
+                extra.Model = MakeTranslation(Vec3f{100.0f + static_cast<float>(i)*3.0f,0.0f,0.0f});
+                scene.Add(extra);
+            }
+            return scene;
+        };
+        runtime.SubmitRenderScene(largeScene(false));
+        runtime.DrawFrame();
+        runtime.DrawFrame();
+        runtime.RequestViewportCapture();
+        runtime.DrawFrame();
+        runtime.DrawFrame();
+        const auto largeCapture = runtime.TakeViewportCapture();
+        if (!largeCapture || largeCapture->RGBA != baseline.RGBA)
+            throw std::runtime_error("Static visibility hierarchy changed visible image");
+
+        auto movedCamera = camera;
+        movedCamera.Position.x = 20.0f;
+        movedCamera.Target.x = 20.0f;
+        runtime.SetCameraPose(movedCamera);
+        if (pick(48u) != 0xCAFEBABEu)
+            throw std::runtime_error("Camera change reused stale visibility");
+        runtime.SetCameraPose(camera);
+        runtime.SubmitRenderScene(largeScene(true));
+        if (pick(48u) != 0xCAFEBABEu)
+            throw std::runtime_error("Moved object failed to invalidate static visibility hierarchy");
+
         // Both casters are outside the camera's horizontal clip planes, but
         // the directional light sees them. Compare ordinary and instanced
         // shadow commands, then prove the offscreen casters affected pixels.

@@ -1,0 +1,59 @@
+name: Required Vulkan rendering smoke
+on:
+  push:
+    branches: [main, ci/required-vulkan-smoke]
+  pull_request:
+    paths:
+      - 'Vulkan*.cppm'
+      - 'shaders/**'
+      - 'detail/**'
+      - 'tests/Vulkan*.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/required-vulkan-smoke.yml'
+permissions:
+  contents: read
+jobs:
+  software-vulkan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler, X11 surface, Vulkan software driver and validation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build libglfw3-dev libvulkan-dev glslang-tools xvfb xauth mesa-vulkan-drivers vulkan-tools vulkan-validationlayers
+      - name: Select Lavapipe explicitly and inspect runtime
+        run: |
+          set -euo pipefail
+          icd="$(find /usr/share/vulkan/icd.d -maxdepth 1 -name '*lvp*.json' -print -quit)"
+          test -n "$icd"
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          mkdir -p build/diagnostics
+          VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" xvfb-run -a vulkaninfo --summary 2>&1 | tee build/diagnostics/vulkaninfo.log
+      - name: Build exact native smoke executables
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=OFF
+          cmake --build build --parallel 2 --target KairoRendererVulkanSkinningSmoke KairoRendererVulkanInstancingSmoke
+      - name: Require actual rendering, readback, picking and shadows
+        run: |
+          set -euo pipefail
+          # Direct execution intentionally treats return 77 as failure.
+          # CTest's normal presentation-unavailable skip is not accepted here.
+          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          for test in KairoRendererVulkanSkinningSmoke KairoRendererVulkanInstancingSmoke; do
+            xvfb-run -a --server-args="-screen 0 1280x1024x24" "./build/$test" 2>&1 | tee "build/diagnostics/$test.log"
+            if grep -E 'Validation Error|VUID-.*ERROR|UNASSIGNED-.*ERROR' "build/diagnostics/$test.log"; then
+              echo "Vulkan validation reported an error"
+              exit 1
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-vulkan-smoke-diagnostics
+          path: build/diagnostics/
+          if-no-files-found: warn
