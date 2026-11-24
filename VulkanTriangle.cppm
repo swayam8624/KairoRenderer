@@ -23,6 +23,7 @@ module;
 #include "detail/DrawBindingState.hpp"
 #include "detail/InstanceRuns.hpp"
 #include "detail/VulkanFrustumBounds.hpp"
+#include "detail/StaticVisibilityBvh.hpp"
 
 // TEACHING DRAW PATH: renderer-owned MeshHandle/TextureHandle -> GPU buffers,
 // VulkanTexture2D and descriptor sets -> native VkCommandBuffer recording.
@@ -173,7 +174,10 @@ export namespace kairo::renderer
             // Descriptor sets are indexed by draw position. Removing even a
             // middle draw changes that mapping for the following draws.
             if (std::erase_if(m_Draws, [mesh](const MeshDraw& draw) { return draw.Mesh == mesh; }) != 0u)
+            {
                 m_DescriptorsDirty = true;
+                InvalidateVisibilityTree();
+            }
         }
 
         // Validate each draw's mesh ownership, skin palette coverage and
@@ -215,6 +219,8 @@ export namespace kairo::renderer
             // publication or earlier native rebuild must not clear dirty.
             detail::InvalidateDescriptorInputs(m_DescriptorsDirty, m_Draws, scene.Draws(),
                 m_Environment.EnvironmentTexture, scene.Environment().EnvironmentTexture);
+            if (m_VisibilityWarm && !SameVisibilityGeometry(scene.Draws()))
+                InvalidateVisibilityTree();
             m_Draws = scene.Draws();
             m_Lights = scene.Lights();
             m_Environment = scene.Environment();
@@ -448,6 +454,9 @@ export namespace kairo::renderer
         VkDeviceSize m_ShadowInstanceOffset = 0u;
         std::vector<InstanceVertex> m_InstanceScratch;
         std::vector<std::uint8_t> m_Visible;
+        detail::StaticVisibilityBvh m_VisibilityTree;
+        std::vector<std::size_t> m_VisibilityFallback;
+        bool m_VisibilityWarm = false, m_VisibilityTreeValid = false;
         std::unique_ptr<VulkanHostBuffer> m_InstanceBuffer;
         VkDeviceSize m_InstanceCapacity = 0u;
         std::vector<RenderLight> m_Lights;
@@ -858,6 +867,43 @@ export namespace kairo::renderer
         // Camera visibility is separate from shadow visibility: an object
         // outside the camera may still cast a shadow into the viewport.
         // Rest-pose bounds cannot enclose arbitrary skeletal deformation.
+        void InvalidateVisibilityTree() noexcept
+        {
+            m_VisibilityWarm = false;
+            m_VisibilityTreeValid = false;
+        }
+
+        [[nodiscard]] bool SameVisibilityGeometry(const std::vector<MeshDraw>& draws) const noexcept
+        {
+            if (draws.size() != m_Draws.size()) return false;
+            for (std::size_t i = 0; i < draws.size(); ++i)
+            {
+                if (draws[i].Mesh != m_Draws[i].Mesh) return false;
+                for (std::size_t r = 0; r < 4; ++r)
+                    for (std::size_t c = 0; c < 4; ++c)
+                        if (!detail::SameDescriptorFloat(draws[i].Model(r,c), m_Draws[i].Model(r,c)))
+                            return false;
+            }
+            return true;
+        }
+
+        void BuildVisibilityTree()
+        {
+            std::vector<detail::StaticVisibilityBvh::Entry> entries;
+            m_VisibilityFallback.clear();
+            for (std::size_t i = 0; i < m_Draws.size(); ++i)
+            {
+                const auto& draw = m_Draws[i];
+                const auto& mesh = m_Meshes.at(draw.Mesh);
+                const auto bounds = mesh.RequiredJoints > 0u ? detail::LocalBounds{} :
+                    detail::ConservativeWorldBounds(mesh.Bounds, draw.Model);
+                if (bounds.Valid) entries.push_back({i,bounds});
+                else m_VisibilityFallback.push_back(i);
+            }
+            m_VisibilityTree.Build(std::move(entries));
+            m_VisibilityTreeValid = true;
+        }
+
         void PrepareVisibility()
         {
             const auto view = m_Camera.View();
@@ -865,13 +911,30 @@ export namespace kairo::renderer
             const auto projection = m_Camera.Projection(extent.width, extent.height);
             const detail::PreparedVulkanFrustum frustum(view, projection);
             m_Visible.resize(m_Draws.size());
-            for (std::size_t index = 0u; index < m_Draws.size(); ++index)
+            const auto test = [&](std::size_t index)
             {
                 const auto& draw = m_Draws[index];
                 const auto& mesh = m_Meshes.at(draw.Mesh);
                 m_Visible[index] = static_cast<std::uint8_t>(mesh.RequiredJoints > 0u ||
                     !frustum.Outside(mesh.Bounds, draw.Model));
+            };
+
+            // Never rebuild a spatial tree every frame in a moving scene.
+            // Wait for a repeated geometry submission/frame; material and
+            // camera changes do not invalidate the world-space hierarchy.
+            constexpr std::size_t minimumTreeDraws = 128u;
+            if (m_Draws.size() >= minimumTreeDraws && m_VisibilityWarm)
+            {
+                if (!m_VisibilityTreeValid) BuildVisibilityTree();
+                const auto identity = kairo::foundation::math::Mat4f::Identity();
+                m_VisibilityTree.Cull(
+                    [&](const detail::LocalBounds& box) { return frustum.Outside(box,identity); },
+                    [&](std::size_t index) { m_Visible[index] = 0u; }, test);
+                for (const auto index : m_VisibilityFallback) test(index);
             }
+            else
+                for (std::size_t index = 0; index < m_Draws.size(); ++index) test(index);
+            m_VisibilityWarm = true;
         }
 
         // Pack independent main and shadow ranges into one fence-retired buffer.

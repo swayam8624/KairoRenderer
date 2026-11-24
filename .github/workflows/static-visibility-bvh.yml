@@ -1,0 +1,30 @@
+name: Static visibility BVH
+on:
+  push:
+    branches: [main, feat/vulkan-static-visibility-bvh]
+  pull_request:
+    paths:
+      - 'detail/StaticVisibilityBvh.hpp'
+      - 'detail/VulkanFrustumBounds.hpp'
+      - 'tests/StaticVisibilityBvhTests.cpp'
+      - 'VulkanTriangle.cppm'
+      - '.github/workflows/static-visibility-bvh.yml'
+permissions:
+  contents: read
+jobs:
+  bvh:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test conservative static visibility hierarchy
+        run: |
+          mkdir -p build/visibility-bvh
+          g++ -std=c++23 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tests/StaticVisibilityBvhTests.cpp -o build/visibility-bvh/test
+          set -o pipefail
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 build/visibility-bvh/test | tee build/visibility-bvh/test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: static-visibility-diagnostics
+          path: build/visibility-bvh/test.log
+          if-no-files-found: warn
