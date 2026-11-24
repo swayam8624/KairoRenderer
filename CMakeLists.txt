@@ -173,7 +173,19 @@ add_custom_command(
     COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skinned_shadow.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_shadow.vert.spv"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skinned_shadow.vert"
     VERBATIM)
+# Compile the same shader source with an instance-rate input ABI. The ordinary
+# and skinned variants retain their original push-constant interface.
+foreach(stage vert frag)
+    add_custom_command(
+        OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.${stage}.spv"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+        COMMAND "${GLSLANG_VALIDATOR}" -V -DKAIRO_INSTANCED=1 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.${stage}" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.${stage}.spv"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.${stage}"
+        VERBATIM)
+endforeach()
 add_custom_target(KairoRendererShaders DEPENDS
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.vert.spv"
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.frag.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_triangle.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
