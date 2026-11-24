@@ -41,13 +41,24 @@ namespace kairo::renderer::detail
         constexpr double safe = static_cast<double>(std::numeric_limits<float>::max()) / 16.0;
         constexpr double eps = 128.0 * std::numeric_limits<float>::epsilon();
         constexpr double tiny = 128.0 * std::numeric_limits<float>::min();
+        // GLSL may associate projection * view before the vector product.
+        // Reject no object if that intermediate matrix could overflow.
+        for (std::size_t row = 0; row < 4; ++row)
+            for (std::size_t col = 0; col < 4; ++col)
+            {
+                double magnitude = 0.0;
+                for (std::size_t k = 0; k < 4; ++k)
+                    magnitude += std::abs(static_cast<double>(projection(row, k))) *
+                        std::abs(static_cast<double>(view(k, col)));
+                if (!std::isfinite(magnitude) || magnitude > safe) return false;
+            }
         for (unsigned corner = 0; corner < 8; ++corner)
         {
             std::array<double, 4> value{}, magnitude{};
             for (unsigned axis = 0; axis < 3; ++axis)
             {
                 value[axis] = (corner & (1u << axis)) ? box.Max[axis] : box.Min[axis];
-                magnitude[axis] = std::abs(value[axis]);
+                magnitude[axis] = std::abs(value[axis]) + tiny / eps;
             }
             value[3] = magnitude[3] = 1.0;
             for (const Matrix* matrix : {&model, &view, &projection})
@@ -64,6 +75,9 @@ namespace kairo::renderer::detail
                     if (!std::isfinite(next[i]) || !std::isfinite(bound[i]) || bound[i] > safe)
                         return false;
                 value = next;
+                // Propagate a conservative allowance for flush-to-zero at
+                // intermediate stages, rather than only at final clip space.
+                for (auto& component : bound) component += tiny / eps;
                 magnitude = bound;
             }
             const auto reject = [&](std::size_t axis, double sign, bool withW)
