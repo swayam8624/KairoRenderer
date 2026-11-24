@@ -1,0 +1,31 @@
+name: Vulkan draw binding state
+on:
+  pull_request:
+    paths:
+      - 'VulkanTriangle.cppm'
+      - 'detail/DrawBindingState.hpp'
+      - 'tests/DrawBindingStateTests.cpp'
+      - '.github/workflows/draw-binding-state.yml'
+  push:
+    branches: [main, refactor/vulkan-draw-state]
+permissions:
+  contents: read
+jobs:
+  draw-policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile C++23 policy tests with sanitizers
+        run: |
+          mkdir -p build/draw-policy
+          g++ -std=c++23 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tests/DrawBindingStateTests.cpp -o build/draw-policy/test
+      - name: Run ordered draw replay
+        run: |
+          set -o pipefail
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 build/draw-policy/test 2>&1 | tee build/draw-policy/test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: draw-binding-diagnostics
+          path: build/draw-policy/test.log
+          if-no-files-found: warn

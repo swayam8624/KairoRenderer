@@ -19,6 +19,7 @@ module;
 #include <vector>
 
 #include "detail/DescriptorSceneInvalidation.hpp"
+#include "detail/DrawBindingState.hpp"
 
 // TEACHING DRAW PATH: renderer-owned MeshHandle/TextureHandle -> GPU buffers,
 // VulkanTexture2D and descriptor sets -> native VkCommandBuffer recording.
@@ -738,6 +739,7 @@ export namespace kairo::renderer
             vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
             vkCmdSetDepthBias(command.Handle(), m_ShadowSettings.ConstantDepthBias, 0.0f, m_ShadowSettings.SlopeDepthBias);
             constexpr VkDeviceSize offsets[2]{ 0u, 0u };
+            detail::DrawBindingState<VkPipeline, MeshHandle> state;
             for (std::size_t drawIndex = 0u; drawIndex < m_Draws.size(); ++drawIndex)
             {
                 const MeshDraw& draw = m_Draws[drawIndex];
@@ -745,8 +747,12 @@ export namespace kairo::renderer
                     draw.Material.AlphaMode == MaterialAlphaMode::Blend) continue;
                 const GpuMesh& mesh = m_Meshes.at(draw.Mesh);
                 BindMaterial(command, drawIndex);
-                vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    mesh.RequiredJoints > 0u ? m_SkinnedShadowPipeline : m_ShadowPipeline);
+                const VkPipeline pipeline = mesh.RequiredJoints > 0u
+                    ? m_SkinnedShadowPipeline : m_ShadowPipeline;
+                state.PipelineFor(pipeline, [&]
+                {
+                    vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                });
                 MeshPushConstants push{};
                 CopyTranspose(draw.Model, push.Values.data());
                 // Vulkan requires every stage declared by an overlapping
@@ -755,12 +761,15 @@ export namespace kairo::renderer
                 vkCmdPushConstants(command.Handle(), m_Layout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                     0u, sizeof(push), &push);
-                const VkBuffer buffers[2]{ mesh.Vertices->Handle(),
-                    mesh.Skin ? mesh.Skin->Handle() : VK_NULL_HANDLE };
-                const std::uint32_t bufferCount = mesh.Skin ? 2u : 1u;
-                vkCmdBindVertexBuffers(command.Handle(), 0u, bufferCount, buffers, offsets);
-                vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u,
-                    VK_INDEX_TYPE_UINT32);
+                state.MeshFor(draw.Mesh, [&]
+                {
+                    const VkBuffer buffers[2]{ mesh.Vertices->Handle(),
+                        mesh.Skin ? mesh.Skin->Handle() : VK_NULL_HANDLE };
+                    const std::uint32_t bufferCount = mesh.Skin ? 2u : 1u;
+                    vkCmdBindVertexBuffers(command.Handle(), 0u, bufferCount, buffers, offsets);
+                    vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u,
+                        VK_INDEX_TYPE_UINT32);
+                });
                 vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, 1u, 0u, 0, 0u);
             }
             vkCmdEndRenderPass(command.Handle());
@@ -770,6 +779,9 @@ export namespace kairo::renderer
         {
             if (m_Draws.empty()) return;
             constexpr VkDeviceSize offsets[2]{ 0u, 0u };
+            // Fresh state for this pass; opaque and sorted transparent draws
+            // share it without changing either submission order.
+            detail::DrawBindingState<VkPipeline, MeshHandle> state;
             const auto drawOne = [&](std::size_t drawIndex, bool transparent)
             {
                 const MeshDraw& draw = m_Draws[drawIndex];
@@ -779,7 +791,10 @@ export namespace kairo::renderer
                 const VkPipeline pipeline = transparent
                     ? (skinned ? m_SkinnedTransparentPipeline : m_TransparentPipeline)
                     : (skinned ? m_SkinnedMeshPipeline : m_MeshPipeline);
-                vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                state.PipelineFor(pipeline, [&]
+                {
+                    vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                });
                 MeshPushConstants push{};
                 CopyTranspose(draw.Model, push.Values.data());
                 const auto normal = ComputeNormalMatrix(draw.Model);
@@ -791,12 +806,15 @@ export namespace kairo::renderer
                 vkCmdPushConstants(command.Handle(), m_Layout,
                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                     0u, sizeof(push), &push);
-                const VkBuffer buffers[2]{ mesh.Vertices->Handle(),
-                    mesh.Skin ? mesh.Skin->Handle() : VK_NULL_HANDLE };
-                const std::uint32_t bufferCount = mesh.Skin ? 2u : 1u;
-                vkCmdBindVertexBuffers(command.Handle(), 0u, bufferCount, buffers, offsets);
-                vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u,
-                    VK_INDEX_TYPE_UINT32);
+                state.MeshFor(draw.Mesh, [&]
+                {
+                    const VkBuffer buffers[2]{ mesh.Vertices->Handle(),
+                        mesh.Skin ? mesh.Skin->Handle() : VK_NULL_HANDLE };
+                    const std::uint32_t bufferCount = mesh.Skin ? 2u : 1u;
+                    vkCmdBindVertexBuffers(command.Handle(), 0u, bufferCount, buffers, offsets);
+                    vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u,
+                        VK_INDEX_TYPE_UINT32);
+                });
                 vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, 1u, 0u, 0, 0u);
             };
 
