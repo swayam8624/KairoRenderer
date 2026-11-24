@@ -35,11 +35,11 @@ layout(location = 2) in vec3 inNormal;
 layout(location = 3) in vec2 inTexCoord;
 layout(location = 4) in uvec4 inJoints;
 layout(location = 5) in vec4 inWeights;
-layout(location = 0) out vec3 outColor;
-layout(location = 1) out vec3 outNormal;
-layout(location = 2) out vec3 outWorldPosition;
-layout(location = 3) out vec4 outLightClipPosition;
-layout(location = 4) out vec2 outTexCoord;
+layout(location = 0) out vec3 varyColor;
+layout(location = 1) out vec3 varyNormal;
+layout(location = 2) out vec3 varyWorldPosition;
+layout(location = 3) out vec4 varyLightClipPosition;
+layout(location = 4) out vec2 varyTexCoord;
 
 mat4 SkinMatrix()
 {
@@ -59,12 +59,12 @@ void main()
     const vec4 assetPosition = skin * vec4(inPosition, 1.0);
     const vec4 worldPosition = draw.model * assetPosition;
     gl_Position = camera.projection * camera.view * worldPosition;
-    outColor = inColor;
+    varyColor = inColor;
     const mat3 modelNormal = mat3(draw.normalColumn0.xyz, draw.normalColumn1.xyz,
         draw.normalColumn2.xyz);
     const vec3 assetNormal = transpose(inverse(mat3(skin))) * inNormal;
-    outNormal = modelNormal * assetNormal;
-    outWorldPosition = worldPosition.xyz;
-    outLightClipPosition = camera.lightViewProjection * worldPosition;
-    outTexCoord = inTexCoord;
+    varyNormal = modelNormal * assetNormal;
+    varyWorldPosition = worldPosition.xyz;
+    varyLightClipPosition = camera.lightViewProjection * worldPosition;
+    varyTexCoord = inTexCoord;
 }
