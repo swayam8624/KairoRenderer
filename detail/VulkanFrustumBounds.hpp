@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <initializer_list>
 
 namespace kairo::renderer::detail
 {
