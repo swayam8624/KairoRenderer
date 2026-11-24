@@ -183,7 +183,14 @@ foreach(stage vert frag)
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.${stage}"
         VERBATIM)
 endforeach()
+add_custom_command(
+    OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_shadow.vert.spv"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+    COMMAND "${GLSLANG_VALIDATOR}" -V -DKAIRO_INSTANCED=1 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_shadow.vert.spv"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert"
+    VERBATIM)
 add_custom_target(KairoRendererShaders DEPENDS
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_shadow.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.frag.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"

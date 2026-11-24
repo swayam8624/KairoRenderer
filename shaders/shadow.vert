@@ -10,6 +10,9 @@ layout(set = 0, binding = 0) uniform CameraMatrices {
     vec4 shadowParameters;
 } camera;
 
+#ifdef KAIRO_INSTANCED
+layout(location = 4) in mat4 instanceModel;
+#else
 layout(push_constant) uniform DrawData {
     mat4 model;
     vec4 normalColumn0;
@@ -17,10 +20,15 @@ layout(push_constant) uniform DrawData {
     vec4 normalColumn2;
     vec4 material;
 } draw;
+#endif
 
 layout(location = 0) in vec3 inPosition;
 
 void main()
 {
+#ifdef KAIRO_INSTANCED
+    gl_Position = camera.lightViewProjection * instanceModel * vec4(inPosition, 1.0);
+#else
     gl_Position = camera.lightViewProjection * draw.model * vec4(inPosition, 1.0);
+#endif
 }
