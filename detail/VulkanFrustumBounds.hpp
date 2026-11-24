@@ -97,4 +97,88 @@ namespace kairo::renderer::detail
         }
         return std::any_of(outside.begin(), outside.end(), [](bool x) { return x; });
     }
+
+
+    // Prepared camera halfspaces: each plane is a row of P*V, or w +/- row.
+    // For a local AABB, the maximum of a linear form is attained by choosing
+    // one endpoint per axis. This avoids transforming eight corners per draw.
+    // The old corner oracle remains available for tests and extreme inputs.
+    template<class Matrix>
+    class PreparedVulkanFrustum final
+    {
+        using Row = std::array<double, 4>;
+        using Rows = std::array<Row, 4>;
+        static constexpr double Limit = 1.0e8;
+        static constexpr double Eps = 512.0 * std::numeric_limits<float>::epsilon();
+        static constexpr double Tiny = 512.0 * std::numeric_limits<float>::min();
+
+    public:
+        PreparedVulkanFrustum(const Matrix& view, const Matrix& projection) noexcept
+        {
+            for (std::size_t r = 0; r < 4; ++r)
+                for (std::size_t c = 0; c < 4; ++c)
+                {
+                    if (!Safe(view(r,c)) || !Safe(projection(r,c))) m_Valid = false;
+                    for (std::size_t k = 0; k < 4; ++k)
+                    {
+                        const double a = projection(r,k), b = view(k,c);
+                        m_Camera[r][c] += a*b;
+                        m_AbsCamera[r][c] += std::abs(a)*std::abs(b);
+                    }
+                }
+        }
+
+        [[nodiscard]] bool Outside(const LocalBounds& box, const Matrix& model) const noexcept
+        {
+            if (!box.Valid) return false;
+            // Fail open for extreme numeric inputs. The reference remains
+            // useful for validation; no rejection is worth unsafe arithmetic.
+            if (!m_Valid) return false;
+            Row coordinateMagnitude{0,0,0,1};
+            for (std::size_t a = 0; a < 3; ++a)
+            {
+                if (!Safe(box.Min[a]) || !Safe(box.Max[a]) || box.Min[a] > box.Max[a])
+                    return false;
+                coordinateMagnitude[a] = std::max(std::abs(box.Min[a]), std::abs(box.Max[a]));
+            }
+            Row modelMagnitude{};
+            for (std::size_t r = 0; r < 4; ++r)
+                for (std::size_t c = 0; c < 4; ++c)
+                {
+                    if (!Safe(model(r,c))) return false;
+                    modelMagnitude[r] += std::abs(static_cast<double>(model(r,c))) * coordinateMagnitude[c];
+                }
+            Row clipMagnitude{};
+            for (std::size_t r = 0; r < 4; ++r)
+                for (std::size_t k = 0; k < 4; ++k)
+                    clipMagnitude[r] += m_AbsCamera[r][k] * modelMagnitude[k];
+
+            // Bound rounding/cancellation by the absolute product chain.
+            // Limit bounds all three matrix products far below float max.
+            // Tiny * Limit^3 also covers flushed subnormals in intermediates.
+            constexpr double underflowMargin = Tiny * 256.0 * Limit * Limit * Limit;
+            const auto reject = [&](std::size_t axis, double sign, bool withW)
+            {
+                Row local{};
+                for (std::size_t col = 0; col < 4; ++col)
+                    for (std::size_t k = 0; k < 4; ++k)
+                        local[col] += (sign * m_Camera[axis][k] +
+                            (withW ? m_Camera[3][k] : 0.0)) * model(k,col);
+                double maximum = local[3];
+                for (std::size_t a = 0; a < 3; ++a)
+                    maximum += local[a] * (local[a] >= 0.0 ? box.Max[a] : box.Min[a]);
+                const double margin = Eps * (clipMagnitude[axis] +
+                    (withW ? clipMagnitude[3] : 0.0)) + underflowMargin;
+                return maximum < -margin;
+            };
+            return reject(0,1,true) || reject(0,-1,true) ||
+                reject(1,1,true) || reject(1,-1,true) ||
+                reject(2,1,false) || reject(2,-1,true);
+        }
+
+    private:
+        static bool Safe(double v) noexcept { return std::isfinite(v) && std::abs(v) <= Limit; }
+        Rows m_Camera{}, m_AbsCamera{};
+        bool m_Valid = true;
+    };
 }
