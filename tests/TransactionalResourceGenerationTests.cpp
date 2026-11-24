@@ -59,8 +59,10 @@ int main()
             try
             {
                 BuildAndCommitResourceGeneration(active, candidate,
-                    [](FakeGeneration&) {
-                        throw std::invalid_argument(
+                    [](FakeGeneration& staged) {
+                        // A runtime fault condition keeps the successful callback
+                        // path reachable in the template instantiation on MSVC.
+                        if (staged.Id == 8) throw std::invalid_argument(
                             "invalid sampled texture view before allocation");
                     });
             }
@@ -83,7 +85,7 @@ int main()
                     [](FakeGeneration& staged) {
                         staged.Handles.push_back(30);
                         staged.Handles.push_back(40);
-                        throw std::runtime_error(
+                        if (staged.Id == 9) throw std::runtime_error(
                             "injected fourth uniform buffer allocation failure");
                     });
             }
