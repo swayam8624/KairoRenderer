@@ -35,4 +35,32 @@ namespace kairo::renderer::detail
         }
         return runs;
     }
+
+    // Stable compact index stream. A run's First refers to this stream,
+    // not the submitted draw array: descriptors always use original indices.
+    // Reuse storage and allow invisible/noncaster entries to disappear
+    // without splitting compatible adjacent surviving draws.
+    template<class Draws, class Include, class Eligible, class Compatible>
+    void PlanIndexedInstanceRuns(const Draws& draws, Include include,
+        Eligible eligible, Compatible compatible,
+        std::vector<std::size_t>& indices, std::vector<InstanceRun>& runs)
+    {
+        indices.clear();
+        runs.clear();
+        for (std::size_t i = 0; i < draws.size(); ++i)
+            if (include(i, draws[i])) indices.push_back(i);
+        for (std::size_t first = 0; first < indices.size();)
+        {
+            std::uint32_t count = 1u;
+            const auto& head = draws[indices[first]];
+            if (eligible(head))
+                while (count < std::numeric_limits<std::uint32_t>::max() &&
+                    count < indices.size() - first &&
+                    eligible(draws[indices[first + count]]) &&
+                    compatible(head, draws[indices[first + count]]))
+                    ++count;
+            runs.push_back({first, count});
+            first += count;
+        }
+    }
 }
