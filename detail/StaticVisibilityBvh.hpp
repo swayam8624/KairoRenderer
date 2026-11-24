@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <limits>
 #include <vector>
+#include <utility>
 
 namespace kairo::renderer::detail
 {
@@ -53,7 +54,7 @@ namespace kairo::renderer::detail
         void Clear() noexcept { m_Entries.clear(); m_Nodes.clear(); }
 
         // Caller supplies only conservative, valid world bounds. Median split
-        // by largest centroid extent; ties use the original draw index.
+        // by largest node extent; ties use the original draw index.
         void Build(std::vector<Entry> entries)
         {
             Clear();
