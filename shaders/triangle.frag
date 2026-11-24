@@ -39,6 +39,11 @@ layout(set = 0, binding = 7) uniform MaterialData {
 } material;
 layout(set = 0, binding = 8) uniform sampler2D environmentMap;
 
+#ifdef KAIRO_INSTANCED
+layout(location = 5) flat in uvec2 inInstanceFlags;
+#define DRAW_RECEIVE_SHADOWS float(inInstanceFlags.y)
+#define DRAW_OBJECT_ID inInstanceFlags.x
+#else
 layout(push_constant) uniform DrawData {
     mat4 model;
     vec4 normalColumn0;
@@ -46,6 +51,9 @@ layout(push_constant) uniform DrawData {
     vec4 normalColumn2;
     vec4 tint;
 } draw;
+#define DRAW_RECEIVE_SHADOWS draw.tint.z
+#define DRAW_OBJECT_ID floatBitsToUint(draw.tint.a)
+#endif
 
 const float Pi = 3.14159265359;
 
@@ -81,7 +89,7 @@ vec3 FresnelSchlick(float cosTheta, vec3 reflectanceAtNormal)
 // directly into the sampled image's normalized coordinates.
 float DirectionalShadowVisibility(vec3 normal, vec3 lightDirection)
 {
-    if (camera.shadowParameters.x < 0.5 || draw.tint.z < 0.5 ||
+    if (camera.shadowParameters.x < 0.5 || DRAW_RECEIVE_SHADOWS < 0.5 ||
         inLightClipPosition.w <= 0.0)
         return 1.0;
 
@@ -142,13 +150,13 @@ void main()
     if (shadingMode == 1)
     {
         outColor = vec4(clamp(baseColor, vec3(0.0), vec3(1.0)), 1.0);
-        outObjectID = floatBitsToUint(draw.tint.a);
+        outObjectID = DRAW_OBJECT_ID;
         return;
     }
     if (shadingMode == 2)
     {
         outColor = vec4(normal * 0.5 + 0.5, 1.0);
-        outObjectID = floatBitsToUint(draw.tint.a);
+        outObjectID = DRAW_OBJECT_ID;
         return;
     }
     if (shadingMode == 3)
@@ -190,7 +198,7 @@ void main()
                 attenuation * visibility * camera.lightColorIntensity[index].w;
         }
         outColor = vec4(vec3(clamp(illumination, 0.0, 1.0)), 1.0);
-        outObjectID = floatBitsToUint(draw.tint.a);
+        outObjectID = DRAW_OBJECT_ID;
         return;
     }
     vec3 direct = vec3(0.0);
@@ -259,5 +267,5 @@ void main()
         exp2(camera.viewportParameters.y);
     outColor = vec4(hdrColor / (hdrColor + vec3(1.0)), 1.0);
     if (int(material.flags.x + 0.5) == 3) outColor.a = baseColorAlpha.a;
-    outObjectID = floatBitsToUint(draw.tint.a);
+    outObjectID = DRAW_OBJECT_ID;
 }
