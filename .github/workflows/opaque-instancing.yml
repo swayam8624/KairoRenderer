@@ -10,7 +10,7 @@ on:
       - 'tests/InstanceRunsTests.cpp'
       - '.github/workflows/opaque-instancing.yml'
   push:
-    branches: [main, feat/vulkan-opaque-instancing, feat/vulkan-shadow-instancing]
+    branches: [main, feat/vulkan-opaque-instancing, feat/vulkan-shadow-instancing, refactor/vulkan-visible-run-planning]
 permissions:
   contents: read
 jobs:

@@ -443,6 +443,7 @@ export namespace kairo::renderer
         std::unordered_map<TextureHandle, std::unique_ptr<VulkanTexture2D>> m_Textures;
         std::vector<MeshDraw> m_Draws;
         std::vector<detail::InstanceRun> m_InstanceRuns;
+        std::vector<std::size_t> m_MainIndices, m_ShadowIndices;
         std::vector<detail::InstanceRun> m_ShadowInstanceRuns;
         VkDeviceSize m_ShadowInstanceOffset = 0u;
         std::vector<InstanceVertex> m_InstanceScratch;
@@ -800,7 +801,7 @@ export namespace kairo::renderer
             VkDeviceSize instanceOffset = m_ShadowInstanceOffset;
             for (const auto& run : m_ShadowInstanceRuns)
             {
-                const auto drawIndex = run.First;
+                const auto drawIndex = m_ShadowIndices[run.First];
                 const MeshDraw& draw = m_Draws[drawIndex];
                 if (!draw.CastShadows ||
                     draw.Material.AlphaMode == MaterialAlphaMode::Blend) continue;
@@ -876,17 +877,19 @@ export namespace kairo::renderer
         // Pack independent main and shadow ranges into one fence-retired buffer.
         void PrepareInstances()
         {
-            m_InstanceRuns = detail::PlanInstanceRuns(m_Draws,
-                [this](const MeshDraw& draw)
+            detail::PlanIndexedInstanceRuns(m_Draws,
+                [this](std::size_t index, const MeshDraw& draw)
                 {
-                    const auto index = static_cast<std::size_t>(&draw - m_Draws.data());
-                    return m_Visible[index] != 0u &&
-                        draw.Material.AlphaMode == MaterialAlphaMode::Opaque && draw.Skinning.Empty();
+                    return m_Visible[index] != 0u && draw.Material.AlphaMode != MaterialAlphaMode::Blend;
+                },
+                [](const MeshDraw& draw)
+                {
+                    return draw.Material.AlphaMode == MaterialAlphaMode::Opaque && draw.Skinning.Empty();
                 },
                 [](const MeshDraw& a, const MeshDraw& b)
                 {
                     return a.Mesh == b.Mesh && detail::SameDescriptorMaterial(a.Material, b.Material);
-                });
+                }, m_MainIndices, m_InstanceRuns);
             auto& instances = m_InstanceScratch;
             instances.clear();
             for (const auto& run : m_InstanceRuns)
@@ -894,7 +897,7 @@ export namespace kairo::renderer
                 if (run.Count < 2u) continue;
                 for (std::size_t i = 0u; i < run.Count; ++i)
                 {
-                    const auto& draw = m_Draws[run.First + i];
+                    const auto& draw = m_Draws[m_MainIndices[run.First + i]];
                     InstanceVertex vertex{};
                     CopyTranspose(draw.Model, vertex.Matrices.data());
                     const auto normal = ComputeNormalMatrix(draw.Model);
@@ -910,23 +913,26 @@ export namespace kairo::renderer
             m_ShadowInstanceOffset = static_cast<VkDeviceSize>(instances.size()) * sizeof(InstanceVertex);
             // Deliberately independent of m_Visible. Camera-offscreen objects
             // remain eligible shadow casters; no camera bounds on the light pass.
-            m_ShadowInstanceRuns = detail::PlanInstanceRuns(m_Draws,
+            detail::PlanIndexedInstanceRuns(m_Draws,
+                [](std::size_t, const MeshDraw& draw)
+                {
+                    return draw.CastShadows && draw.Material.AlphaMode != MaterialAlphaMode::Blend;
+                },
                 [](const MeshDraw& draw)
                 {
-                    return draw.CastShadows && draw.Skinning.Empty() &&
-                        draw.Material.AlphaMode == MaterialAlphaMode::Opaque;
+                    return draw.Skinning.Empty() && draw.Material.AlphaMode == MaterialAlphaMode::Opaque;
                 },
                 [](const MeshDraw& a, const MeshDraw& b)
                 {
                     return a.Mesh == b.Mesh && detail::SameDescriptorMaterial(a.Material, b.Material);
-                });
+                }, m_ShadowIndices, m_ShadowInstanceRuns);
             for (const auto& run : m_ShadowInstanceRuns)
             {
                 if (run.Count < 2u) continue;
                 for (std::size_t i = 0u; i < run.Count; ++i)
                 {
                     InstanceVertex vertex{};
-                    CopyTranspose(m_Draws[run.First + i].Model, vertex.Matrices.data());
+                    CopyTranspose(m_Draws[m_ShadowIndices[run.First + i]].Model, vertex.Matrices.data());
                     instances.push_back(vertex); // depth shader consumes model columns only
                 }
             }
@@ -994,15 +1000,15 @@ export namespace kairo::renderer
             VkDeviceSize instanceOffset = 0u;
             for (const auto& run : m_InstanceRuns)
             {
-                const auto& draw = m_Draws[run.First];
+                const auto drawIndex = m_MainIndices[run.First];
+                const auto& draw = m_Draws[drawIndex];
                 if (run.Count == 1u)
                 {
-                    if (m_Visible[run.First] != 0u && draw.Material.AlphaMode != MaterialAlphaMode::Blend)
-                        drawOne(run.First, false);
+                    drawOne(drawIndex, false);
                     continue;
                 }
                 const auto& mesh = m_Meshes.at(draw.Mesh);
-                BindMaterial(command, run.First);
+                BindMaterial(command, drawIndex);
                 state.PipelineFor(m_InstancedMeshPipeline, [&]
                 {
                     vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_InstancedMeshPipeline);

@@ -72,6 +72,47 @@ int main()
         [](const Draw& d) { return Eligible(d) && d.CastShadows; }, Compatible);
     Check(split.size() == 3 && split[1].Count == 1 && split[1].First == 500,
         "Noncaster failed to split shadow run");
+    // A filtered draw must not occupy a descriptor slot in the run.
+    // Original draw indices survive compaction, including holes in the list.
+    std::vector<std::size_t> indices;
+    std::vector<kairo::renderer::detail::InstanceRun> runs;
+    std::vector<Draw> sparse(100000);
+    for (std::size_t i = 0; i < sparse.size(); ++i)
+    {
+        sparse[i].CameraVisible = i % 2 == 0;
+        sparse[i].CastShadows = i % 3 == 0;
+    }
+    const auto plan = [&](bool shadowPass, const std::vector<Draw>& draws)
+    {
+        kairo::renderer::detail::PlanIndexedInstanceRuns(draws,
+            [=](std::size_t, const Draw& d) { return shadowPass ? d.CastShadows : d.CameraVisible; },
+            Eligible, Compatible, indices, runs);
+        std::vector<std::size_t> expected;
+        for (std::size_t i = 0; i < draws.size(); ++i)
+            if (shadowPass ? draws[i].CastShadows : draws[i].CameraVisible) expected.push_back(i);
+        Check(indices == expected, "Compaction reordered or omitted surviving draw IDs");
+        std::size_t next = 0;
+        for (const auto& run : runs)
+        {
+            Check(run.First == next && run.Count > 0 && run.Count <= indices.size() - next,
+                "Indexed run coverage differs");
+            for (std::size_t i = 0; i < run.Count; ++i)
+                if (run.Count > 1)
+                    Check(Eligible(draws[indices[next + i]]) &&
+                        Compatible(draws[indices[next]], draws[indices[next + i]]),
+                        "Indexed run crossed incompatible geometry or material");
+            next += run.Count;
+        }
+        Check(next == indices.size(), "Indexed run omitted tail");
+    };
+    plan(false, sparse);
+    Check(runs.size() == 1 && runs[0].Count == 50000u, "Invisible gaps fragmented main batch");
+    const auto capacity = indices.capacity();
+    plan(true, sparse);
+    Check(runs.size() == 1 && runs[0].Count == 33334u, "Noncaster gaps fragmented shadow batch");
+    Check(indices.capacity() == capacity, "Compact index capacity not reused");
+    plan(false, {});
+    Check(runs.empty() && indices.empty(), "Empty replan retained stale draws");
     std::mt19937 rng(82602u);
     for (unsigned trial = 0; trial < 500; ++trial)
     {
@@ -80,6 +121,13 @@ int main()
             draws.push_back({static_cast<unsigned>(rng() % 3u),
                 static_cast<unsigned>(rng() % 3u), i, rng() % 5u != 0u, rng() % 7u == 0u});
         (void)Verify(draws);
+        for (auto& draw : draws)
+        {
+            draw.CameraVisible = rng() % 3u != 0u;
+            draw.CastShadows = rng() % 2u != 0u;
+        }
+        plan(false, draws);
+        plan(true, draws);
     }
-    std::cout << "100000 compatible draws -> 1 instance run; 256000 randomized draws, fallback boundaries and independent shadow plans passed\n";
+    std::cout << "100000 compatible draws -> 1 instance run; 256000 randomized draws, fallback boundaries, independent shadow plans, and compact index streams passed\n";
 }
