@@ -22,6 +22,7 @@ module;
 #include "detail/DescriptorSceneInvalidation.hpp"
 #include "detail/DrawBindingState.hpp"
 #include "detail/InstanceRuns.hpp"
+#include "detail/VulkanFrustumBounds.hpp"
 
 // TEACHING DRAW PATH: renderer-owned MeshHandle/TextureHandle -> GPU buffers,
 // VulkanTexture2D and descriptor sets -> native VkCommandBuffer recording.
@@ -117,10 +118,12 @@ export namespace kairo::renderer
                     mesh.SkinBytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
                 skin->Write(mesh.Skinning().data(), mesh.SkinBytes());
             }
+            detail::LocalBounds bounds;
+            for (const auto& vertex : mesh.Vertices()) bounds.Include(vertex.Position);
             const MeshHandle handle = m_NextMesh++;
             m_Meshes.emplace(handle, GpuMesh{ std::move(vertices), std::move(skin),
                 std::move(indices), static_cast<std::uint32_t>(mesh.Indices().size()),
-                mesh.RequiredJointCount() });
+                mesh.RequiredJointCount(), bounds });
             return handle;
         }
 
@@ -278,6 +281,7 @@ export namespace kairo::renderer
             RebuildMaterialDescriptors();
             UpdateUniform(m_Viewport.Extent());
             UploadDebugVertices();
+            PrepareVisibility();
             PrepareInstances(); // prior frame fence has completed
 
             command.Begin();
@@ -403,6 +407,7 @@ export namespace kairo::renderer
             std::unique_ptr<VulkanHostBuffer> Indices;
             std::uint32_t IndexCount = 0u;
             std::size_t RequiredJoints = 0u;
+            detail::LocalBounds Bounds;
         };
         struct DebugVertex final
         {
@@ -437,6 +442,7 @@ export namespace kairo::renderer
         std::unordered_map<TextureHandle, std::unique_ptr<VulkanTexture2D>> m_Textures;
         std::vector<MeshDraw> m_Draws;
         std::vector<detail::InstanceRun> m_InstanceRuns;
+        std::vector<std::uint8_t> m_Visible;
         std::unique_ptr<VulkanHostBuffer> m_InstanceBuffer;
         VkDeviceSize m_InstanceCapacity = 0u;
         std::vector<RenderLight> m_Lights;
@@ -816,12 +822,32 @@ export namespace kairo::renderer
         // Prepare only multi-instance runs. The shadow pass and all
         // transparent/skinned/masked draws retain their established path.
         // Never modify a mapped instance buffer until the frame fence retires.
+        // Camera visibility is separate from shadow visibility: an object
+        // outside the camera may still cast a shadow into the viewport.
+        // Rest-pose bounds cannot enclose arbitrary skeletal deformation.
+        void PrepareVisibility()
+        {
+            const auto view = m_Camera.View();
+            const auto extent = m_Viewport.Extent();
+            const auto projection = m_Camera.Projection(extent.width, extent.height);
+            m_Visible.resize(m_Draws.size());
+            for (std::size_t index = 0u; index < m_Draws.size(); ++index)
+            {
+                const auto& draw = m_Draws[index];
+                const auto& mesh = m_Meshes.at(draw.Mesh);
+                m_Visible[index] = static_cast<std::uint8_t>(mesh.RequiredJoints > 0u ||
+                    !detail::OutsideVulkanFrustum(mesh.Bounds, draw.Model, view, projection));
+            }
+        }
+
         void PrepareInstances()
         {
             m_InstanceRuns = detail::PlanInstanceRuns(m_Draws,
-                [](const MeshDraw& draw)
+                [this](const MeshDraw& draw)
                 {
-                    return draw.Material.AlphaMode == MaterialAlphaMode::Opaque && draw.Skinning.Empty();
+                    const auto index = static_cast<std::size_t>(&draw - m_Draws.data());
+                    return m_Visible[index] != 0u &&
+                        draw.Material.AlphaMode == MaterialAlphaMode::Opaque && draw.Skinning.Empty();
                 },
                 [](const MeshDraw& a, const MeshDraw& b)
                 {
@@ -911,7 +937,8 @@ export namespace kairo::renderer
                 const auto& draw = m_Draws[run.First];
                 if (run.Count == 1u)
                 {
-                    if (draw.Material.AlphaMode != MaterialAlphaMode::Blend) drawOne(run.First, false);
+                    if (m_Visible[run.First] != 0u && draw.Material.AlphaMode != MaterialAlphaMode::Blend)
+                        drawOne(run.First, false);
                     continue;
                 }
                 const auto& mesh = m_Meshes.at(draw.Mesh);
@@ -937,7 +964,7 @@ export namespace kairo::renderer
             std::vector<std::size_t> transparentDraws;
             transparentDraws.reserve(m_Draws.size());
             for (std::size_t index = 0u; index < m_Draws.size(); ++index)
-                if (m_Draws[index].Material.AlphaMode == MaterialAlphaMode::Blend)
+                if (m_Visible[index] != 0u && m_Draws[index].Material.AlphaMode == MaterialAlphaMode::Blend)
                     transparentDraws.push_back(index);
             using kairo::foundation::math::Dot;
             using kairo::foundation::math::ExtractTranslation;
