@@ -31,7 +31,7 @@ int main()
         primitive.Skinning.resize(3u);
         for (auto& influence : primitive.Skinning)
         {
-            influence.Joints = { 0u, 999999u, 70000u, 255u };
+            influence.Joints = { 254u, 999999u, 70000u, 255u };
             influence.Weights = { 1.0f, 0.0f, 0.0f, 0.0f };
         }
 
@@ -51,8 +51,9 @@ int main()
 
         MeshDraw draw;
         draw.Mesh = mesh;
-        draw.Skinning.JointMatrices.push_back(
-            MakeTranslation(Vec3f{ -0.2f, 0.0f, 0.0f }));
+        // The highest portable joint index requires a 16,320-byte palette.
+        draw.Skinning.JointMatrices.resize(255u, kairo::foundation::math::Mat4f::Identity());
+        draw.Skinning.JointMatrices[254u] = MakeTranslation(Vec3f{ -0.2f, 0.0f, 0.0f });
         RenderScene firstScene;
         firstScene.Add(draw);
         firstScene.AddLight(light);
@@ -67,7 +68,7 @@ int main()
             throw std::runtime_error(
                 "first Metal capture did not preserve the requested viewport extent");
 
-        draw.Skinning.JointMatrices[0] =
+        draw.Skinning.JointMatrices[254u] =
             MakeTranslation(Vec3f{ 0.35f, 0.0f, 0.0f });
         RenderScene secondScene;
         secondScene.Add(draw);
