@@ -12,6 +12,7 @@ module;
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -20,6 +21,7 @@ module;
 
 #include "detail/DescriptorSceneInvalidation.hpp"
 #include "detail/DrawBindingState.hpp"
+#include "detail/InstanceRuns.hpp"
 
 // TEACHING DRAW PATH: renderer-owned MeshHandle/TextureHandle -> GPU buffers,
 // VulkanTexture2D and descriptor sets -> native VkCommandBuffer recording.
@@ -276,6 +278,7 @@ export namespace kairo::renderer
             RebuildMaterialDescriptors();
             UpdateUniform(m_Viewport.Extent());
             UploadDebugVertices();
+            PrepareInstances(); // prior frame fence has completed
 
             command.Begin();
             // Populate and transition the sampled depth image whenever a mesh
@@ -384,6 +387,15 @@ export namespace kairo::renderer
         /// 64-byte model + three padded normal columns + 16-byte tint exactly
         /// fit Vulkan's guaranteed minimum 128-byte push-constant capacity.
         struct MeshPushConstants final { std::array<float, 32> Values{}; };
+        // Vertex binding 2, instance rate. Keep integer identity separate
+        // from floating point attributes (all 32 object-ID bits survive).
+        struct InstanceVertex final
+        {
+            std::array<float, 28> Matrices{};
+            std::array<std::uint32_t, 2> Flags{};
+        };
+        static_assert(offsetof(InstanceVertex, Flags) == 112u);
+        static_assert(sizeof(InstanceVertex) == 120u);
         struct GpuMesh final
         {
             std::unique_ptr<VulkanHostBuffer> Vertices;
@@ -403,6 +415,7 @@ export namespace kairo::renderer
         VkRenderPass m_RenderPass = VK_NULL_HANDLE;
         VkPipelineLayout m_Layout = VK_NULL_HANDLE;
         VkPipeline m_MeshPipeline = VK_NULL_HANDLE;
+        VkPipeline m_InstancedMeshPipeline = VK_NULL_HANDLE;
         VkPipeline m_SkinnedMeshPipeline = VK_NULL_HANDLE;
         VkPipeline m_TransparentPipeline = VK_NULL_HANDLE;
         VkPipeline m_SkinnedTransparentPipeline = VK_NULL_HANDLE;
@@ -423,6 +436,9 @@ export namespace kairo::renderer
         std::unordered_map<MeshHandle, GpuMesh> m_Meshes;
         std::unordered_map<TextureHandle, std::unique_ptr<VulkanTexture2D>> m_Textures;
         std::vector<MeshDraw> m_Draws;
+        std::vector<detail::InstanceRun> m_InstanceRuns;
+        std::unique_ptr<VulkanHostBuffer> m_InstanceBuffer;
+        VkDeviceSize m_InstanceCapacity = 0u;
         std::vector<RenderLight> m_Lights;
         RenderEnvironment m_Environment;
         MeshHandle m_NextMesh = 1u;
@@ -504,6 +520,28 @@ export namespace kairo::renderer
             m_TransparentPipeline = CreatePipeline("triangle.vert.spv", "triangle.frag.spv",
                 VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, meshInput, VK_FALSE, true);
             m_ShadowPipeline = CreateShadowPipeline("shadow.vert.spv", meshInput);
+
+            // Vulkan's minimum limits cover 12 attributes, three binding
+            // slots and this 120-byte stride. Binding 1 remains for skinning;
+            // binding 2 is independent and cannot disturb that stream.
+            const VkVertexInputBindingDescription instanceBinding{
+                2u, static_cast<std::uint32_t>(sizeof(InstanceVertex)), VK_VERTEX_INPUT_RATE_INSTANCE };
+            const std::array instanceBindings{ meshBinding, instanceBinding };
+            std::array<VkVertexInputAttributeDescription, 12u> instanceAttributes{};
+            std::copy(meshAttributes.begin(), meshAttributes.end(), instanceAttributes.begin());
+            for (std::uint32_t column = 0u; column < 7u; ++column)
+                instanceAttributes[4u + column] = { 4u + column, 2u,
+                    VK_FORMAT_R32G32B32A32_SFLOAT, column * 16u };
+            instanceAttributes[11] = { 11u, 2u, VK_FORMAT_R32G32_UINT,
+                static_cast<std::uint32_t>(offsetof(InstanceVertex, Flags)) };
+            auto instanceInput = meshInput;
+            instanceInput.vertexBindingDescriptionCount = static_cast<std::uint32_t>(instanceBindings.size());
+            instanceInput.pVertexBindingDescriptions = instanceBindings.data();
+            instanceInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(instanceAttributes.size());
+            instanceInput.pVertexAttributeDescriptions = instanceAttributes.data();
+            m_InstancedMeshPipeline = CreatePipeline("instanced_triangle.vert.spv",
+                "instanced_triangle.frag.spv", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                instanceInput, VK_TRUE, false);
 
             VkVertexInputBindingDescription skinBinding{};
             skinBinding.binding = 1u;
@@ -775,6 +813,55 @@ export namespace kairo::renderer
             vkCmdEndRenderPass(command.Handle());
         }
 
+        // Prepare only multi-instance runs. The shadow pass and all
+        // transparent/skinned/masked draws retain their established path.
+        // Never modify a mapped instance buffer until the frame fence retires.
+        void PrepareInstances()
+        {
+            m_InstanceRuns = detail::PlanInstanceRuns(m_Draws,
+                [](const MeshDraw& draw)
+                {
+                    return draw.Material.AlphaMode == MaterialAlphaMode::Opaque && draw.Skinning.Empty();
+                },
+                [](const MeshDraw& a, const MeshDraw& b)
+                {
+                    return a.Mesh == b.Mesh && detail::SameDescriptorMaterial(a.Material, b.Material);
+                });
+            std::vector<InstanceVertex> instances;
+            for (const auto& run : m_InstanceRuns)
+            {
+                if (run.Count < 2u) continue;
+                for (std::size_t i = 0u; i < run.Count; ++i)
+                {
+                    const auto& draw = m_Draws[run.First + i];
+                    InstanceVertex vertex{};
+                    CopyTranspose(draw.Model, vertex.Matrices.data());
+                    const auto normal = ComputeNormalMatrix(draw.Model);
+                    for (std::size_t column = 0u; column < 3u; ++column)
+                        for (std::size_t row = 0u; row < 3u; ++row)
+                            vertex.Matrices[16u + column * 4u + row] = normal(row, column);
+                    vertex.Flags = { draw.ObjectID, draw.ReceiveShadows ? 1u : 0u };
+                    instances.push_back(vertex);
+                }
+            }
+            if (instances.empty()) return;
+            if (instances.size() > std::numeric_limits<VkDeviceSize>::max() / sizeof(InstanceVertex))
+                throw std::length_error("Vulkan instance upload exceeds buffer size range.");
+            const auto bytes = static_cast<VkDeviceSize>(instances.size()) * sizeof(InstanceVertex);
+            if (bytes > m_InstanceCapacity)
+            {
+                // Allocate before publishing; old storage is fence-retired.
+                auto capacity = bytes;
+                if (m_InstanceCapacity <= std::numeric_limits<VkDeviceSize>::max() / 2u)
+                    capacity = std::max(bytes, m_InstanceCapacity * 2u);
+                auto buffer = std::make_unique<VulkanHostBuffer>(m_VulkanDevice, capacity,
+                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                m_InstanceBuffer = std::move(buffer);
+                m_InstanceCapacity = capacity;
+            }
+            m_InstanceBuffer->Write(instances.data(), bytes);
+        }
+
         void DrawMeshes(const VulkanCommandBuffer& command) const
         {
             if (m_Draws.empty()) return;
@@ -818,9 +905,34 @@ export namespace kairo::renderer
                 vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, 1u, 0u, 0, 0u);
             };
 
-            for (std::size_t index = 0u; index < m_Draws.size(); ++index)
-                if (m_Draws[index].Material.AlphaMode != MaterialAlphaMode::Blend)
-                    drawOne(index, false);
+            VkDeviceSize instanceOffset = 0u;
+            for (const auto& run : m_InstanceRuns)
+            {
+                const auto& draw = m_Draws[run.First];
+                if (run.Count == 1u)
+                {
+                    if (draw.Material.AlphaMode != MaterialAlphaMode::Blend) drawOne(run.First, false);
+                    continue;
+                }
+                const auto& mesh = m_Meshes.at(draw.Mesh);
+                BindMaterial(command, run.First);
+                state.PipelineFor(m_InstancedMeshPipeline, [&]
+                {
+                    vkCmdBindPipeline(command.Handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_InstancedMeshPipeline);
+                });
+                state.MeshFor(draw.Mesh, [&]
+                {
+                    const VkBuffer vertex = mesh.Vertices->Handle();
+                    vkCmdBindVertexBuffers(command.Handle(), 0u, 1u, &vertex, offsets);
+                    vkCmdBindIndexBuffer(command.Handle(), mesh.Indices->Handle(), 0u, VK_INDEX_TYPE_UINT32);
+                });
+                // Bind the exact packed run; instanceCount drives the GPU
+                // fetch rate. Individual IDs and matrices come from binding 2.
+                const VkBuffer instanceBuffer = m_InstanceBuffer->Handle();
+                vkCmdBindVertexBuffers(command.Handle(), 2u, 1u, &instanceBuffer, &instanceOffset);
+                vkCmdDrawIndexed(command.Handle(), mesh.IndexCount, run.Count, 0u, 0, 0u);
+                instanceOffset += static_cast<VkDeviceSize>(run.Count) * sizeof(InstanceVertex);
+            }
 
             std::vector<std::size_t> transparentDraws;
             transparentDraws.reserve(m_Draws.size());
@@ -1040,6 +1152,7 @@ export namespace kairo::renderer
         void Destroy() noexcept
         {
             m_DebugVertexBuffer.reset(); m_DebugVertexCapacity = 0u;
+            m_InstanceBuffer.reset(); m_InstanceCapacity = 0u;
             for (const VkFramebuffer framebuffer : m_Framebuffers) vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
             m_Framebuffers.clear();
             if (m_SkinnedShadowPipeline != VK_NULL_HANDLE)
@@ -1052,12 +1165,14 @@ export namespace kairo::renderer
                 vkDestroyPipeline(m_Device, m_TransparentPipeline, nullptr);
             if (m_SkinnedMeshPipeline != VK_NULL_HANDLE)
                 vkDestroyPipeline(m_Device, m_SkinnedMeshPipeline, nullptr);
+            if (m_InstancedMeshPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_InstancedMeshPipeline, nullptr);
             if (m_MeshPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_MeshPipeline, nullptr);
             if (m_Layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(m_Device, m_Layout, nullptr);
             if (m_RenderPass != VK_NULL_HANDLE) vkDestroyRenderPass(m_Device, m_RenderPass, nullptr);
             m_SkinnedShadowPipeline = VK_NULL_HANDLE; m_ShadowPipeline = VK_NULL_HANDLE;
             m_DebugLinePipeline = VK_NULL_HANDLE;
             m_SkinnedMeshPipeline = VK_NULL_HANDLE; m_MeshPipeline = VK_NULL_HANDLE;
+            m_InstancedMeshPipeline = VK_NULL_HANDLE;
             m_SkinnedTransparentPipeline = VK_NULL_HANDLE;
             m_TransparentPipeline = VK_NULL_HANDLE;
             m_Layout = VK_NULL_HANDLE; m_RenderPass = VK_NULL_HANDLE;

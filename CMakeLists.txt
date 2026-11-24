@@ -173,7 +173,19 @@ add_custom_command(
     COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skinned_shadow.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_shadow.vert.spv"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/skinned_shadow.vert"
     VERBATIM)
+# Compile the same shader source with an instance-rate input ABI. The ordinary
+# and skinned variants retain their original push-constant interface.
+foreach(stage vert frag)
+    add_custom_command(
+        OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.${stage}.spv"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+        COMMAND "${GLSLANG_VALIDATOR}" -V -DKAIRO_INSTANCED=1 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.${stage}" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.${stage}.spv"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.${stage}"
+        VERBATIM)
+endforeach()
 add_custom_target(KairoRendererShaders DEPENDS
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.vert.spv"
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.frag.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_triangle.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
@@ -323,6 +335,10 @@ if(KAIRO_RENDERER_BUILD_TESTS)
     endif()
     set_property(TARGET KairoRendererTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
     enable_testing()
+    add_executable(KairoInstanceRunsTests tests/InstanceRunsTests.cpp)
+    target_compile_features(KairoInstanceRunsTests PRIVATE cxx_std_23)
+    set_property(TARGET KairoInstanceRunsTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
+    add_test(NAME KairoInstanceRunsTests COMMAND KairoInstanceRunsTests)
     add_executable(KairoDrawBindingStateTests tests/DrawBindingStateTests.cpp)
     target_compile_features(KairoDrawBindingStateTests PRIVATE cxx_std_23)
     set_property(TARGET KairoDrawBindingStateTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
@@ -400,6 +416,11 @@ if(KAIRO_RENDERER_BUILD_TESTS)
             COMMAND KairoRendererVulkanSkinningSmoke)
         set_tests_properties(KairoRendererVulkanSkinningSmoke PROPERTIES
             SKIP_RETURN_CODE 77)
+        add_executable(KairoRendererVulkanInstancingSmoke tests/VulkanInstancingSmoke.cpp)
+        target_link_libraries(KairoRendererVulkanInstancingSmoke PRIVATE KairoRenderer)
+        set_property(TARGET KairoRendererVulkanInstancingSmoke PROPERTY COMPILE_WARNING_AS_ERROR ON)
+        add_test(NAME KairoRendererVulkanInstancingSmoke COMMAND KairoRendererVulkanInstancingSmoke)
+        set_tests_properties(KairoRendererVulkanInstancingSmoke PROPERTIES SKIP_RETURN_CODE 77)
     endif()
     if(APPLE)
         add_executable(KairoRendererMetalSkinningSmoke tests/MetalSkinningSmoke.cpp)

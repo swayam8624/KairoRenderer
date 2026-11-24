@@ -1,10 +1,10 @@
 #version 450
 
-layout(location = 0) in vec3 inColor;
-layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec3 inWorldPosition;
-layout(location = 3) in vec4 inLightClipPosition;
-layout(location = 4) in vec2 inTexCoord;
+layout(location = 0) in vec3 varyColor;
+layout(location = 1) in vec3 varyNormal;
+layout(location = 2) in vec3 varyWorldPosition;
+layout(location = 3) in vec4 varyLightClipPosition;
+layout(location = 4) in vec2 varyTexCoord;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out uint outObjectID;
 
@@ -39,6 +39,11 @@ layout(set = 0, binding = 7) uniform MaterialData {
 } material;
 layout(set = 0, binding = 8) uniform sampler2D environmentMap;
 
+#ifdef KAIRO_INSTANCED
+layout(location = 5) flat in uvec2 varyInstanceFlags;
+#define DRAW_RECEIVE_SHADOWS float(varyInstanceFlags.y)
+#define DRAW_OBJECT_ID varyInstanceFlags.x
+#else
 layout(push_constant) uniform DrawData {
     mat4 model;
     vec4 normalColumn0;
@@ -46,6 +51,9 @@ layout(push_constant) uniform DrawData {
     vec4 normalColumn2;
     vec4 tint;
 } draw;
+#define DRAW_RECEIVE_SHADOWS draw.tint.z
+#define DRAW_OBJECT_ID floatBitsToUint(draw.tint.a)
+#endif
 
 const float Pi = 3.14159265359;
 
@@ -81,11 +89,11 @@ vec3 FresnelSchlick(float cosTheta, vec3 reflectanceAtNormal)
 // directly into the sampled image's normalized coordinates.
 float DirectionalShadowVisibility(vec3 normal, vec3 lightDirection)
 {
-    if (camera.shadowParameters.x < 0.5 || draw.tint.z < 0.5 ||
-        inLightClipPosition.w <= 0.0)
+    if (camera.shadowParameters.x < 0.5 || DRAW_RECEIVE_SHADOWS < 0.5 ||
+        varyLightClipPosition.w <= 0.0)
         return 1.0;
 
-    const vec3 projected = inLightClipPosition.xyz / inLightClipPosition.w;
+    const vec3 projected = varyLightClipPosition.xyz / varyLightClipPosition.w;
     const vec2 uv = projected.xy * 0.5 + 0.5;
     if (projected.z < 0.0 || projected.z > 1.0 ||
         uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
@@ -106,23 +114,23 @@ float DirectionalShadowVisibility(vec3 normal, vec3 lightDirection)
 
 void main()
 {
-    const vec4 sampledBase = texture(baseColorMap, inTexCoord);
-    const vec4 baseColorAlpha = vec4(inColor, 1.0) *
+    const vec4 sampledBase = texture(baseColorMap, varyTexCoord);
+    const vec4 baseColorAlpha = vec4(varyColor, 1.0) *
         material.baseColorFactor * sampledBase;
     if (int(material.flags.x + 0.5) == 2 &&
         baseColorAlpha.a < material.factors.w)
         discard;
     const vec3 baseColor = baseColorAlpha.rgb;
-    const vec4 metallicRoughness = texture(metallicRoughnessMap, inTexCoord);
+    const vec4 metallicRoughness = texture(metallicRoughnessMap, varyTexCoord);
     const float metallic = clamp(material.factors.x * metallicRoughness.b, 0.0, 1.0);
     const float roughness = clamp(material.factors.y * metallicRoughness.g, 0.04, 1.0);
     const float ambientOcclusion = clamp(material.factors.z *
-        texture(occlusionMap, inTexCoord).r, 0.0, 1.0);
-    const vec3 geometricNormal = normalize(inNormal);
-    const vec3 dpdx = dFdx(inWorldPosition);
-    const vec3 dpdy = dFdy(inWorldPosition);
-    const vec2 duvdx = dFdx(inTexCoord);
-    const vec2 duvdy = dFdy(inTexCoord);
+        texture(occlusionMap, varyTexCoord).r, 0.0, 1.0);
+    const vec3 geometricNormal = normalize(varyNormal);
+    const vec3 dpdx = dFdx(varyWorldPosition);
+    const vec3 dpdy = dFdy(varyWorldPosition);
+    const vec2 duvdx = dFdx(varyTexCoord);
+    const vec2 duvdy = dFdy(varyTexCoord);
     const float determinant = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
     vec3 normal = geometricNormal;
     if (abs(determinant) > 1.0e-8)
@@ -131,24 +139,24 @@ void main()
             determinant);
         const vec3 bitangent = normalize(cross(geometricNormal, tangent)) *
             sign(determinant);
-        vec3 tangentNormal = texture(normalMap, inTexCoord).xyz * 2.0 - 1.0;
+        vec3 tangentNormal = texture(normalMap, varyTexCoord).xyz * 2.0 - 1.0;
         tangentNormal.xy *= material.emissiveAndNormalScale.w;
         normal = normalize(mat3(tangent, bitangent, geometricNormal) * tangentNormal);
     }
-    const vec3 viewDirection = normalize(camera.cameraPosition.xyz - inWorldPosition);
+    const vec3 viewDirection = normalize(camera.cameraPosition.xyz - varyWorldPosition);
     const float nDotV = max(dot(normal, viewDirection), 0.0);
     const vec3 f0 = mix(vec3(0.04), baseColor, metallic);
     const int shadingMode = int(camera.viewportParameters.x + 0.5);
     if (shadingMode == 1)
     {
         outColor = vec4(clamp(baseColor, vec3(0.0), vec3(1.0)), 1.0);
-        outObjectID = floatBitsToUint(draw.tint.a);
+        outObjectID = DRAW_OBJECT_ID;
         return;
     }
     if (shadingMode == 2)
     {
         outColor = vec4(normal * 0.5 + 0.5, 1.0);
-        outObjectID = floatBitsToUint(draw.tint.a);
+        outObjectID = DRAW_OBJECT_ID;
         return;
     }
     if (shadingMode == 3)
@@ -162,7 +170,7 @@ void main()
             float attenuation = 1.0;
             if (type != 1)
             {
-                const vec3 delta = camera.lightPositionType[index].xyz - inWorldPosition;
+                const vec3 delta = camera.lightPositionType[index].xyz - varyWorldPosition;
                 const float distanceToLight = length(delta);
                 lightDirection = delta / max(distanceToLight, 1.0e-5);
                 const float range = camera.lightDirectionRange[index].w;
@@ -190,7 +198,7 @@ void main()
                 attenuation * visibility * camera.lightColorIntensity[index].w;
         }
         outColor = vec4(vec3(clamp(illumination, 0.0, 1.0)), 1.0);
-        outObjectID = floatBitsToUint(draw.tint.a);
+        outObjectID = DRAW_OBJECT_ID;
         return;
     }
     vec3 direct = vec3(0.0);
@@ -202,7 +210,7 @@ void main()
         float attenuation = 1.0;
         if (type != 1)
         {
-            const vec3 delta = camera.lightPositionType[index].xyz - inWorldPosition;
+            const vec3 delta = camera.lightPositionType[index].xyz - varyWorldPosition;
             const float distanceToLight = length(delta);
             lightDirection = delta / max(distanceToLight, 1.0e-5);
             const float range = camera.lightDirectionRange[index].w;
@@ -254,10 +262,10 @@ void main()
     const vec3 ambient = (camera.ambient.rgb * baseColor +
         diffuseEnvironment + specularEnvironment) * ambientOcclusion;
     const vec3 emissive = material.emissiveAndNormalScale.rgb *
-        texture(emissiveMap, inTexCoord).rgb;
+        texture(emissiveMap, varyTexCoord).rgb;
     const vec3 hdrColor = (ambient + direct + emissive) *
         exp2(camera.viewportParameters.y);
     outColor = vec4(hdrColor / (hdrColor + vec3(1.0)), 1.0);
     if (int(material.flags.x + 0.5) == 3) outColor.a = baseColorAlpha.a;
-    outObjectID = floatBitsToUint(draw.tint.a);
+    outObjectID = DRAW_OBJECT_ID;
 }
