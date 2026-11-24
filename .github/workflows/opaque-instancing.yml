@@ -5,11 +5,12 @@ on:
       - 'VulkanTriangle.cppm'
       - 'shaders/triangle.vert'
       - 'shaders/triangle.frag'
+      - 'shaders/shadow.vert'
       - 'detail/InstanceRuns.hpp'
       - 'tests/InstanceRunsTests.cpp'
       - '.github/workflows/opaque-instancing.yml'
   push:
-    branches: [main, feat/vulkan-opaque-instancing]
+    branches: [main, feat/vulkan-opaque-instancing, feat/vulkan-shadow-instancing]
 permissions:
   contents: read
 jobs:
@@ -38,6 +39,10 @@ jobs:
           glslangValidator -V -DKAIRO_INSTANCED=1 -l shaders/triangle.vert shaders/triangle.frag
           spirv-val vert.spv
           spirv-val frag.spv
+      - name: Compile and validate instanced shadow shader
+        run: |
+          glslangValidator -V -DKAIRO_INSTANCED=1 shaders/shadow.vert -o build/instancing/shadow.spv
+          spirv-val build/instancing/shadow.spv
       - uses: actions/upload-artifact@v4
         if: always()
         with:
