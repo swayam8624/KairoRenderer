@@ -13,6 +13,7 @@ namespace
     {
         unsigned Mesh = 0, Material = 0, ID = 0;
         bool Opaque = true, Skinned = false;
+        bool CameraVisible = true, CastShadows = true;
     };
     bool Eligible(const Draw& d) { return d.Opaque && !d.Skinned; }
     bool Compatible(const Draw& a, const Draw& b)
@@ -57,6 +58,20 @@ int main()
     repeated[50000].Opaque = true;
     repeated[50000].Material = 5;
     Check(Verify(repeated) == 3, "Material boundary failed to break run");
+    // Camera culling must not affect the light's independent plan.
+    std::vector<Draw> casters(1000);
+    casters[400].CameraVisible = false;
+    const auto main = kairo::renderer::detail::PlanInstanceRuns(casters,
+        [](const Draw& d) { return Eligible(d) && d.CameraVisible; }, Compatible);
+    const auto shadow = kairo::renderer::detail::PlanInstanceRuns(casters,
+        [](const Draw& d) { return Eligible(d) && d.CastShadows; }, Compatible);
+    Check(main.size() == 3 && shadow.size() == 1 && shadow[0].Count == 1000,
+        "Camera visibility incorrectly constrained shadow plan");
+    casters[500].CastShadows = false;
+    const auto split = kairo::renderer::detail::PlanInstanceRuns(casters,
+        [](const Draw& d) { return Eligible(d) && d.CastShadows; }, Compatible);
+    Check(split.size() == 3 && split[1].Count == 1 && split[1].First == 500,
+        "Noncaster failed to split shadow run");
     std::mt19937 rng(82602u);
     for (unsigned trial = 0; trial < 500; ++trial)
     {
@@ -66,5 +81,5 @@ int main()
                 static_cast<unsigned>(rng() % 3u), i, rng() % 5u != 0u, rng() % 7u == 0u});
         (void)Verify(draws);
     }
-    std::cout << "100000 compatible draws -> 1 instance run; 256000 randomized draws and fallback boundaries passed\n";
+    std::cout << "100000 compatible draws -> 1 instance run; 256000 randomized draws, fallback boundaries and independent shadow plans passed\n";
 }
