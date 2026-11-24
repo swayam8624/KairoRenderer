@@ -1,7 +1,7 @@
 name: Vulkan frustum bounds
 on:
   push:
-    branches: [main, feat/vulkan-frustum-culling]
+    branches: [main, feat/vulkan-frustum-culling, refactor/vulkan-frustum-support]
   pull_request:
     paths:
       - 'detail/VulkanFrustumBounds.hpp'
