@@ -1,0 +1,31 @@
+name: Vulkan descriptor invalidation
+on:
+  pull_request:
+    paths:
+      - 'VulkanTriangle.cppm'
+      - 'detail/DescriptorSceneInvalidation.hpp'
+      - 'tests/DescriptorSceneInvalidationTests.cpp'
+      - '.github/workflows/descriptor-scene-invalidation.yml'
+  push:
+    branches: [main, fix/vulkan-descriptor-invalidation]
+permissions:
+  contents: read
+jobs:
+  cpu-policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile exact policy tests with sanitizers
+        run: |
+          mkdir -p build/descriptor-policy
+          g++ -std=c++23 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tests/DescriptorSceneInvalidationTests.cpp -o build/descriptor-policy/test
+      - name: Run policy tests
+        run: |
+          set -o pipefail
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 build/descriptor-policy/test 2>&1 | tee build/descriptor-policy/test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: descriptor-policy-diagnostics
+          path: build/descriptor-policy/test.log
+          if-no-files-found: warn
