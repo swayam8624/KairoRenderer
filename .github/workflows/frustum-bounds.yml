@@ -1,0 +1,29 @@
+name: Vulkan frustum bounds
+on:
+  push:
+    branches: [main, feat/vulkan-frustum-culling]
+  pull_request:
+    paths:
+      - 'detail/VulkanFrustumBounds.hpp'
+      - 'tests/VulkanFrustumBoundsTests.cpp'
+      - 'VulkanTriangle.cppm'
+      - '.github/workflows/frustum-bounds.yml'
+permissions:
+  contents: read
+jobs:
+  bounds:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test clip bounds with sanitizers
+        run: |
+          mkdir -p build/frustum
+          g++ -std=c++23 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tests/VulkanFrustumBoundsTests.cpp -o build/frustum/test
+          set -o pipefail
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 build/frustum/test 2>&1 | tee build/frustum/test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frustum-diagnostics
+          path: build/frustum/test.log
+          if-no-files-found: warn
