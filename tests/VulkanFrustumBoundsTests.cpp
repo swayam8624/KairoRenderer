@@ -71,7 +71,7 @@ int main()
 
     std::mt19937 rng(82701u);
     std::uniform_real_distribution<float> random(-4.f,4.f), unit(0.f,1.f);
-    unsigned rejected = 0;
+    unsigned rejected = 0, preparedRejected = 0;
     std::size_t samples = 0;
     for (unsigned trial = 0; trial < 25000; ++trial)
     {
@@ -81,8 +81,12 @@ int main()
         v.Data[7] = random(rng);
         v.Data[11] = random(rng);
         if (trial % 2) p = perspective;
-        const bool culled = OutsideVulkanFrustum(box,m,v,p);
-        if (culled) ++rejected;
+        const bool referenceCulled = OutsideVulkanFrustum(box,m,v,p);
+        const kairo::renderer::detail::PreparedVulkanFrustum prepared(v,p);
+        const bool culled = prepared.Outside(box,m);
+        Check(!culled || referenceCulled, "Prepared support rejected a reference-visible box");
+        if (referenceCulled) ++rejected;
+        if (culled) ++preparedRejected;
         for (unsigned j = 0; j < 32; ++j)
         {
             std::array<float,4> point{};
@@ -95,7 +99,14 @@ int main()
             ++samples;
         }
     }
-    Check(rejected > 1000, "Culling test is vacuous");
+    Check(rejected > 1000 && preparedRejected > 1000, "Culling test is vacuous");
+    const kairo::renderer::detail::PreparedVulkanFrustum prepared(identity, identity);
+    Check(!prepared.Outside(box,tangent), "Prepared support culled tangent box");
+    Check(!prepared.Outside(box,invalid), "Prepared support failed open on invalid model");
+    auto extreme = identity;
+    extreme.Data[0] = 1.0e20f;
+    Check(!prepared.Outside(box,extreme), "Prepared support rejected extreme model");
     std::cout << samples << " clip-space samples; " << rejected <<
-        " rejected boxes; boundary, reflection, eye crossing and fail-open passed\n";
+        " reference-rejected boxes; " << preparedRejected <<
+        " prepared rejections; conservative support and fail-open passed\n";
 }

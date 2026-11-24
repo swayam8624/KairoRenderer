@@ -862,13 +862,14 @@ export namespace kairo::renderer
             const auto view = m_Camera.View();
             const auto extent = m_Viewport.Extent();
             const auto projection = m_Camera.Projection(extent.width, extent.height);
+            const detail::PreparedVulkanFrustum frustum(view, projection);
             m_Visible.resize(m_Draws.size());
             for (std::size_t index = 0u; index < m_Draws.size(); ++index)
             {
                 const auto& draw = m_Draws[index];
                 const auto& mesh = m_Meshes.at(draw.Mesh);
                 m_Visible[index] = static_cast<std::uint8_t>(mesh.RequiredJoints > 0u ||
-                    !detail::OutsideVulkanFrustum(mesh.Bounds, draw.Model, view, projection));
+                    !frustum.Outside(mesh.Bounds, draw.Model));
             }
         }
 
