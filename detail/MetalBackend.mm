@@ -359,6 +359,12 @@ vertex float4 shadow_vertex(uint id [[vertex_id]], const device VertexIn* vertic
     return frame.lightViewProjection * draw.model *
         float4(float3(vertices[id].position),1.0);
 }
+vertex float4 instanced_shadow_vertex(uint id [[vertex_id]], uint instance [[instance_id]],
+    const device VertexIn* vertices [[buffer(0)]], constant Frame& frame [[buffer(1)]],
+    const device float4x4* models [[buffer(5)]]) {
+    return frame.lightViewProjection * models[instance] *
+        float4(float3(vertices[id].position),1.0);
+}
 vertex float4 skinned_shadow_vertex(uint id [[vertex_id]],
     const device VertexIn* vertices [[buffer(0)]], constant Frame& frame [[buffer(1)]],
     constant Draw& draw [[buffer(2)]], const device SkinInfluence* influences [[buffer(3)]],
@@ -392,6 +398,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
         id<MTLRenderPipelineState> BlendPipeline = nil;
         id<MTLRenderPipelineState> SkinnedBlendPipeline = nil;
         id<MTLRenderPipelineState> ShadowPipeline = nil;
+        id<MTLRenderPipelineState> InstancedShadowPipeline = nil;
         id<MTLRenderPipelineState> SkinnedShadowPipeline = nil;
         id<MTLRenderPipelineState> DebugPipeline = nil;
         id<MTLRenderPipelineState> PresentPipeline = nil;
@@ -520,6 +527,11 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             shadow.vertexFunction = function(@"shadow_vertex"); shadow.depthAttachmentPixelFormat = DepthFormat;
             ShadowPipeline = [Device newRenderPipelineStateWithDescriptor:shadow error:&error];
             if (ShadowPipeline == nil) throw std::runtime_error(ErrorText(@"Metal shadow pipeline creation failed", error));
+            MTLRenderPipelineDescriptor* instancedShadow = [shadow copy];
+            instancedShadow.vertexFunction = function(@"instanced_shadow_vertex");
+            InstancedShadowPipeline = [Device newRenderPipelineStateWithDescriptor:instancedShadow error:&error];
+            if (InstancedShadowPipeline == nil)
+                throw std::runtime_error(ErrorText(@"Metal instanced shadow pipeline creation failed", error));
             MTLRenderPipelineDescriptor* skinnedShadow = [shadow copy];
             skinnedShadow.vertexFunction = function(@"skinned_shadow_vertex");
             SkinnedShadowPipeline = [Device newRenderPipelineStateWithDescriptor:skinnedShadow error:&error];
@@ -703,6 +715,44 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             const SkinUpload& upload)
         {
             if (frameUniforms.ShadowsEnabled == 0u) return;
+            // Shadow eligibility is independent of CameraVisible. The light
+            // may see casters entirely outside the camera's clip volume.
+            std::vector<std::size_t> indices;
+            std::vector<InstanceRun> runs;
+            PlanIndexedInstanceRuns(frame.Draws,
+                [](std::size_t,const MetalDraw& draw)
+                { return draw.CastShadows && draw.Material.AlphaMode != 3u; },
+                MetalInstanceEligible, MetalInstanceCompatible,indices,runs);
+            constexpr std::size_t modelBytes = 16u * sizeof(float);
+            std::vector<std::size_t> offsets(runs.size(),0u);
+            std::size_t total = 0u;
+            for (std::size_t i=0;i<runs.size();++i)
+            {
+                if (runs[i].Count <= 1u) continue;
+                constexpr auto max = std::numeric_limits<std::size_t>::max();
+                if (total > max-255u || runs[i].Count > max/modelBytes)
+                    throw std::length_error("Metal shadow instance buffer overflow.");
+                total = (total+255u) & ~std::size_t{255u};
+                offsets[i] = total;
+                const auto bytes=static_cast<std::size_t>(runs[i].Count)*modelBytes;
+                if (total > max-bytes) throw std::length_error("Metal shadow instance buffer overflow.");
+                total += bytes;
+            }
+            id<MTLBuffer> models = nil;
+            if (total != 0u)
+            {
+                models = [Device newBufferWithLength:total options:MTLResourceStorageModeShared];
+                if (models == nil) throw std::runtime_error("Metal shadow instance allocation failed.");
+                auto* destination = static_cast<std::byte*>([models contents]);
+                for (std::size_t i=0;i<runs.size();++i)
+                    if (runs[i].Count>1u)
+                        for (std::size_t j=0;j<runs[i].Count;++j)
+                        {
+                            float matrix[16]{};
+                            Transpose(frame.Draws[indices[runs[i].First+j]].Model,matrix,4u);
+                            std::memcpy(destination+offsets[i]+j*modelBytes,matrix,modelBytes);
+                        }
+            }
             MTLRenderPassDescriptor* pass =
                 [MTLRenderPassDescriptor renderPassDescriptor];
             pass.depthAttachment.texture = ShadowDepth;
@@ -720,16 +770,19 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 length:sizeof(frameUniforms) atIndex:1];
             id<MTLRenderPipelineState> boundPipeline = nil;
             std::optional<std::uint64_t> boundMesh;
-            for (std::size_t drawIndex = 0u; drawIndex < frame.Draws.size(); ++drawIndex)
+            for (std::size_t runIndex=0;runIndex<runs.size();++runIndex)
             {
+                const auto run=runs[runIndex];
+                const auto drawIndex=indices[run.First];
                 const auto& draw = frame.Draws[drawIndex];
-                if (!draw.CastShadows || draw.Material.AlphaMode == 3u) continue;
+                const bool instanced=run.Count>1u;
                 const auto mesh = Meshes.find(draw.Mesh);
                 if (mesh == Meshes.end())
                     throw std::out_of_range(
                         "Metal shadow draw references an unknown mesh handle.");
                 const bool skinned = mesh->second.Skinning != nil;
-                const id<MTLRenderPipelineState> pipeline = skinned ? SkinnedShadowPipeline : ShadowPipeline;
+                const id<MTLRenderPipelineState> pipeline = instanced ? InstancedShadowPipeline :
+                    skinned ? SkinnedShadowPipeline : ShadowPipeline;
                 if (boundPipeline != pipeline)
                 {
                     [encoder setRenderPipelineState:pipeline];
@@ -741,11 +794,14 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                     [encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];
                     boundMesh = draw.Mesh;
                 }
-                [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];
+                if (instanced)
+                    [encoder setVertexBuffer:models offset:offsets[runIndex] atIndex:5];
+                else
+                    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];
                 if (skinned) BindSkin(encoder, mesh->second, draw, upload, drawIndex);
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                     indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32
-                    indexBuffer:mesh->second.Indices indexBufferOffset:0];
+                    indexBuffer:mesh->second.Indices indexBufferOffset:0 instanceCount:run.Count];
             }
             [encoder endEncoding];
         }
