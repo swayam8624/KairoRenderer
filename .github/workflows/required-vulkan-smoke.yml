@@ -24,7 +24,7 @@ jobs:
       - name: Install compiler, X11 surface, Vulkan software driver and validation
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang ninja-build libglfw3-dev libvulkan-dev glslang-tools xvfb xauth mesa-vulkan-drivers vulkan-tools vulkan-validationlayers
+          sudo apt-get install -y clang ninja-build libglfw3-dev libvulkan-dev glslang-tools xvfb xauth mesa-vulkan-drivers vulkan-tools vulkan-validationlayers xdotool imagemagick
       - name: Select Lavapipe explicitly and inspect runtime
         run: |
           set -euo pipefail
@@ -37,7 +37,7 @@ jobs:
       - name: Build exact native smoke executables
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=OFF
-          cmake --build build --parallel 2 --target KairoRendererVulkanSkinningSmoke KairoRendererVulkanInstancingSmoke
+          cmake --build build --parallel 2 --target KairoRendererVulkanSkinningSmoke KairoRendererVulkanInstancingSmoke KairoRendererVulkanPresentationSmoke
       - name: Require actual rendering, readback, picking and shadows
         run: |
           set -euo pipefail
@@ -51,6 +51,12 @@ jobs:
               exit 1
             fi
           done
+      - name: Verify actual visible game window, not just viewport readback
+        run: |
+          set -euo pipefail
+          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" bash scripts/verify_vulkan_presentation.sh build 2>&1 | tee build/diagnostics/presentation.log
+          if grep -E 'Validation Error|VUID-.*ERROR|UNASSIGNED-.*ERROR' build/diagnostics/presentation.log; then exit 1; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

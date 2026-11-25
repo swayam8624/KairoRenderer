@@ -189,7 +189,17 @@ add_custom_command(
     COMMAND "${GLSLANG_VALIDATOR}" -V -DKAIRO_INSTANCED=1 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_shadow.vert.spv"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/shadow.vert"
     VERBATIM)
+foreach(stage vert frag)
+    add_custom_command(
+        OUTPUT "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/viewport_present.${stage}.spv"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+        COMMAND "${GLSLANG_VALIDATOR}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/viewport_present.${stage}" -o "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/viewport_present.${stage}.spv"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/viewport_present.${stage}"
+        VERBATIM)
+endforeach()
 add_custom_target(KairoRendererShaders DEPENDS
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/viewport_present.vert.spv"
+    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/viewport_present.frag.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_shadow.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.vert.spv"
     "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.frag.spv"
@@ -442,6 +452,9 @@ if(KAIRO_RENDERER_BUILD_TESTS)
             COMMAND KairoRendererVulkanSkinningSmoke)
         set_tests_properties(KairoRendererVulkanSkinningSmoke PROPERTIES
             SKIP_RETURN_CODE 77)
+        add_executable(KairoRendererVulkanPresentationSmoke tests/VulkanPresentationSmoke.cpp)
+        target_link_libraries(KairoRendererVulkanPresentationSmoke PRIVATE KairoRenderer)
+        set_property(TARGET KairoRendererVulkanPresentationSmoke PROPERTY COMPILE_WARNING_AS_ERROR ON)
         add_executable(KairoRendererVulkanInstancingSmoke tests/VulkanInstancingSmoke.cpp)
         target_link_libraries(KairoRendererVulkanInstancingSmoke PRIVATE KairoRenderer)
         set_property(TARGET KairoRendererVulkanInstancingSmoke PROPERTY COMPILE_WARNING_AS_ERROR ON)
