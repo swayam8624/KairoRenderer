@@ -109,10 +109,10 @@ int main()
                 throw std::runtime_error("Viewport overlay changed outside its rectangles");
         }
         if(pick(24u)!=leftID)throw std::runtime_error("Viewport overlay changed picking identity");
-        bool rejected=false;
+        bool overlayRejected=false;
         try{runtime.SetVulkanViewportOverlay({{0,0,1,1,{2.f,0.f,0.f}}});}
-        catch(const std::invalid_argument&){rejected=true;}
-        if(!rejected||render(false).RGBA!=ui.RGBA)
+        catch(const std::invalid_argument&){overlayRejected=true;}
+        if(!overlayRejected||render(false).RGBA!=ui.RGBA)
             throw std::runtime_error("Invalid overlay changed previous submission");
         runtime.SetVulkanViewportOverlay({});
         if(render(false).RGBA!=baseline.RGBA)
