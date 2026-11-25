@@ -1,0 +1,85 @@
+#include <cmath>
+#include <cstddef>
+#include <exception>
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+
+import Kairo.Renderer;
+import Kairo.Foundation.Math;
+
+int main()
+{
+    try
+    {
+        using namespace kairo::renderer;
+        using kairo::foundation::math::MakeTranslation;
+        using kairo::foundation::math::Vec3f;
+        WindowDesc window{"Metal instancing smoke",96u,96u,false};
+        window.Backend=GraphicsBackend::Metal;
+        RendererRuntime runtime(window);
+        if(runtime.Backend()!=GraphicsBackend::Metal)
+            throw std::runtime_error("Expected native Metal backend");
+        runtime.ResizeViewport(96u,96u);
+        CameraPose camera;
+        camera.Position={0.f,0.f,5.f};
+        camera.Target={};
+        camera.Projection=CameraProjectionMode::Orthographic;
+        camera.OrthographicSize=4.f;
+        runtime.SetCameraPose(camera);
+        runtime.SetViewportShadingMode(ViewportShadingMode::Unlit);
+        const auto geometry=Mesh::MakeCube();
+        const auto shared=runtime.CreateMesh(geometry), separate=runtime.CreateMesh(geometry);
+        constexpr unsigned left=0x12345678u,right=0xDEADBEEFu;
+        const auto capture=[&](bool instanced)
+        {
+            RenderScene scene;
+            MeshDraw draw;
+            draw.Mesh=shared; draw.Model=MakeTranslation(Vec3f{-1.f,0.f,0.f});
+            draw.ObjectID=left; draw.CastShadows=false;
+            scene.Add(draw);
+            draw.Mesh=instanced?shared:separate;
+            draw.Model=MakeTranslation(Vec3f{1.f,0.f,0.f});
+            draw.ObjectID=right;draw.ReceiveShadows=false;
+            scene.Add(draw);
+            runtime.SubmitRenderScene(scene);
+            runtime.RequestViewportCapture();
+            runtime.DrawFrame();
+            auto image=runtime.TakeViewportCapture();
+            if(!image || !image->IsVisuallyNonUniform())
+                throw std::runtime_error("Metal image was not captured");
+            return *image;
+        };
+        const auto baseline=capture(false), batched=capture(true);
+        if(baseline.Width!=batched.Width || baseline.Height!=batched.Height ||
+           baseline.RGBA.size()!=batched.RGBA.size())
+            throw std::runtime_error("Instanced image dimensions changed");
+        for(std::size_t i=0;i<baseline.RGBA.size();++i)
+            if(std::abs(static_cast<int>(baseline.RGBA[i])-static_cast<int>(batched.RGBA[i]))>1)
+                throw std::runtime_error("Metal instancing changed visible image");
+        const auto pick=[&](unsigned x)
+        {
+            runtime.RequestViewportPick(x,48);
+            runtime.DrawFrame();
+            const auto id=runtime.TakeViewportPickResult();
+            if(!id)throw std::runtime_error("Missing Metal pick result");
+            return *id;
+        };
+        if(pick(24)!=left || pick(72)!=right)
+            throw std::runtime_error("Metal instancing lost per-instance IDs");
+        if(capture(false).RGBA!=baseline.RGBA)
+            throw std::runtime_error("Ordinary path changed after Metal instancing");
+        std::cout<<"Metal native instanced image, independent picking and fallback passed\n";
+        return 0;
+    }
+    catch(const kairo::renderer::PresentationUnavailableError& e)
+    {
+        std::cerr<<"Metal presentation unavailable: "<<e.what()<<'\n';
+        return 77;
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr<<"Metal instancing smoke failed: "<<e.what()<<'\n';
+        return 1;
+    }
+}
