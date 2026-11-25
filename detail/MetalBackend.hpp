@@ -87,6 +87,8 @@ namespace kairo::renderer::detail
         float Normal[9]{};
         MetalMaterial Material{};
         std::uint32_t CastShadows = 1u;
+        // Camera culling must not remove a caster from the light pass.
+        bool CameraVisible = true;
         // Borrowed only for the synchronous Draw() encoding call. Matrices are
         // already column-major and are copied into Metal command data before
         // Draw returns.

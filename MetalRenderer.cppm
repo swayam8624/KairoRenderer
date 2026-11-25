@@ -2,6 +2,7 @@ module;
 
 #include "detail/MetalBackend.hpp"
 #include "detail/NativeResourcePublication.hpp"
+#include "detail/VulkanFrustumBounds.hpp"
 
 #include <algorithm>
 #include <array>
@@ -54,7 +55,8 @@ export namespace kairo::renderer
         ShowcaseCamera m_Camera;
         DirectionalShadowSettings m_ShadowSettings;
         ViewportShadingMode m_ShadingMode = ViewportShadingMode::Lit;
-        std::unordered_map<MeshHandle, std::size_t> m_Meshes;
+        struct MeshInfo { std::size_t RequiredJoints; detail::LocalBounds Bounds; };
+        std::unordered_map<MeshHandle, MeshInfo> m_Meshes;
         std::unordered_set<TextureHandle> m_Textures;
         std::vector<MeshDraw> m_Draws;
         std::vector<RenderLight> m_Lights;
@@ -106,6 +108,12 @@ export namespace kairo::renderer
             }
             m_Backend.SetDrawableSize(windowWidth, windowHeight);
 
+            const auto view = m_Camera.View();
+            auto projection = m_Camera.Projection(m_ViewportWidth, m_ViewportHeight);
+            projection(1u, 1u) *= -1.0f;
+            // Both Metal and Vulkan use homogeneous z in [0,w]. Use the
+            // exact Metal projection including its Y flip; fail open for skin.
+            const detail::PreparedVulkanFrustum frustum(view,projection);
             std::vector<detail::MetalDraw> draws;
             draws.reserve(m_Draws.size());
             // Inner vectors own their heap allocations independently, so the
@@ -116,6 +124,9 @@ export namespace kairo::renderer
             for (const MeshDraw& draw : m_Draws)
             {
                 detail::MetalDraw converted = Convert(draw);
+                const auto& mesh = m_Meshes.at(draw.Mesh);
+                converted.CameraVisible = mesh.RequiredJoints > 0u ||
+                    !frustum.Outside(mesh.Bounds,draw.Model);
                 if (!draw.Skinning.Empty())
                 {
                     skinPalettes.emplace_back(draw.Skinning.Size() * 16u, 0.0f);
@@ -139,10 +150,7 @@ export namespace kairo::renderer
             frame.Draws = draws;
             frame.Lights = lights;
             frame.DebugVertices = m_DebugVertices;
-            Copy(m_Camera.View(), frame.View);
-            auto projection =
-                m_Camera.Projection(m_ViewportWidth, m_ViewportHeight);
-            projection(1u, 1u) *= -1.0f;
+            Copy(view, frame.View);
             Copy(projection, frame.Projection);
             Copy(BuildLightViewProjection(), frame.LightViewProjection);
             const auto camera = m_Camera.Position();
@@ -255,10 +263,12 @@ export namespace kairo::renderer
             if (mesh.RequiredJointCount() > MaximumSkinJoints)
                 throw std::length_error(
                     "Metal skinned mesh exceeds the portable joint limit.");
+            detail::LocalBounds bounds;
             std::vector<detail::MetalVertex> vertices;
             vertices.reserve(mesh.Vertices().size());
             for (const MeshVertex& vertex : mesh.Vertices())
             {
+                bounds.Include(vertex.Position);
                 detail::MetalVertex converted{};
                 Copy(vertex.Position, converted.Position);
                 Copy(vertex.Color, converted.Color);
@@ -284,9 +294,9 @@ export namespace kairo::renderer
             // backend-owned buffers instead of leaving an unindexed GPU leak.
             return detail::CreateAndPublishNativeResource<MeshHandle>(
                 [&] { return m_Backend.CreateMesh(vertices, mesh.Indices(), skinning); },
-                [this, &mesh](MeshHandle handle)
+                [this, &mesh, &bounds](MeshHandle handle)
                 {
-                    if (!m_Meshes.emplace(handle, mesh.RequiredJointCount()).second)
+                    if (!m_Meshes.emplace(handle, MeshInfo{mesh.RequiredJointCount(),bounds}).second)
                         throw std::logic_error("Metal reused a live mesh handle.");
                 },
                 [this](MeshHandle handle) { m_Backend.DestroyMesh(handle); });
@@ -363,7 +373,7 @@ export namespace kairo::renderer
                 if (!m_Meshes.contains(draw.Mesh))
                     throw std::invalid_argument(
                         "RenderScene references a Metal mesh owned by another runtime.");
-                const std::size_t requiredJoints = m_Meshes.at(draw.Mesh);
+                const std::size_t requiredJoints = m_Meshes.at(draw.Mesh).RequiredJoints;
                 if (requiredJoints > 0u)
                 {
                     if (draw.Skinning.Size() < requiredJoints)

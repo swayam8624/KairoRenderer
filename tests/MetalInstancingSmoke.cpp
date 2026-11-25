@@ -90,7 +90,33 @@ int main()
         runtime.SubmitDebugDraw(debug);
         if(capture(false).RGBA!=baseline.RGBA)
             throw std::runtime_error("Debug geometry persisted after clearing");
-        std::cout<<"Metal native instanced image, independent picking, large debug batch and fallback passed\n";
+        // Add offscreen geometry between otherwise compatible draws. It
+        // must not change the visible image or disappear permanently when
+        // the camera moves. Preserve its full picking ID.
+        RenderScene sparse;
+        MeshDraw draw;
+        draw.Mesh=shared; draw.CastShadows=false;
+        draw.Model=MakeTranslation(Vec3f{-1.f,0.f,0.f}); draw.ObjectID=left;
+        sparse.Add(draw);
+        draw.Model=MakeTranslation(Vec3f{20.f,0.f,0.f}); draw.ObjectID=0xCAFEBABEu;
+        sparse.Add(draw);
+        draw.Model=MakeTranslation(Vec3f{1.f,0.f,0.f}); draw.ObjectID=right;
+        draw.ReceiveShadows=false; sparse.Add(draw);
+        runtime.SubmitRenderScene(sparse);
+        runtime.RequestViewportCapture();
+        runtime.DrawFrame();
+        const auto sparseCapture=runtime.TakeViewportCapture();
+        if(!sparseCapture || sparseCapture->RGBA!=baseline.RGBA)
+            throw std::runtime_error("Metal camera culling changed visible image");
+        auto movedCamera=camera;
+        movedCamera.Position.x=20.f; movedCamera.Target.x=20.f;
+        runtime.SetCameraPose(movedCamera);
+        if(pick(48)!=0xCAFEBABEu)
+            throw std::runtime_error("Metal camera visibility did not refresh");
+        runtime.SetCameraPose(camera);
+        if(pick(24)!=left || pick(72)!=right)
+            throw std::runtime_error("Metal camera return lost original IDs");
+        std::cout<<"Metal native instancing, picking, debug and camera visibility passed\n";
         return 0;
     }
     catch(const kairo::renderer::PresentationUnavailableError& e)
