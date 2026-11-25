@@ -355,11 +355,11 @@ export namespace kairo::renderer
             // picking IDs. Capture and viewport sampling see the same UI.
             for(const auto& rect:m_ViewportOverlay)
             {
-                const auto extent=m_Viewport.Extent();
-                const auto x0=std::clamp<std::int64_t>(rect.X,0,extent.width);
-                const auto y0=std::clamp<std::int64_t>(rect.Y,0,extent.height);
-                const auto x1=std::clamp<std::int64_t>(std::int64_t(rect.X)+rect.Width,0,extent.width);
-                const auto y1=std::clamp<std::int64_t>(std::int64_t(rect.Y)+rect.Height,0,extent.height);
+                const auto overlayExtent=m_Viewport.Extent();
+                const auto x0=std::clamp<std::int64_t>(rect.X,0,overlayExtent.width);
+                const auto y0=std::clamp<std::int64_t>(rect.Y,0,overlayExtent.height);
+                const auto x1=std::clamp<std::int64_t>(std::int64_t(rect.X)+rect.Width,0,overlayExtent.width);
+                const auto y1=std::clamp<std::int64_t>(std::int64_t(rect.Y)+rect.Height,0,overlayExtent.height);
                 if(x1<=x0||y1<=y0)continue;
                 VkClearAttachment attachment{};
                 attachment.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
