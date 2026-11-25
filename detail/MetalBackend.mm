@@ -383,6 +383,7 @@ fragment float4 debug_fragment(DebugOut in [[stage_in]]) { return in.color; }
 struct FullscreenOut { float4 position [[position]]; float2 uv; };
 vertex FullscreenOut fullscreen_vertex(uint id [[vertex_id]]) { float2 p=float2((id<<1)&2,id&2); FullscreenOut o; o.position=float4(p*2.0-1.0,0,1); o.uv=float2(p.x,1.0-p.y); return o; }
 fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<float> source [[texture(0)]]) { constexpr sampler s(filter::linear,address::clamp_to_edge); return source.sample(s,in.uv); }
+fragment float4 viewport_ui_fragment(constant float4& color [[buffer(0)]]) { return color; }
 )metal";
     }
 
@@ -401,6 +402,8 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
         id<MTLRenderPipelineState> InstancedShadowPipeline = nil;
         id<MTLRenderPipelineState> SkinnedShadowPipeline = nil;
         id<MTLRenderPipelineState> DebugPipeline = nil;
+        id<MTLRenderPipelineState> ViewportUIPipeline = nil;
+        id<MTLDepthStencilState> ViewportUIDepth = nil;
         id<MTLRenderPipelineState> PresentPipeline = nil;
         id<MTLDepthStencilState> DepthState = nil;
         id<MTLDepthStencilState> NoWriteDepthState = nil;
@@ -547,6 +550,16 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             debug.depthAttachmentPixelFormat=DepthFormat;
             DebugPipeline=[Device newRenderPipelineStateWithDescriptor:debug error:&error];
             if(DebugPipeline==nil) throw std::runtime_error(ErrorText(@"Metal debug pipeline creation failed",error));
+            MTLRenderPipelineDescriptor* ui=[debug copy];
+            ui.vertexFunction=function(@"fullscreen_vertex");
+            ui.fragmentFunction=function(@"viewport_ui_fragment");
+            ViewportUIPipeline=[Device newRenderPipelineStateWithDescriptor:ui error:&error];
+            if(ViewportUIPipeline==nil)throw std::runtime_error(ErrorText(@"Metal viewport UI pipeline creation failed",error));
+            MTLDepthStencilDescriptor* uiDepth=[MTLDepthStencilDescriptor new];
+            uiDepth.depthCompareFunction=MTLCompareFunctionAlways;
+            uiDepth.depthWriteEnabled=NO;
+            ViewportUIDepth=[Device newDepthStencilStateWithDescriptor:uiDepth];
+            if(ViewportUIDepth==nil)throw std::runtime_error("Metal viewport UI depth state creation failed.");
             MTLRenderPipelineDescriptor* present=[MTLRenderPipelineDescriptor new];
             present.vertexFunction=function(@"fullscreen_vertex"); present.fragmentFunction=function(@"fullscreen_fragment");
             present.colorAttachments[0].pixelFormat=Layer.pixelFormat;
@@ -963,6 +976,30 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 [encoder setVertexBuffer:debugBuffer offset:0 atIndex:0];
                 [encoder setVertexBytes:&frameUniforms length:sizeof(frameUniforms) atIndex:1];
                 [encoder drawPrimitives:MTLPrimitiveTypeLine vertexStart:0 vertexCount:frame.DebugVertices.size()];
+            }
+            // Draw a fullscreen triangle clipped to each physical pixel
+            // rectangle. The color-only pipeline disables object-ID writes,
+            // and its depth state always passes without writing depth.
+            if(!frame.ViewportOverlay.empty())
+            {
+                [encoder setRenderPipelineState:ViewportUIPipeline];
+                [encoder setDepthStencilState:ViewportUIDepth];
+                [encoder setCullMode:MTLCullModeNone];
+                const auto width=static_cast<std::int64_t>(ViewportColor.width);
+                const auto height=static_cast<std::int64_t>(ViewportColor.height);
+                for(const auto& rect:frame.ViewportOverlay)
+                {
+                    const auto x0=std::clamp<std::int64_t>(rect.X,0,width);
+                    const auto y0=std::clamp<std::int64_t>(rect.Y,0,height);
+                    const auto x1=std::clamp<std::int64_t>(std::int64_t(rect.X)+rect.Width,0,width);
+                    const auto y1=std::clamp<std::int64_t>(std::int64_t(rect.Y)+rect.Height,0,height);
+                    if(x1<=x0||y1<=y0)continue;
+                    const MTLScissorRect scissor{static_cast<NSUInteger>(x0),static_cast<NSUInteger>(y0),
+                        static_cast<NSUInteger>(x1-x0),static_cast<NSUInteger>(y1-y0)};
+                    [encoder setScissorRect:scissor];
+                    [encoder setFragmentBytes:rect.Color length:sizeof(rect.Color) atIndex:0];
+                    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+                }
             }
             [encoder endEncoding];
         }

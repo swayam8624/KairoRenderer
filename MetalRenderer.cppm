@@ -62,6 +62,7 @@ export namespace kairo::renderer
         std::vector<RenderLight> m_Lights;
         RenderEnvironment m_Environment;
         std::vector<detail::MetalDebugVertex> m_DebugVertices;
+        std::vector<detail::MetalViewportOverlayRect> m_ViewportOverlay;
         std::uint32_t m_ViewportWidth = 1u;
         std::uint32_t m_ViewportHeight = 1u;
         std::uint64_t m_ViewportGeneration = 1u;
@@ -150,6 +151,7 @@ export namespace kairo::renderer
             frame.Draws = draws;
             frame.Lights = lights;
             frame.DebugVertices = m_DebugVertices;
+            frame.ViewportOverlay = m_ViewportOverlay;
             Copy(view, frame.View);
             Copy(projection, frame.Projection);
             Copy(BuildLightViewProjection(), frame.LightViewProjection);
@@ -458,6 +460,22 @@ export namespace kairo::renderer
         {
             return { m_Backend.Device() };
         }
+        void SetViewportOverlay(const std::vector<ViewportOverlayRect>& rects)
+        {
+            if(rects.size()>4096u)throw std::length_error("Viewport overlay rectangle limit.");
+            std::vector<detail::MetalViewportOverlayRect> next;
+            next.reserve(rects.size());
+            for(const auto& rect:rects)
+            {
+                for(float channel:rect.Color)
+                    if(!std::isfinite(channel)||channel<0.f||channel>1.f)
+                        throw std::invalid_argument("Invalid viewport overlay color.");
+                next.push_back({rect.X,rect.Y,rect.Width,rect.Height,
+                    {rect.Color[0],rect.Color[1],rect.Color[2],1.f}});
+            }
+            m_ViewportOverlay.swap(next);
+        }
+
         void SetOverlayRecorder(MetalOverlayRecorder recorder)
         {
             m_Backend.SetOverlayRecorder(std::move(recorder));

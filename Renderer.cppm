@@ -340,7 +340,28 @@ export namespace kairo::renderer
             return Vulkan().ViewportTexture();
         }
 
-        // Explicit Vulkan-only capability until native counterparts exist.
+        // Native opaque screen-space UI on Vulkan and Metal. Explicit
+        // capability reporting keeps unsupported backends from silently
+        // falling back to a different graphics API.
+        [[nodiscard]] bool SupportsViewportOverlay() const noexcept
+        {
+            if(Backend()==GraphicsBackend::Vulkan)return true;
+#if defined(KAIRO_RENDERER_HAS_METAL_BACKEND)
+            if(Backend()==GraphicsBackend::Metal)return true;
+#endif
+            return false;
+        }
+
+        void SetViewportOverlay(const std::vector<ViewportOverlayRect>& rects)
+        {
+            if(Backend()==GraphicsBackend::Vulkan){Vulkan().SetViewportOverlay(rects);return;}
+#if defined(KAIRO_RENDERER_HAS_METAL_BACKEND)
+            if(Backend()==GraphicsBackend::Metal){Metal().SetViewportOverlay(rects);return;}
+#endif
+            throw std::logic_error("Native viewport overlay unavailable on selected backend.");
+        }
+
+        // Explicit Vulkan-only entry retained for existing callers.
         // Unlike tooling overlays, this is part of captured scene color.
         void SetVulkanViewportOverlay(const std::vector<ViewportOverlayRect>& rects)
         {
