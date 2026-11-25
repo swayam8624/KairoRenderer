@@ -141,6 +141,7 @@ export namespace kairo::renderer
                     nativeFailureBeforeAcquire = true;
                     throw std::runtime_error("vkWaitForFences failed.");
                 }
+                m_Triangle.ReleaseCompletedMeshes();
                 CompleteViewportPick();
                 CompleteViewportCapture();
             });
@@ -351,15 +352,20 @@ export namespace kairo::renderer
         }
 
         /// Input: a handle returned by CreateMesh.
-        /// Task: wait for outstanding GPU use, remove pending draws that
-        /// reference the handle, and release its buffers deterministically.
+        /// Task: detach the public handle immediately; release native buffers
+        /// after the existing one-frame completion fence. The bounded journal
+        /// falls back to an idle wait only if it fills (e.g. no frames drawn).
         void DestroyMesh(MeshHandle mesh)
         {
-            const VkResult idle = vkDeviceWaitIdle(m_Device.Handle());
-            if (idle == VK_ERROR_DEVICE_LOST)
-                m_Device.MarkUnusable(); // lost-device resources are no longer in-use
-            else if (idle != VK_SUCCESS)
-                throw std::runtime_error("vkDeviceWaitIdle failed before mesh destruction.");
+            if (m_Triangle.MeshRetirementFull())
+            {
+                const VkResult idle = vkDeviceWaitIdle(m_Device.Handle());
+                if (idle == VK_ERROR_DEVICE_LOST)
+                    m_Device.MarkUnusable();
+                else if (idle != VK_SUCCESS)
+                    throw std::runtime_error("vkDeviceWaitIdle failed before mesh retirement.");
+                m_Triangle.ReleaseCompletedMeshes();
+            }
             m_Triangle.DestroyMesh(mesh);
         }
 
@@ -638,6 +644,7 @@ export namespace kairo::renderer
             // retire generations with per-frame fences instead.
             if (vkDeviceWaitIdle(m_Device.Handle()) != VK_SUCCESS)
                 throw std::runtime_error("vkDeviceWaitIdle failed before swapchain recreation.");
+            m_Triangle.ReleaseCompletedMeshes();
             m_Triangle.ReleaseSwapchainResources();
             m_Swapchain.Recreate(m_Window);
             m_Sync.Recreate(static_cast<std::uint32_t>(m_Swapchain.Images().size()));
