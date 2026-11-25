@@ -69,7 +69,28 @@ int main()
             throw std::runtime_error("Metal instancing lost per-instance IDs");
         if(capture(false).RGBA!=baseline.RGBA)
             throw std::runtime_error("Ordinary path changed after Metal instancing");
-        std::cout<<"Metal native instanced image, independent picking and fallback passed\n";
+        // More than 4 KiB of line vertices; draw across the front faces,
+        // verify color changes but the underlying object remains pickable.
+        DebugDrawList debug;
+        for(unsigned i=0;i<256;++i)
+        {
+            const float y=-.9f+1.8f*static_cast<float>(i)/255.f;
+            debug.AddLine(Vec3f{-1.8f,y,1.5f},Vec3f{1.8f,y,1.5f},
+                DebugColor{1.f,1.f,1.f,1.f});
+        }
+        runtime.SubmitDebugDraw(debug);
+        runtime.RequestViewportCapture();
+        runtime.DrawFrame();
+        auto withDebug=runtime.TakeViewportCapture();
+        if(!withDebug || withDebug->RGBA==baseline.RGBA)
+            throw std::runtime_error("Large Metal debug batch did not alter rendered pixels");
+        if(pick(24)!=left || pick(72)!=right)
+            throw std::runtime_error("Debug rendering changed scene object IDs");
+        debug.Clear();
+        runtime.SubmitDebugDraw(debug);
+        if(capture(false).RGBA!=baseline.RGBA)
+            throw std::runtime_error("Debug geometry persisted after clearing");
+        std::cout<<"Metal native instanced image, independent picking, large debug batch and fallback passed\n";
         return 0;
     }
     catch(const kairo::renderer::PresentationUnavailableError& e)

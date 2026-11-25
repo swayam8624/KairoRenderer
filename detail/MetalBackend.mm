@@ -527,7 +527,12 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 throw std::runtime_error(ErrorText(@"Metal skinned shadow pipeline creation failed", error));
             MTLRenderPipelineDescriptor* debug = [MTLRenderPipelineDescriptor new];
             debug.vertexFunction=function(@"debug_vertex"); debug.fragmentFunction=function(@"debug_fragment");
-            debug.colorAttachments[0].pixelFormat=ViewportColorFormat; debug.depthAttachmentPixelFormat=DepthFormat;
+            debug.colorAttachments[0].pixelFormat=ViewportColorFormat;
+            // The same render pass also owns the R32Uint picking attachment.
+            // Debug lines are visual aids, never independent pickable objects.
+            debug.colorAttachments[1].pixelFormat=ViewportIDFormat;
+            debug.colorAttachments[1].writeMask=MTLColorWriteMaskNone;
+            debug.depthAttachmentPixelFormat=DepthFormat;
             DebugPipeline=[Device newRenderPipelineStateWithDescriptor:debug error:&error];
             if(DebugPipeline==nil) throw std::runtime_error(ErrorText(@"Metal debug pipeline creation failed",error));
             MTLRenderPipelineDescriptor* present=[MTLRenderPipelineDescriptor new];
@@ -889,7 +894,21 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                     indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32
                     indexBuffer:mesh->second.Indices indexBufferOffset:0 instanceCount:run.Count];
             }
-            if(!frame.DebugVertices.empty()){[encoder setRenderPipelineState:DebugPipeline];[encoder setCullMode:MTLCullModeNone];[encoder setVertexBytes:frame.DebugVertices.data() length:frame.DebugVertices.size_bytes() atIndex:0];[encoder setVertexBytes:&frameUniforms length:sizeof(frameUniforms) atIndex:1];[encoder drawPrimitives:MTLPrimitiveTypeLine vertexStart:0 vertexCount:frame.DebugVertices.size()];}
+            if (!frame.DebugVertices.empty())
+            {
+                // Debug geometry routinely exceeds the 4 KiB inline-byte
+                // limit. Default retained command buffers own this immutable
+                // resource until GPU completion, without a synchronous wait.
+                id<MTLBuffer> debugBuffer = [Device newBufferWithBytes:frame.DebugVertices.data()
+                    length:frame.DebugVertices.size_bytes() options:MTLResourceStorageModeShared];
+                if (debugBuffer == nil) throw std::runtime_error("Metal debug buffer allocation failed.");
+                [encoder setRenderPipelineState:DebugPipeline];
+                [encoder setCullMode:MTLCullModeNone];
+                [encoder setDepthStencilState:NoWriteDepthState];
+                [encoder setVertexBuffer:debugBuffer offset:0 atIndex:0];
+                [encoder setVertexBytes:&frameUniforms length:sizeof(frameUniforms) atIndex:1];
+                [encoder drawPrimitives:MTLPrimitiveTypeLine vertexStart:0 vertexCount:frame.DebugVertices.size()];
+            }
             [encoder endEncoding];
         }
 
