@@ -6,6 +6,12 @@
 
 namespace kairo::renderer::detail
 {
+    // Independent light-pass predicate; camera visibility never participates.
+    [[nodiscard]] inline bool MetalShadowIncluded(std::size_t, const MetalDraw& draw) noexcept
+    {
+        return draw.CastShadows && draw.Material.AlphaMode != 3u;
+    }
+
     // Every fragment-visible material factor and every native texture/cull
     // binding must agree. Object ID, model and receive-shadow flags travel
     // in the instance stream instead. Do not batch skinned/masked/blended draws.

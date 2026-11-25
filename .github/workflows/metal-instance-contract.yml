@@ -1,7 +1,7 @@
 name: Metal instance contract
 on:
   push:
-    branches: [main, feat/metal-opaque-instancing]
+    branches: [main, feat/metal-opaque-instancing, feat/metal-shadow-instancing]
   pull_request:
     paths:
       - 'detail/MetalInstanceCompatibility.hpp'

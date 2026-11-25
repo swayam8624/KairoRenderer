@@ -116,7 +116,52 @@ int main()
         runtime.SetCameraPose(camera);
         if(pick(24)!=left || pick(72)!=right)
             throw std::runtime_error("Metal camera return lost original IDs");
-        std::cout<<"Metal native instancing, picking, debug and camera visibility passed\n";
+        // Both casters are outside the camera's horizontal clip planes, but
+        // the directional light sees them. Compare ordinary and instanced
+        // shadow commands, then prove the offscreen casters affected pixels.
+        runtime.SetViewportShadingMode(ViewportShadingMode::Lit);
+        const auto captureShadow = [&](bool instanced, bool cast)
+        {
+            RenderScene scene;
+            MeshDraw caster;
+            caster.Mesh = shared;
+            caster.Model = MakeTranslation(Vec3f{ 3.2f, 0.0f, 2.2f });
+            caster.CastShadows = cast;
+            scene.Add(caster);
+            caster.Mesh = instanced ? shared : separate;
+            caster.Model = MakeTranslation(Vec3f{ 3.2f, 0.0f, 3.4f });
+            scene.Add(caster);
+            MeshDraw receiver;
+            receiver.Mesh = shared;
+            receiver.CastShadows = false;
+            scene.Add(receiver);
+            RenderLight light;
+            light.Type = RenderLightType::Directional;
+            light.Direction = { 1.0f, 0.1f, 1.0f };
+            light.Intensity = 3.0f;
+            light.CastShadows = true;
+            scene.AddLight(light);
+            runtime.SubmitRenderScene(scene);
+            runtime.RequestViewportCapture();
+            runtime.DrawFrame();
+            auto image = runtime.TakeViewportCapture();
+            if (!image || !image->IsVisuallyNonUniform())
+                throw std::runtime_error("Missing shadow comparison image");
+            return *image;
+        };
+        const auto ordinaryShadow = captureShadow(false, true);
+        const auto instancedShadow = captureShadow(true, true);
+        const auto noShadow = captureShadow(true, false);
+        if (ordinaryShadow.RGBA.size() != instancedShadow.RGBA.size())
+            throw std::runtime_error("Instanced shadow image dimensions differ");
+        for (std::size_t i = 0; i < ordinaryShadow.RGBA.size(); ++i)
+            if (std::abs(static_cast<int>(ordinaryShadow.RGBA[i]) -
+                static_cast<int>(instancedShadow.RGBA[i])) > 1)
+                throw std::runtime_error("Instanced shadow differs from ordinary reference");
+        if (ordinaryShadow.RGBA == noShadow.RGBA)
+            throw std::runtime_error("Offscreen shadow casters had no visible effect");
+
+        std::cout<<"Metal native instancing, picking, debug, camera visibility and offscreen shadows passed\n";
         return 0;
     }
     catch(const kairo::renderer::PresentationUnavailableError& e)

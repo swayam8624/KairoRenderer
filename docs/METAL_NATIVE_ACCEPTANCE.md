@@ -21,12 +21,15 @@ Required observations:
 - Switching back to ordinary draws preserves the reference image.
 - A 256-line debug batch changes visible pixels without overwriting scene IDs.
 - Clearing the debug list restores the baseline.
+- Offscreen geometry leaves the camera image unchanged, then becomes pickable when the camera moves.
+- Instanced and separate shadow draws match; disabling offscreen casters changes visible receiver pixels.
 
 Retain the command logs in the build directory under `metal-smoke-diagnostics`.
 Inspect Metal validation diagnostics; the script checks process exit status, not
 all possible diagnostic messages. Record commit SHA, macOS version, compiler,
 GPU device and result. Physical-GPU performance benchmarks are a separate gate.
 
-Current limitations: shadow instancing and camera culling are not yet implemented
-on Metal; instance, debug and skeletal frame buffers are independently allocated
-rather than pooled across fence-retired frames.
+Current limitations: camera culling is linear on Metal; the static visibility BVH
+is not yet integrated. Main/shadow instance, debug and skeletal frame buffers are
+independently allocated rather than pooled across completed command buffers.
+The new camera and shadow fixtures require actual Apple execution before acceptance.
