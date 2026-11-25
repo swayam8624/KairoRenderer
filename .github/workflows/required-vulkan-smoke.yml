@@ -9,6 +9,9 @@ on:
       - 'detail/**'
       - 'tests/Vulkan*.cpp'
       - 'CMakeLists.txt'
+      - 'cmake/EmbedVulkanShaders.cmake'
+      - 'cmake/VulkanShaderManifest.cmake'
+      - 'tests/EmbeddedVulkanShaderTests.cpp'
       - '.github/workflows/required-vulkan-smoke.yml'
 permissions:
   contents: read
@@ -37,7 +40,9 @@ jobs:
       - name: Build exact native smoke executables
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIRO_RENDERER_BUILD_TESTS=ON -DKAIRO_RENDERER_BUILD_PHYSICS_BRIDGE=OFF
-          cmake --build build --parallel 2 --target KairoRendererVulkanSkinningSmoke KairoRendererVulkanInstancingSmoke KairoRendererVulkanPresentationSmoke
+          cmake --build build --parallel 2 --target KairoRendererVulkanSkinningSmoke KairoRendererVulkanInstancingSmoke KairoRendererVulkanPresentationSmoke KairoRendererEmbeddedVulkanShaderTests
+      - name: Compare embedded words with actual compiled SPIR-V
+        run: ./build/KairoRendererEmbeddedVulkanShaderTests build/shaders
       - name: Require actual rendering, readback, picking and shadows
         run: |
           set -euo pipefail
@@ -55,6 +60,9 @@ jobs:
         run: |
           set -euo pipefail
           export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          # Prove the game does not depend on the original build shader path.
+          mv build/shaders build/shaders.offline
+          trap 'mv build/shaders.offline build/shaders' EXIT
           xvfb-run -a --server-args="-screen 0 1280x1024x24" bash scripts/verify_vulkan_presentation.sh build 2>&1 | tee build/diagnostics/presentation.log
           if grep -E 'Validation Error|VUID-.*ERROR|UNASSIGNED-.*ERROR' build/diagnostics/presentation.log; then exit 1; fi
       - uses: actions/upload-artifact@v4

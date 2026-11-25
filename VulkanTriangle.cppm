@@ -8,8 +8,7 @@ module;
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
+#include <span>
 #include <functional>
 #include <memory>
 #include <limits>
@@ -25,6 +24,7 @@ module;
 #include "detail/VulkanFrustumBounds.hpp"
 #include "detail/StaticVisibilityBvh.hpp"
 #include "detail/FenceRetiredResources.hpp"
+#include "EmbeddedVulkanShaders.hpp"
 
 // TEACHING DRAW PATH: renderer-owned MeshHandle/TextureHandle -> GPU buffers,
 // VulkanTexture2D and descriptor sets -> native VkCommandBuffer recording.
@@ -1450,7 +1450,7 @@ export namespace kairo::renderer
             for (std::size_t row = 0u; row < 4u; ++row) for (std::size_t column = 0u; column < 4u; ++column) destination[column * 4u + row] = matrix(row, column);
         }
 
-        [[nodiscard]] VkShaderModule CreateShaderModule(const std::vector<std::uint32_t>& spirv) const
+        [[nodiscard]] VkShaderModule CreateShaderModule(std::span<const std::uint32_t> spirv) const
         {
             VkShaderModuleCreateInfo create{};
             create.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -1459,16 +1459,10 @@ export namespace kairo::renderer
             return module;
         }
 
-        [[nodiscard]] static std::vector<std::uint32_t> ReadSpirv(const std::string& fileName)
+        // Embedded immutable words: no runtime build-directory dependency.
+        [[nodiscard]] static std::span<const std::uint32_t> ReadSpirv(const std::string& fileName)
         {
-            const std::filesystem::path path = std::filesystem::path(KAIRO_RENDERER_SHADER_DIR) / fileName;
-            std::ifstream input(path, std::ios::binary | std::ios::ate);
-            if (!input) throw std::runtime_error("Cannot open shader binary: " + path.string());
-            const std::streamsize bytes = input.tellg();
-            if (bytes <= 0 || bytes % static_cast<std::streamsize>(sizeof(std::uint32_t)) != 0) throw std::runtime_error("Shader binary is empty or not aligned to 32-bit SPIR-V words: " + path.string());
-            std::vector<std::uint32_t> words(static_cast<std::size_t>(bytes) / sizeof(std::uint32_t)); input.seekg(0);
-            if (!input.read(reinterpret_cast<char*>(words.data()), bytes)) throw std::runtime_error("Failed to read shader binary: " + path.string());
-            return words;
+            return detail::EmbeddedVulkanShader(fileName);
         }
 
         // Release swapchain-dependent framebuffers, graphics pipelines,
