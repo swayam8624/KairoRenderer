@@ -729,7 +729,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             {
                 if (runs[i].Count <= 1u) continue;
                 constexpr auto max = std::numeric_limits<std::size_t>::max();
-                if (total > max-255u || runs[i].Count > max/modelBytes)
+                if (total > max-255u || modelBytes > max/static_cast<std::size_t>(runs[i].Count))
                     throw std::length_error("Metal shadow instance buffer overflow.");
                 total = (total+255u) & ~std::size_t{255u};
                 offsets[i] = total;
@@ -857,7 +857,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 const auto count = runs[i].Count;
                 if (count <= 1u) continue;
                 constexpr std::size_t max = std::numeric_limits<std::size_t>::max();
-                if (total > max-255u || count > max/sizeof(DrawUniforms))
+                if (total > max-255u || sizeof(DrawUniforms) > max/static_cast<std::size_t>(count))
                     throw std::length_error("Metal instance buffer size overflow.");
                 total = (total+255u) & ~std::size_t{255u};
                 instanceOffsets[i] = total;
