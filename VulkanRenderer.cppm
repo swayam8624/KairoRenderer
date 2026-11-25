@@ -498,6 +498,11 @@ export namespace kairo::renderer
         /// overlay draw commands. Passing an empty callback disables overlays.
         /// Task: integrate tooling UI into the existing scene pass and command
         /// submission lifecycle without exposing begin/end/submit ownership.
+        void SetViewportOverlay(const std::vector<ViewportOverlayRect>& rects)
+        {
+            m_Triangle.SetViewportOverlay(rects);
+        }
+
         void SetOverlayRecorder(VulkanOverlayRecorder recorder)
         {
             m_OverlayRecorder = std::move(recorder);

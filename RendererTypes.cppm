@@ -1,6 +1,7 @@
 module;
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -48,6 +49,15 @@ export namespace kairo::renderer
                 }
             return static_cast<unsigned>(maximum) - minimum >= minimumRange;
         }
+    };
+
+    // Opaque, top-left physical-pixel UI rectangle, linear RGB in [0,1].
+    // Submission order is painter order. No depth or object-ID writes.
+    struct ViewportOverlayRect final
+    {
+        std::int32_t X=0,Y=0;
+        std::uint32_t Width=0,Height=0;
+        std::array<float,3> Color{};
     };
 
     /// Non-owning OpenGL viewport identity consumed by native tooling. The
