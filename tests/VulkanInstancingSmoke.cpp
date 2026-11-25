@@ -177,7 +177,28 @@ int main()
         if (ordinaryShadow.RGBA == noShadow.RGBA)
             throw std::runtime_error("Offscreen shadow casters had no visible effect");
 
-        std::cout << "Vulkan instanced/reference image, independent picking IDs and offscreen shadows passed\n";
+        // Destroy after submission, before the next frame fence wait.
+        // Public handles must become invalid immediately, although their
+        // native buffers are still retained for the preceding command.
+        runtime.SetViewportShadingMode(ViewportShadingMode::Unlit);
+        runtime.SubmitRenderScene(makeScene(false));
+        runtime.DrawFrame();
+        runtime.DestroyMesh(separate);
+        bool rejected=false;
+        try { runtime.SubmitRenderScene(makeScene(false)); }
+        catch(const std::out_of_range&) { rejected=true; }
+        if(!rejected) throw std::runtime_error("Retired mesh handle was accepted");
+        if(pick(24u)!=leftID || pick(72u)==rightID)
+            throw std::runtime_error("Retirement changed surviving draw or retained deleted draw");
+        runtime.DestroyMesh(shared);
+        runtime.SubmitRenderScene(RenderScene{});
+        // No DrawFrame between removals: force the bounded journal's
+        // idle fallback and verify the next frame still succeeds.
+        for(unsigned i=0;i<257u;++i)
+            runtime.DestroyMesh(runtime.CreateMesh(geometry));
+        runtime.DrawFrame();
+        runtime.DrawFrame();
+        std::cout << "Vulkan instancing, picking, shadows and fence-retired meshes passed\n";
         return 0;
     }
     catch (const kairo::renderer::PresentationUnavailableError& error)

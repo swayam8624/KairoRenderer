@@ -1,0 +1,21 @@
+name: Fence retired resource contract
+on:
+  push:
+    branches: [main, perf/vulkan-fence-mesh-retirement]
+  pull_request:
+    paths:
+      - 'detail/FenceRetiredResources.hpp'
+      - 'VulkanTriangle.cppm'
+      - 'VulkanRenderer.cppm'
+      - 'tests/FenceRetiredResourcesTests.cpp'
+      - '.github/workflows/fence-retired-resources.yml'
+permissions:
+  contents: read
+jobs:
+  ownership:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          g++ -std=c++23 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tests/FenceRetiredResourcesTests.cpp -o /tmp/fence-retired-test
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/fence-retired-test
