@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -680,6 +681,8 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 slopeScale:frame.SlopeDepthBias clamp:0.0f];
             [encoder setVertexBytes:&frameUniforms
                 length:sizeof(frameUniforms) atIndex:1];
+            id<MTLRenderPipelineState> boundPipeline = nil;
+            std::optional<std::uint64_t> boundMesh;
             for (std::size_t drawIndex = 0u; drawIndex < frame.Draws.size(); ++drawIndex)
             {
                 const auto& draw = frame.Draws[drawIndex];
@@ -689,10 +692,18 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                     throw std::out_of_range(
                         "Metal shadow draw references an unknown mesh handle.");
                 const bool skinned = mesh->second.Skinning != nil;
-                [encoder setRenderPipelineState:
-                    skinned ? SkinnedShadowPipeline : ShadowPipeline];
+                const id<MTLRenderPipelineState> pipeline = skinned ? SkinnedShadowPipeline : ShadowPipeline;
+                if (boundPipeline != pipeline)
+                {
+                    [encoder setRenderPipelineState:pipeline];
+                    boundPipeline = pipeline;
+                }
                 const DrawUniforms uniforms = MakeDraw(draw);
-                [encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];
+                if (!boundMesh || *boundMesh != draw.Mesh)
+                {
+                    [encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];
+                    boundMesh = draw.Mesh;
+                }
                 [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];
                 if (skinned) BindSkin(encoder, mesh->second, draw, upload, drawIndex);
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
@@ -742,13 +753,69 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 const auto distance=[&](const MetalDraw* draw){const float x=draw->Model[3]-frame.CameraPosition[0],y=draw->Model[7]-frame.CameraPosition[1],z=draw->Model[11]-frame.CameraPosition[2];return x*x+y*y+z*z;};
                 return distance(a)>distance(b);});
             ordered.insert(ordered.end(),transparent.begin(),transparent.end());
-            for(const MetalDraw* drawPointer:ordered){const MetalDraw& draw=*drawPointer;const bool blend=draw.Material.AlphaMode==3u;const auto mesh=Meshes.find(draw.Mesh);if(mesh==Meshes.end())throw std::out_of_range("Metal draw references an unknown mesh handle.");const bool skinned=mesh->second.Skinning!=nil;
-                [encoder setRenderPipelineState:blend?(skinned?SkinnedBlendPipeline:BlendPipeline):(skinned?SkinnedMeshPipeline:MeshPipeline)];
-                [encoder setDepthStencilState:blend?NoWriteDepthState:DepthState];
-                const DrawUniforms uniforms=MakeDraw(draw);[encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];[encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];[encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:2];if(skinned)BindSkin(encoder,mesh->second,draw,upload,static_cast<std::size_t>(drawPointer-frame.Draws.data()));
-                BindTexture(encoder,0,TextureOr(draw.Material.BaseColorTexture,White));BindTexture(encoder,1,TextureOr(draw.Material.NormalTexture,Normal));BindTexture(encoder,2,TextureOr(draw.Material.MetallicRoughnessTexture,White));BindTexture(encoder,3,TextureOr(draw.Material.EmissiveTexture,White));BindTexture(encoder,4,TextureOr(draw.Material.OcclusionTexture,White));BindTexture(encoder,5,TextureOr(frame.EnvironmentTexture,Black));
-                [encoder setCullMode:draw.Material.DoubleSided?MTLCullModeNone:MTLCullModeBack];
-                [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32 indexBuffer:mesh->second.Indices indexBufferOffset:0];}
+            // Encoder state is local to this pass, never inherited from
+            // shadow, debug or presentation encoders. The draw order and all
+            // per-object uniforms/skin offsets remain exactly as submitted.
+            id<MTLRenderPipelineState> boundPipeline = nil;
+            id<MTLDepthStencilState> boundDepth = DepthState;
+            MTLCullMode boundCull = MTLCullModeBack;
+            std::optional<std::uint64_t> boundMesh;
+            std::array<std::optional<std::uint64_t>, 5> boundTextures{};
+            BindTexture(encoder,5,TextureOr(frame.EnvironmentTexture,Black));
+            const auto bindMaterialTexture = [&](std::size_t slot, std::uint64_t handle,
+                const GpuTexture& fallback)
+            {
+                if (boundTextures[slot] && *boundTextures[slot] == handle) return;
+                BindTexture(encoder,slot,TextureOr(handle,fallback));
+                boundTextures[slot] = handle;
+            };
+            for (const MetalDraw* drawPointer : ordered)
+            {
+                const MetalDraw& draw = *drawPointer;
+                const bool blend = draw.Material.AlphaMode == 3u;
+                const auto mesh = Meshes.find(draw.Mesh);
+                if (mesh == Meshes.end())
+                    throw std::out_of_range("Metal draw references an unknown mesh handle.");
+                const bool skinned = mesh->second.Skinning != nil;
+                const id<MTLRenderPipelineState> pipeline =
+                    blend ? (skinned ? SkinnedBlendPipeline : BlendPipeline) :
+                    (skinned ? SkinnedMeshPipeline : MeshPipeline);
+                if (boundPipeline != pipeline)
+                {
+                    [encoder setRenderPipelineState:pipeline];
+                    boundPipeline = pipeline;
+                }
+                const id<MTLDepthStencilState> depth = blend ? NoWriteDepthState : DepthState;
+                if (boundDepth != depth)
+                {
+                    [encoder setDepthStencilState:depth];
+                    boundDepth = depth;
+                }
+                const DrawUniforms uniforms = MakeDraw(draw);
+                if (!boundMesh || *boundMesh != draw.Mesh)
+                {
+                    [encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];
+                    boundMesh = draw.Mesh;
+                }
+                [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];
+                [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:2];
+                if (skinned) BindSkin(encoder,mesh->second,draw,upload,
+                    static_cast<std::size_t>(drawPointer-frame.Draws.data()));
+                bindMaterialTexture(0,draw.Material.BaseColorTexture,White);
+                bindMaterialTexture(1,draw.Material.NormalTexture,Normal);
+                bindMaterialTexture(2,draw.Material.MetallicRoughnessTexture,White);
+                bindMaterialTexture(3,draw.Material.EmissiveTexture,White);
+                bindMaterialTexture(4,draw.Material.OcclusionTexture,White);
+                const MTLCullMode cull = draw.Material.DoubleSided ? MTLCullModeNone : MTLCullModeBack;
+                if (boundCull != cull)
+                {
+                    [encoder setCullMode:cull];
+                    boundCull = cull;
+                }
+                [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                    indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32
+                    indexBuffer:mesh->second.Indices indexBufferOffset:0];
+            }
             if(!frame.DebugVertices.empty()){[encoder setRenderPipelineState:DebugPipeline];[encoder setCullMode:MTLCullModeNone];[encoder setVertexBytes:frame.DebugVertices.data() length:frame.DebugVertices.size_bytes() atIndex:0];[encoder setVertexBytes:&frameUniforms length:sizeof(frameUniforms) atIndex:1];[encoder drawPrimitives:MTLPrimitiveTypeLine vertexStart:0 vertexCount:frame.DebugVertices.size()];}
             [encoder endEncoding];
         }
