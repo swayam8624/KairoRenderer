@@ -69,6 +69,38 @@ int main()
             throw std::runtime_error("Metal instancing lost per-instance IDs");
         if(capture(false).RGBA!=baseline.RGBA)
             throw std::runtime_error("Ordinary path changed after Metal instancing");
+        if(!runtime.SupportsViewportOverlay())throw std::runtime_error("Metal overlay capability missing");
+        runtime.SetViewportOverlay({
+            {-4,-3,12,11,{1.f,0.f,0.f}},
+            {20,44,8,8,{0.f,1.f,0.f}},
+            {22,46,4,4,{0.f,0.f,1.f}},
+            {100,100,10,10,{1.f,1.f,1.f}}
+        });
+        const auto ui=capture(false);
+        const auto pixel=[&](unsigned x,unsigned y,unsigned r,unsigned g,unsigned b)
+        {
+            const auto at=(std::size_t(y)*ui.Width+x)*4;
+            return ui.RGBA[at]==r&&ui.RGBA[at+1]==g&&ui.RGBA[at+2]==b;
+        };
+        if(!pixel(0,0,255,0,0)||!pixel(7,7,255,0,0)||
+            !pixel(20,44,0,255,0)||!pixel(24,48,0,0,255))
+            throw std::runtime_error("Metal viewport overlay clipping or order differs");
+        for(unsigned y=0;y<96;++y)for(unsigned x=0;x<96;++x)
+        {
+            if((x<8&&y<8)||(x>=20&&x<28&&y>=44&&y<52))continue;
+            const auto at=(std::size_t(y)*96+x)*4;
+            for(unsigned k=0;k<4;++k)if(ui.RGBA[at+k]!=baseline.RGBA[at+k])
+                throw std::runtime_error("Metal viewport overlay changed outside its rectangles");
+        }
+        if(pick(24)!=left)throw std::runtime_error("Metal overlay changed picking");
+        bool rejected=false;
+        try{runtime.SetViewportOverlay({{0,0,1,1,{2.f,0.f,0.f}}});}
+        catch(const std::invalid_argument&){rejected=true;}
+        if(!rejected||capture(false).RGBA!=ui.RGBA)
+            throw std::runtime_error("Invalid Metal overlay changed previous submission");
+        runtime.SetViewportOverlay({});
+        if(capture(false).RGBA!=baseline.RGBA)throw std::runtime_error("Removing Metal overlay changed scene");
+        std::cout<<"Native Metal depth-independent viewport UI, clipping, painter order and picking passed\n";
         // More than 4 KiB of line vertices; draw across the front faces,
         // verify color changes but the underlying object remains pickable.
         DebugDrawList debug;

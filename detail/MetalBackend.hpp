@@ -106,11 +106,19 @@ namespace kairo::renderer::detail
         std::uint32_t Padding[3]{};
     };
 
+    struct MetalViewportOverlayRect final
+    {
+        std::int32_t X,Y;
+        std::uint32_t Width,Height;
+        float Color[4];
+    };
+
     struct MetalFrame final
     {
         std::span<const MetalDraw> Draws;
         std::span<const MetalLight> Lights;
         std::span<const MetalDebugVertex> DebugVertices;
+        std::span<const MetalViewportOverlayRect> ViewportOverlay;
         float View[16]{};
         float Projection[16]{};
         float LightViewProjection[16]{};
