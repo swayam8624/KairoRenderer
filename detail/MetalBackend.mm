@@ -720,8 +720,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             std::vector<std::size_t> indices;
             std::vector<InstanceRun> runs;
             PlanIndexedInstanceRuns(frame.Draws,
-                [](std::size_t,const MetalDraw& draw)
-                { return draw.CastShadows && draw.Material.AlphaMode != 3u; },
+                MetalShadowIncluded,
                 MetalInstanceEligible, MetalInstanceCompatible,indices,runs);
             constexpr std::size_t modelBytes = 16u * sizeof(float);
             std::vector<std::size_t> offsets(runs.size(),0u);
