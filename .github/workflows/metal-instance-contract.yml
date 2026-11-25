@@ -1,0 +1,21 @@
+name: Metal instance contract
+on:
+  push:
+    branches: [main, feat/metal-opaque-instancing]
+  pull_request:
+    paths:
+      - 'detail/MetalInstanceCompatibility.hpp'
+      - 'detail/MetalBackend.mm'
+      - 'tests/MetalInstanceCompatibilityTests.cpp'
+      - '.github/workflows/metal-instance-contract.yml'
+permissions:
+  contents: read
+jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact Metal material compatibility under sanitizers
+        run: |
+          g++ -std=c++23 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tests/MetalInstanceCompatibilityTests.cpp -o /tmp/metal-instance-test
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/metal-instance-test
