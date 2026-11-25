@@ -309,6 +309,7 @@ export namespace kairo::renderer
             VkBuffer captureDestination = VK_NULL_HANDLE)
         {
             RebuildMaterialDescriptors();
+            if(!overlayRecorder)RefreshPresentationDescriptor();
             UpdateUniform(m_Viewport.Extent());
             UploadDebugVertices();
             PrepareVisibility();
@@ -435,6 +436,13 @@ export namespace kairo::renderer
             vkCmdSetViewport(command.Handle(), 0u, 1u, &viewport);
             vkCmdSetScissor(command.Handle(), 0u, 1u, &scissor);
             if (overlayRecorder) overlayRecorder(command.Handle());
+            else
+            {
+                vkCmdBindPipeline(command.Handle(),VK_PIPELINE_BIND_POINT_GRAPHICS,m_PresentPipeline);
+                vkCmdBindDescriptorSets(command.Handle(),VK_PIPELINE_BIND_POINT_GRAPHICS,m_PresentLayout,
+                    0u,1u,&m_PresentSet,0u,nullptr);
+                vkCmdDraw(command.Handle(),3u,1u,0u,0u);
+            }
             vkCmdEndRenderPass(command.Handle());
             command.End();
         }
@@ -473,6 +481,12 @@ export namespace kairo::renderer
         VkDevice m_Device = VK_NULL_HANDLE;
         VkRenderPass m_RenderPass = VK_NULL_HANDLE;
         VkPipelineLayout m_Layout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout m_PresentSetLayout=VK_NULL_HANDLE;
+        VkDescriptorPool m_PresentPool=VK_NULL_HANDLE;
+        VkDescriptorSet m_PresentSet=VK_NULL_HANDLE;
+        VkPipelineLayout m_PresentLayout=VK_NULL_HANDLE;
+        VkPipeline m_PresentPipeline=VK_NULL_HANDLE;
+        std::uint64_t m_PresentGeneration=0;
         VkPipeline m_MeshPipeline = VK_NULL_HANDLE;
         VkPipeline m_InstancedMeshPipeline = VK_NULL_HANDLE;
         VkPipeline m_InstancedShadowPipeline = VK_NULL_HANDLE;
@@ -525,7 +539,7 @@ export namespace kairo::renderer
 
         void Create(const VulkanSwapchain& swapchain)
         {
-            try { CreateRenderPass(swapchain.Format()); CreateFramebuffers(swapchain); CreatePipelines(); }
+            try { CreateRenderPass(swapchain.Format()); CreateFramebuffers(swapchain); CreatePipelines(); CreatePresentation(swapchain.Format()); }
             catch (...) { Destroy(); throw; }
         }
 
@@ -562,6 +576,112 @@ export namespace kairo::renderer
                 if (vkCreateFramebuffer(m_Device, &create, nullptr, &framebuffer) != VK_SUCCESS) throw std::runtime_error("vkCreateFramebuffer failed.");
                 m_Framebuffers.push_back(framebuffer);
             }
+        }
+
+        // A standalone game has no editor overlay callback. Sample the
+        // actual HDR viewport into its swapchain instead of presenting only
+        // the clear color. The editor still owns its custom callback path.
+        void CreatePresentation(VkFormat format)
+        {
+            VkDescriptorSetLayoutBinding binding{};
+            binding.binding=0;binding.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            binding.descriptorCount=1;binding.stageFlags=VK_SHADER_STAGE_FRAGMENT_BIT;
+            VkDescriptorSetLayoutCreateInfo descriptor{};
+            descriptor.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            descriptor.bindingCount=1;descriptor.pBindings=&binding;
+            if(vkCreateDescriptorSetLayout(m_Device,&descriptor,nullptr,&m_PresentSetLayout)!=VK_SUCCESS)
+                throw std::runtime_error("Vulkan presentation descriptor layout failed.");
+            VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1};
+            VkDescriptorPoolCreateInfo pool{};
+            pool.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            pool.maxSets=1;pool.poolSizeCount=1;pool.pPoolSizes=&poolSize;
+            if(vkCreateDescriptorPool(m_Device,&pool,nullptr,&m_PresentPool)!=VK_SUCCESS)
+                throw std::runtime_error("Vulkan presentation descriptor pool failed.");
+            VkDescriptorSetAllocateInfo allocate{};
+            allocate.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocate.descriptorPool=m_PresentPool;allocate.descriptorSetCount=1;allocate.pSetLayouts=&m_PresentSetLayout;
+            if(vkAllocateDescriptorSets(m_Device,&allocate,&m_PresentSet)!=VK_SUCCESS)
+                throw std::runtime_error("Vulkan presentation descriptor allocation failed.");
+            VkPipelineLayoutCreateInfo layout{};
+            layout.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            layout.setLayoutCount=1;layout.pSetLayouts=&m_PresentSetLayout;
+            if(vkCreatePipelineLayout(m_Device,&layout,nullptr,&m_PresentLayout)!=VK_SUCCESS)
+                throw std::runtime_error("Vulkan presentation pipeline layout failed.");
+            VkShaderModule vertex=VK_NULL_HANDLE,fragment=VK_NULL_HANDLE;
+            try
+            {
+                vertex=CreateShaderModule(ReadSpirv("viewport_present.vert.spv"));
+                fragment=CreateShaderModule(ReadSpirv("viewport_present.frag.spv"));
+                // SRGB attachments encode linear shader output automatically.
+                // Common UNORM swapchains need explicit display encoding.
+                const std::uint32_t manualGamma=(format==VK_FORMAT_B8G8R8A8_UNORM||
+                    format==VK_FORMAT_R8G8B8A8_UNORM||format==VK_FORMAT_A8B8G8R8_UNORM_PACK32)?1u:0u;
+                const VkSpecializationMapEntry entry{0,0,sizeof(manualGamma)};
+                const VkSpecializationInfo specialization{1,&entry,sizeof(manualGamma),&manualGamma};
+                std::array<VkPipelineShaderStageCreateInfo,2> stages{};
+                stages[0].sType=stages[1].sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT;stages[0].module=vertex;stages[0].pName="main";
+                stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT;stages[1].module=fragment;stages[1].pName="main";
+                stages[1].pSpecializationInfo=&specialization;
+                VkPipelineVertexInputStateCreateInfo input{};
+                input.sType=VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+                VkPipelineInputAssemblyStateCreateInfo assembly{};
+                assembly.sType=VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+                assembly.topology=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+                VkPipelineViewportStateCreateInfo viewport{};
+                viewport.sType=VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+                viewport.viewportCount=1;viewport.scissorCount=1;
+                VkPipelineRasterizationStateCreateInfo raster{};
+                raster.sType=VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+                raster.polygonMode=VK_POLYGON_MODE_FILL;raster.cullMode=VK_CULL_MODE_NONE;
+                raster.frontFace=VK_FRONT_FACE_COUNTER_CLOCKWISE;raster.lineWidth=1.f;
+                VkPipelineMultisampleStateCreateInfo samples{};
+                samples.sType=VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+                samples.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
+                VkPipelineColorBlendAttachmentState color{};
+                color.colorWriteMask=VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|
+                    VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
+                VkPipelineColorBlendStateCreateInfo blend{};
+                blend.sType=VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+                blend.attachmentCount=1;blend.pAttachments=&color;
+                const std::array dynamicStates{VK_DYNAMIC_STATE_VIEWPORT,VK_DYNAMIC_STATE_SCISSOR};
+                VkPipelineDynamicStateCreateInfo dynamic{};
+                dynamic.sType=VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+                dynamic.dynamicStateCount=static_cast<std::uint32_t>(dynamicStates.size());
+                dynamic.pDynamicStates=dynamicStates.data();
+                VkGraphicsPipelineCreateInfo create{};
+                create.sType=VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+                create.stageCount=static_cast<std::uint32_t>(stages.size());create.pStages=stages.data();
+                create.pVertexInputState=&input;create.pInputAssemblyState=&assembly;
+                create.pViewportState=&viewport;create.pRasterizationState=&raster;
+                create.pMultisampleState=&samples;create.pColorBlendState=&blend;create.pDynamicState=&dynamic;
+                create.layout=m_PresentLayout;create.renderPass=m_RenderPass;
+                if(vkCreateGraphicsPipelines(m_Device,VK_NULL_HANDLE,1,&create,nullptr,&m_PresentPipeline)!=VK_SUCCESS)
+                    throw std::runtime_error("Vulkan viewport presentation pipeline failed.");
+            }
+            catch(...)
+            {
+                if(fragment)vkDestroyShaderModule(m_Device,fragment,nullptr);
+                if(vertex)vkDestroyShaderModule(m_Device,vertex,nullptr);
+                throw;
+            }
+            vkDestroyShaderModule(m_Device,fragment,nullptr);
+            vkDestroyShaderModule(m_Device,vertex,nullptr);
+        }
+        // Record runs after the frame fence. A viewport resize destroys old
+        // image views only at device idle; bind the new generation before use.
+        void RefreshPresentationDescriptor()
+        {
+            const auto texture=m_Viewport.Texture();
+            if(!texture.IsValid())throw std::runtime_error("Invalid Vulkan presentation viewport.");
+            if(texture.Generation==m_PresentGeneration)return;
+            const VkDescriptorImageInfo image{texture.Sampler,texture.View,texture.Layout};
+            VkWriteDescriptorSet write{};
+            write.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet=m_PresentSet;write.dstBinding=0;write.descriptorCount=1;
+            write.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;write.pImageInfo=&image;
+            vkUpdateDescriptorSets(m_Device,1,&write,0,nullptr);
+            m_PresentGeneration=texture.Generation;
         }
 
         void CreatePipelines()
@@ -1361,6 +1481,13 @@ export namespace kairo::renderer
             m_InstanceBuffer.reset(); m_InstanceCapacity = 0u;
             for (const VkFramebuffer framebuffer : m_Framebuffers) vkDestroyFramebuffer(m_Device, framebuffer, nullptr);
             m_Framebuffers.clear();
+            if(m_PresentPipeline)vkDestroyPipeline(m_Device,m_PresentPipeline,nullptr);
+            if(m_PresentLayout)vkDestroyPipelineLayout(m_Device,m_PresentLayout,nullptr);
+            if(m_PresentPool)vkDestroyDescriptorPool(m_Device,m_PresentPool,nullptr);
+            if(m_PresentSetLayout)vkDestroyDescriptorSetLayout(m_Device,m_PresentSetLayout,nullptr);
+            m_PresentPipeline=VK_NULL_HANDLE;m_PresentLayout=VK_NULL_HANDLE;
+            m_PresentPool=VK_NULL_HANDLE;m_PresentSetLayout=VK_NULL_HANDLE;
+            m_PresentSet=VK_NULL_HANDLE;m_PresentGeneration=0;
             if (m_SkinnedShadowPipeline != VK_NULL_HANDLE)
                 vkDestroyPipeline(m_Device, m_SkinnedShadowPipeline, nullptr);
             if (m_ShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(m_Device, m_ShadowPipeline, nullptr);

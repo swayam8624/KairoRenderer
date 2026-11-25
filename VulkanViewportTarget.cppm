@@ -215,7 +215,9 @@ export namespace kairo::renderer
             dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
             dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+            // A later presentation pass may sample different pixels after scaling.
+            // Use framebuffer-global dependencies, not region-local hazards.
+            dependencies[0].dependencyFlags = 0;
             dependencies[1].srcSubpass = 0u;
             dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
             dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -223,7 +225,7 @@ export namespace kairo::renderer
                 VK_PIPELINE_STAGE_TRANSFER_BIT;
             dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
             dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
-            dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+            dependencies[1].dependencyFlags = 0;
 
             const std::array attachments{ color, objectID, depth };
             VkRenderPassCreateInfo create{};
