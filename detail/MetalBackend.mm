@@ -13,6 +13,8 @@
 
 #include "MetalBackend.hpp"
 #include "MetalSkinUpload.hpp"
+#include "MetalInstanceCompatibility.hpp"
+#include "InstanceRuns.hpp"
 
 #include <algorithm>
 #include <array>
@@ -99,6 +101,9 @@ namespace kairo::renderer::detail
             std::uint32_t ReceiveShadows = 1u;
             std::uint32_t Padding = 0u;
         };
+
+        static_assert(sizeof(DrawUniforms) == 176u);
+        static_assert(offsetof(DrawUniforms, ObjectID) == 164u);
 
         [[nodiscard]] std::string ErrorText(NSString* context, NSError* error)
         {
@@ -192,6 +197,7 @@ struct VertexIn { packed_float3 position; packed_float3 color; packed_float3 nor
 struct VertexOut {
     float4 position [[position]]; float3 world; float3 color; float3 normal;
     float2 uv; float4 shadow;
+    uint objectID [[flat]]; uint receiveShadows [[flat]];
 };
 struct Light { float4 positionType; float4 directionRange; float4 colorIntensity; float4 spotArea; uint castsShadows; };
 struct Frame {
@@ -216,7 +222,25 @@ vertex VertexOut mesh_vertex(uint id [[vertex_id]], const device VertexIn* verti
     float3x3 normalMatrix = float3x3(draw.normal0.xyz, draw.normal1.xyz, draw.normal2.xyz);
     output.normal = normalize(normalMatrix * float3(input.normal));
     output.color = float3(input.color); output.uv = float2(input.uv);
-    output.shadow = frame.lightViewProjection * world; return output;
+    output.shadow = frame.lightViewProjection * world;
+    output.objectID = draw.objectID; output.receiveShadows = draw.receiveShadows;
+    return output;
+}
+
+// Instance data uses the same 176-byte Draw layout as ordinary uniforms.
+vertex VertexOut instanced_mesh_vertex(uint id [[vertex_id]], uint instance [[instance_id]],
+    const device VertexIn* vertices [[buffer(0)]], constant Frame& frame [[buffer(1)]],
+    const device Draw* instances [[buffer(5)]]) {
+    VertexIn input = vertices[id]; VertexOut output;
+    Draw draw = instances[instance];
+    float4 world = draw.model * float4(float3(input.position), 1.0);
+    output.position = frame.projection * frame.view * world; output.world = world.xyz;
+    float3x3 normalMatrix = float3x3(draw.normal0.xyz, draw.normal1.xyz, draw.normal2.xyz);
+    output.normal = normalize(normalMatrix * float3(input.normal));
+    output.color = float3(input.color); output.uv = float2(input.uv);
+    output.shadow = frame.lightViewProjection * world;
+    output.objectID = draw.objectID; output.receiveShadows = draw.receiveShadows;
+    return output;
 }
 
 struct SkinInfluence { uint4 joints; float4 weights; };
@@ -253,7 +277,9 @@ vertex VertexOut skinned_mesh_vertex(uint id [[vertex_id]],
         : skinLinear;
     output.normal = normalize(normalMatrix * skinNormal * float3(input.normal));
     output.color = float3(input.color); output.uv = float2(input.uv);
-    output.shadow = frame.lightViewProjection * world; return output;
+    output.shadow = frame.lightViewProjection * world;
+    output.objectID = draw.objectID; output.receiveShadows = draw.receiveShadows;
+    return output;
 }
 
 float3 fresnel(float cosine, float3 f0) { return f0 + (1.0 - f0) * pow(clamp(1.0-cosine,0.0,1.0),5.0); }
@@ -287,7 +313,7 @@ fragment FragmentOut mesh_fragment(VertexOut in [[stage_in]], constant Frame& fr
         tangentNormal.xy*=draw.emissiveNormalScale.w;
         N=normalize(float3x3(tangent,bitangent,N)*tangentNormal);
     }
-    if (frame.shadingMode == 2) { FragmentOut o; o.color=float4(N*0.5+0.5,1); o.objectID=draw.objectID; return o; }
+    if (frame.shadingMode == 2) { FragmentOut o; o.color=float4(N*0.5+0.5,1); o.objectID=in.objectID; return o; }
     float3 f0 = mix(float3(0.04),base.rgb,metallic); float3 direct=0.0;
     for (uint index=0; index<frame.lightCount; ++index) {
         Light light=frame.lights[index]; uint type=(uint)light.positionType.w;
@@ -303,7 +329,7 @@ fragment FragmentOut mesh_fragment(VertexOut in [[stage_in]], constant Frame& fr
         float G=(NdotL/(NdotL*(1.0-k)+k))*(NdotV/(NdotV*(1.0-k)+k)); float3 F=fresnel(VdotH,f0);
         float3 specular=D*G*F/max(4.0*NdotL*NdotV,0.0001); float3 diffuse=(1.0-F)*(1.0-metallic)*base.rgb/M_PI_F;
         float visibility=1.0;
-        if(frame.shadowsEnabled!=0 && draw.receiveShadows!=0 && int(index)==frame.shadowLightIndex){
+        if(frame.shadowsEnabled!=0 && in.receiveShadows!=0 && int(index)==frame.shadowLightIndex){
             float3 sc=in.shadow.xyz/in.shadow.w;
             sc.x=sc.x*0.5+0.5;
             sc.y=0.5-sc.y*0.5;
@@ -325,7 +351,7 @@ fragment FragmentOut mesh_fragment(VertexOut in [[stage_in]], constant Frame& fr
     float3 color = frame.shadingMode==1 ? base.rgb+emissive :
         (frame.shadingMode==3 ? direct : ambient+direct+emissive);
     color*=exp2(frame.ambientExposure.w); color=color/(color+1.0);
-    FragmentOut output; output.color=float4(color,draw.alphaMode==3?base.a:1.0); output.objectID=draw.objectID; return output;
+    FragmentOut output; output.color=float4(color,draw.alphaMode==3?base.a:1.0); output.objectID=in.objectID; return output;
 }
 
 vertex float4 shadow_vertex(uint id [[vertex_id]], const device VertexIn* vertices [[buffer(0)]],
@@ -361,6 +387,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
         id<MTLCommandQueue> Queue = nil;
         CAMetalLayer* Layer = nil;
         id<MTLRenderPipelineState> MeshPipeline = nil;
+        id<MTLRenderPipelineState> InstancedMeshPipeline = nil;
         id<MTLRenderPipelineState> SkinnedMeshPipeline = nil;
         id<MTLRenderPipelineState> BlendPipeline = nil;
         id<MTLRenderPipelineState> SkinnedBlendPipeline = nil;
@@ -462,6 +489,11 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             mesh.depthAttachmentPixelFormat = DepthFormat;
             MeshPipeline = [Device newRenderPipelineStateWithDescriptor:mesh error:&error];
             if (MeshPipeline == nil) throw std::runtime_error(ErrorText(@"Metal mesh pipeline creation failed", error));
+            MTLRenderPipelineDescriptor* instancedMesh = [mesh copy];
+            instancedMesh.vertexFunction = function(@"instanced_mesh_vertex");
+            InstancedMeshPipeline = [Device newRenderPipelineStateWithDescriptor:instancedMesh error:&error];
+            if (InstancedMeshPipeline == nil)
+                throw std::runtime_error(ErrorText(@"Metal instanced mesh pipeline creation failed", error));
             MTLRenderPipelineDescriptor* skinnedMesh = [mesh copy];
             skinnedMesh.vertexFunction = function(@"skinned_mesh_vertex");
             SkinnedMeshPipeline = [Device newRenderPipelineStateWithDescriptor:skinnedMesh error:&error];
@@ -753,6 +785,41 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 const auto distance=[&](const MetalDraw* draw){const float x=draw->Model[3]-frame.CameraPosition[0],y=draw->Model[7]-frame.CameraPosition[1],z=draw->Model[11]-frame.CameraPosition[2];return x*x+y*y+z*z;};
                 return distance(a)>distance(b);});
             ordered.insert(ordered.end(),transparent.begin(),transparent.end());
+            const auto runs = PlanInstanceRuns(ordered,
+                [](const MetalDraw* d) { return MetalInstanceEligible(*d); },
+                [](const MetalDraw* a,const MetalDraw* b) { return MetalInstanceCompatible(*a,*b); });
+            // One immutable instance stream per frame. Metal command buffers
+            // retain the buffer until execution completes; no GPU wait/reuse.
+            std::vector<std::size_t> instanceOffsets(runs.size(),0u);
+            std::size_t total = 0u;
+            for (std::size_t i=0;i<runs.size();++i)
+            {
+                const auto count = runs[i].Count;
+                if (count <= 1u) continue;
+                constexpr std::size_t max = std::numeric_limits<std::size_t>::max();
+                if (total > max-255u || count > max/sizeof(DrawUniforms))
+                    throw std::length_error("Metal instance buffer size overflow.");
+                total = (total+255u) & ~std::size_t{255u};
+                instanceOffsets[i] = total;
+                const auto bytes = static_cast<std::size_t>(count)*sizeof(DrawUniforms);
+                if (total > max-bytes) throw std::length_error("Metal instance buffer size overflow.");
+                total += bytes;
+            }
+            id<MTLBuffer> instanceBuffer = nil;
+            if (total != 0u)
+            {
+                instanceBuffer = [Device newBufferWithLength:total options:MTLResourceStorageModeShared];
+                if (instanceBuffer == nil) throw std::runtime_error("Metal instance buffer allocation failed.");
+                auto* destination = static_cast<std::byte*>([instanceBuffer contents]);
+                for (std::size_t i=0;i<runs.size();++i)
+                    if (runs[i].Count>1u)
+                        for (std::size_t j=0;j<runs[i].Count;++j)
+                        {
+                            const auto uniforms=MakeDraw(*ordered[runs[i].First+j]);
+                            std::memcpy(destination+instanceOffsets[i]+j*sizeof(DrawUniforms),
+                                &uniforms,sizeof(uniforms));
+                        }
+            }
             // Encoder state is local to this pass, never inherited from
             // shadow, debug or presentation encoders. The draw order and all
             // per-object uniforms/skin offsets remain exactly as submitted.
@@ -769,15 +836,18 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 BindTexture(encoder,slot,TextureOr(handle,fallback));
                 boundTextures[slot] = handle;
             };
-            for (const MetalDraw* drawPointer : ordered)
+            for (std::size_t runIndex=0;runIndex<runs.size();++runIndex)
             {
+                const auto run = runs[runIndex];
+                const MetalDraw* drawPointer = ordered[run.First];
                 const MetalDraw& draw = *drawPointer;
+                const bool instanced = run.Count > 1u;
                 const bool blend = draw.Material.AlphaMode == 3u;
                 const auto mesh = Meshes.find(draw.Mesh);
                 if (mesh == Meshes.end())
                     throw std::out_of_range("Metal draw references an unknown mesh handle.");
                 const bool skinned = mesh->second.Skinning != nil;
-                const id<MTLRenderPipelineState> pipeline =
+                const id<MTLRenderPipelineState> pipeline = instanced ? InstancedMeshPipeline :
                     blend ? (skinned ? SkinnedBlendPipeline : BlendPipeline) :
                     (skinned ? SkinnedMeshPipeline : MeshPipeline);
                 if (boundPipeline != pipeline)
@@ -797,7 +867,10 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                     [encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];
                     boundMesh = draw.Mesh;
                 }
-                [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];
+                if (instanced)
+                    [encoder setVertexBuffer:instanceBuffer offset:instanceOffsets[runIndex] atIndex:5];
+                else
+                    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];
                 [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:2];
                 if (skinned) BindSkin(encoder,mesh->second,draw,upload,
                     static_cast<std::size_t>(drawPointer-frame.Draws.data()));
@@ -814,7 +887,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 }
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                     indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32
-                    indexBuffer:mesh->second.Indices indexBufferOffset:0];
+                    indexBuffer:mesh->second.Indices indexBufferOffset:0 instanceCount:run.Count];
             }
             if(!frame.DebugVertices.empty()){[encoder setRenderPipelineState:DebugPipeline];[encoder setCullMode:MTLCullModeNone];[encoder setVertexBytes:frame.DebugVertices.data() length:frame.DebugVertices.size_bytes() atIndex:0];[encoder setVertexBytes:&frameUniforms length:sizeof(frameUniforms) atIndex:1];[encoder drawPrimitives:MTLPrimitiveTypeLine vertexStart:0 vertexCount:frame.DebugVertices.size()];}
             [encoder endEncoding];
