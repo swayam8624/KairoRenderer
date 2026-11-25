@@ -278,6 +278,18 @@ export namespace kairo::renderer
             return m_ShadowSettings;
         }
 
+        // Validate the whole submission before replacing the previous list.
+        // Rectangles are CPU values, not per-rectangle GPU resources.
+        void SetViewportOverlay(const std::vector<ViewportOverlayRect>& rects)
+        {
+            if(rects.size()>4096u)throw std::length_error("Viewport overlay rectangle limit.");
+            for(const auto& rect:rects)
+                for(float channel:rect.Color)
+                    if(!std::isfinite(channel)||channel<0.f||channel>1.f)
+                        throw std::invalid_argument("Invalid viewport overlay color.");
+            m_ViewportOverlay=rects;
+        }
+
         void SetViewportShadingMode(ViewportShadingMode mode) noexcept { m_ShadingMode = mode; }
         [[nodiscard]] ViewportShadingMode ViewportShading() const noexcept { return m_ShadingMode; }
 
@@ -338,6 +350,30 @@ export namespace kairo::renderer
 
             DrawMeshes(command);
             DrawDebugLines(command);
+            // Clear only color attachment zero, inside the scene render pass.
+            // vkCmdClearAttachments ignores depth testing and does not alter
+            // picking IDs. Capture and viewport sampling see the same UI.
+            for(const auto& rect:m_ViewportOverlay)
+            {
+                const auto extent=m_Viewport.Extent();
+                const auto x0=std::clamp<std::int64_t>(rect.X,0,extent.width);
+                const auto y0=std::clamp<std::int64_t>(rect.Y,0,extent.height);
+                const auto x1=std::clamp<std::int64_t>(std::int64_t(rect.X)+rect.Width,0,extent.width);
+                const auto y1=std::clamp<std::int64_t>(std::int64_t(rect.Y)+rect.Height,0,extent.height);
+                if(x1<=x0||y1<=y0)continue;
+                VkClearAttachment attachment{};
+                attachment.aspectMask=VK_IMAGE_ASPECT_COLOR_BIT;
+                attachment.colorAttachment=0;
+                attachment.clearValue.color.float32[0]=rect.Color[0];
+                attachment.clearValue.color.float32[1]=rect.Color[1];
+                attachment.clearValue.color.float32[2]=rect.Color[2];
+                attachment.clearValue.color.float32[3]=1.f;
+                VkClearRect area{};
+                area.rect.offset={static_cast<std::int32_t>(x0),static_cast<std::int32_t>(y0)};
+                area.rect.extent={static_cast<std::uint32_t>(x1-x0),static_cast<std::uint32_t>(y1-y0)};
+                area.layerCount=1;
+                vkCmdClearAttachments(command.Handle(),1,&attachment,1,&area);
+            }
             vkCmdEndRenderPass(command.Handle());
 
             // Object-ID attachment is R32Uint, not the HDR scene color.
@@ -453,6 +489,7 @@ export namespace kairo::renderer
         std::unique_ptr<VulkanTexture2D> m_FallbackBlack;
         VulkanMaterialDescriptors m_MaterialDescriptors;
         VulkanViewportTarget m_Viewport;
+        std::vector<ViewportOverlayRect> m_ViewportOverlay;
         ShowcaseCamera m_Camera;
         DirectionalShadowSettings m_ShadowSettings;
         ViewportShadingMode m_ShadingMode = ViewportShadingMode::Lit;

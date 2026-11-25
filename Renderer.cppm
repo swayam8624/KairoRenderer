@@ -21,6 +21,7 @@ module;
 #include <stdexcept>
 #include <utility>
 #include <variant>
+#include <vector>
 
 export module Kairo.Renderer.Runtime;
 
@@ -337,6 +338,13 @@ export namespace kairo::renderer
         [[nodiscard]] VulkanViewportTexture ViewportTexture() const
         {
             return Vulkan().ViewportTexture();
+        }
+
+        // Explicit Vulkan-only capability until native counterparts exist.
+        // Unlike tooling overlays, this is part of captured scene color.
+        void SetVulkanViewportOverlay(const std::vector<ViewportOverlayRect>& rects)
+        {
+            Vulkan().SetViewportOverlay(rects);
         }
 
         void SetOverlayRecorder(VulkanOverlayRecorder recorder)
