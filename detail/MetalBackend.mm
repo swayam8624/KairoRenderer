@@ -783,9 +783,9 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             [encoder setFragmentTexture:ShadowDepth atIndex:6];[encoder setFragmentSamplerState:ShadowSampler atIndex:6];
             std::vector<const MetalDraw*> ordered;
             ordered.reserve(frame.Draws.size());
-            for(const MetalDraw& draw:frame.Draws)if(draw.Material.AlphaMode!=3u)ordered.push_back(&draw);
+            for(const MetalDraw& draw:frame.Draws)if(draw.CameraVisible && draw.Material.AlphaMode!=3u)ordered.push_back(&draw);
             std::vector<const MetalDraw*> transparent;
-            for(const MetalDraw& draw:frame.Draws)if(draw.Material.AlphaMode==3u)transparent.push_back(&draw);
+            for(const MetalDraw& draw:frame.Draws)if(draw.CameraVisible && draw.Material.AlphaMode==3u)transparent.push_back(&draw);
             std::stable_sort(transparent.begin(),transparent.end(),[&](const MetalDraw* a,const MetalDraw* b){
                 const auto distance=[&](const MetalDraw* draw){const float x=draw->Model[3]-frame.CameraPosition[0],y=draw->Model[7]-frame.CameraPosition[1],z=draw->Model[11]-frame.CameraPosition[2];return x*x+y*y+z*z;};
                 return distance(a)>distance(b);});
