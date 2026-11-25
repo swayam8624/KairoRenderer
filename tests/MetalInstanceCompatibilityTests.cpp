@@ -51,5 +51,24 @@ int main()
     draws[50000].Material.AlphaMode=1;
     draws[50000].SkinJointCount=1;
     check(plan().size()==3,"Skinned draw merged");
-    std::cout<<"100000 Metal instances, exact material boundaries and fallback passed\n";
+    draws.assign(100000,a);
+    for(std::size_t i=0;i<draws.size();++i)
+    {
+        draws[i].CameraVisible=i%2==0;
+        draws[i].CastShadows=i%3==0;
+    }
+    std::vector<std::size_t> indices;
+    std::vector<InstanceRun> runs;
+    PlanIndexedInstanceRuns(draws,MetalShadowIncluded,MetalInstanceEligible,
+        MetalInstanceCompatible,indices,runs);
+    check(runs.size()==1 && runs[0].Count==33334,"Camera visibility fragmented shadows");
+    for(std::size_t i=0;i<indices.size();++i)
+        check(indices[i]==i*3,"Shadow planning changed caster index/order");
+    draws[3].Material.AlphaMode=3;
+    draws[6].Material.AlphaMode=2;
+    PlanIndexedInstanceRuns(draws,MetalShadowIncluded,MetalInstanceEligible,
+        MetalInstanceCompatible,indices,runs);
+    check(indices.size()==33333 && indices[1]==6 && runs.size()==3 &&
+          runs[1].Count==1,"Blended or masked shadow fallback changed");
+    std::cout<<"100000 Metal instances, 33334 independent shadow casters and fallback passed\n";
 }
