@@ -24,6 +24,7 @@ module;
 #include "detail/InstanceRuns.hpp"
 #include "detail/VulkanFrustumBounds.hpp"
 #include "detail/StaticVisibilityBvh.hpp"
+#include "detail/FenceRetiredResources.hpp"
 
 // TEACHING DRAW PATH: renderer-owned MeshHandle/TextureHandle -> GPU buffers,
 // VulkanTexture2D and descriptor sets -> native VkCommandBuffer recording.
@@ -170,7 +171,14 @@ export namespace kairo::renderer
 
         void DestroyMesh(MeshHandle mesh)
         {
-            if (mesh == InvalidMeshHandle || m_Meshes.erase(mesh) == 0u) throw std::out_of_range("Renderer does not own this mesh handle.");
+            const auto found=m_Meshes.find(mesh);
+            if (mesh == InvalidMeshHandle || found==m_Meshes.end())
+                throw std::out_of_range("Renderer does not own this mesh handle.");
+            // Keep the buffers alive for the previously submitted frame.
+            // The bounded journal has reserved storage; failure before
+            // moving leaves the handle and its draw records untouched.
+            m_RetiredMeshes.Retire(std::move(found->second));
+            m_Meshes.erase(found);
             // Descriptor sets are indexed by draw position. Removing even a
             // middle draw changes that mapping for the following draws.
             if (std::erase_if(m_Draws, [mesh](const MeshDraw& draw) { return draw.Mesh == mesh; }) != 0u)
@@ -179,6 +187,10 @@ export namespace kairo::renderer
                 InvalidateVisibilityTree();
             }
         }
+
+        [[nodiscard]] bool MeshRetirementFull() const noexcept {return m_RetiredMeshes.Full();}
+        // Caller must have proven the last frame completed, or device idle/lost.
+        void ReleaseCompletedMeshes() noexcept {m_RetiredMeshes.ReleaseCompleted();}
 
         // Validate each draw's mesh ownership, skin palette coverage and
         // all five PBR texture handles before copying scene draw records.
@@ -446,6 +458,7 @@ export namespace kairo::renderer
         ViewportShadingMode m_ShadingMode = ViewportShadingMode::Lit;
         std::vector<VkFramebuffer> m_Framebuffers;
         std::unordered_map<MeshHandle, GpuMesh> m_Meshes;
+        detail::FenceRetiredResources<GpuMesh> m_RetiredMeshes{256u};
         std::unordered_map<TextureHandle, std::unique_ptr<VulkanTexture2D>> m_Textures;
         std::vector<MeshDraw> m_Draws;
         std::vector<detail::InstanceRun> m_InstanceRuns;
