@@ -12,6 +12,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 
 #include "MetalBackend.hpp"
+#include "MetalSkinUpload.hpp"
 
 #include <algorithm>
 #include <array>
@@ -604,8 +605,41 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             return output;
         }
 
+        // One immutable buffer per encoded frame, retained by the default
+        // Metal command buffer. Both passes bind the same palette offsets.
+        struct SkinUpload
+        {
+            id<MTLBuffer> Buffer = nil;
+            std::vector<MetalSkinRange> Ranges;
+        };
+
+        SkinUpload PrepareSkinUpload(const MetalFrame& frame)
+        {
+            SkinUpload upload;
+            upload.Ranges.reserve(frame.Draws.size());
+            std::size_t total = 0u;
+            for (const auto& draw : frame.Draws)
+            {
+                if (draw.SkinJointCount != 0u && draw.SkinMatrices == nullptr)
+                    throw std::invalid_argument("Metal skin upload has no palette data.");
+                upload.Ranges.push_back(AppendMetalSkinRange(total,draw.SkinJointCount));
+            }
+            if (total == 0u) return upload;
+            upload.Buffer = [Device newBufferWithLength:total options:MTLResourceStorageModeShared];
+            if (upload.Buffer == nil) throw std::runtime_error("Metal skin upload allocation failed.");
+            auto* destination = static_cast<std::byte*>([upload.Buffer contents]);
+            for (std::size_t i = 0; i < frame.Draws.size(); ++i)
+            {
+                const auto range = upload.Ranges[i];
+                if (range.Bytes != 0u)
+                    std::memcpy(destination + range.Offset,frame.Draws[i].SkinMatrices,range.Bytes);
+            }
+            return upload;
+        }
+
         static void BindSkin(id<MTLRenderCommandEncoder> encoder,
-            const GpuMesh& mesh, const MetalDraw& draw)
+            const GpuMesh& mesh, const MetalDraw& draw,
+            const SkinUpload& upload, std::size_t drawIndex)
         {
             if (mesh.Skinning == nil)
             {
@@ -620,13 +654,15 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             if (draw.SkinJointCount > 255u)
                 throw std::length_error("Metal skin palette exceeds 255 joints.");
             [encoder setVertexBuffer:mesh.Skinning offset:0 atIndex:3];
-            [encoder setVertexBytes:draw.SkinMatrices
-                length:static_cast<NSUInteger>(draw.SkinJointCount) * 16u * sizeof(float)
-                atIndex:4];
+            const auto range = upload.Ranges.at(drawIndex);
+            if (upload.Buffer == nil || range.Bytes != static_cast<std::size_t>(draw.SkinJointCount)*16u*sizeof(float))
+                throw std::logic_error("Metal packed skin range does not match submitted palette.");
+            [encoder setVertexBuffer:upload.Buffer offset:range.Offset atIndex:4];
         }
 
         void EncodeShadow(id<MTLCommandBuffer> command,
-            const MetalFrame& frame, const FrameUniforms& frameUniforms)
+            const MetalFrame& frame, const FrameUniforms& frameUniforms,
+            const SkinUpload& upload)
         {
             if (frameUniforms.ShadowsEnabled == 0u) return;
             MTLRenderPassDescriptor* pass =
@@ -644,8 +680,9 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 slopeScale:frame.SlopeDepthBias clamp:0.0f];
             [encoder setVertexBytes:&frameUniforms
                 length:sizeof(frameUniforms) atIndex:1];
-            for (const MetalDraw& draw : frame.Draws)
+            for (std::size_t drawIndex = 0u; drawIndex < frame.Draws.size(); ++drawIndex)
             {
+                const auto& draw = frame.Draws[drawIndex];
                 if (!draw.CastShadows || draw.Material.AlphaMode == 3u) continue;
                 const auto mesh = Meshes.find(draw.Mesh);
                 if (mesh == Meshes.end())
@@ -657,7 +694,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
                 const DrawUniforms uniforms = MakeDraw(draw);
                 [encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];
                 [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];
-                if (skinned) BindSkin(encoder, mesh->second, draw);
+                if (skinned) BindSkin(encoder, mesh->second, draw, upload, drawIndex);
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                     indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32
                     indexBuffer:mesh->second.Indices indexBufferOffset:0];
@@ -685,7 +722,8 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
         void EncodeScene(id<MTLCommandBuffer> command,const MetalFrame& frame)
         {
             FrameUniforms frameUniforms=MakeFrame(frame);
-            EncodeShadow(command, frame, frameUniforms);
+            const auto upload = PrepareSkinUpload(frame);
+            EncodeShadow(command, frame, frameUniforms, upload);
             MTLRenderPassDescriptor* pass=[MTLRenderPassDescriptor renderPassDescriptor];
             pass.colorAttachments[0].texture=ViewportColor; pass.colorAttachments[0].loadAction=MTLLoadActionClear; pass.colorAttachments[0].storeAction=MTLStoreActionStore;
             pass.colorAttachments[0].clearColor=MTLClearColorMake(frame.Background[0],frame.Background[1],frame.Background[2],1.0);
@@ -707,7 +745,7 @@ fragment float4 fullscreen_fragment(FullscreenOut in [[stage_in]], texture2d<flo
             for(const MetalDraw* drawPointer:ordered){const MetalDraw& draw=*drawPointer;const bool blend=draw.Material.AlphaMode==3u;const auto mesh=Meshes.find(draw.Mesh);if(mesh==Meshes.end())throw std::out_of_range("Metal draw references an unknown mesh handle.");const bool skinned=mesh->second.Skinning!=nil;
                 [encoder setRenderPipelineState:blend?(skinned?SkinnedBlendPipeline:BlendPipeline):(skinned?SkinnedMeshPipeline:MeshPipeline)];
                 [encoder setDepthStencilState:blend?NoWriteDepthState:DepthState];
-                const DrawUniforms uniforms=MakeDraw(draw);[encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];[encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];[encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:2];if(skinned)BindSkin(encoder,mesh->second,draw);
+                const DrawUniforms uniforms=MakeDraw(draw);[encoder setVertexBuffer:mesh->second.Vertices offset:0 atIndex:0];[encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:2];[encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:2];if(skinned)BindSkin(encoder,mesh->second,draw,upload,static_cast<std::size_t>(drawPointer-frame.Draws.data()));
                 BindTexture(encoder,0,TextureOr(draw.Material.BaseColorTexture,White));BindTexture(encoder,1,TextureOr(draw.Material.NormalTexture,Normal));BindTexture(encoder,2,TextureOr(draw.Material.MetallicRoughnessTexture,White));BindTexture(encoder,3,TextureOr(draw.Material.EmissiveTexture,White));BindTexture(encoder,4,TextureOr(draw.Material.OcclusionTexture,White));BindTexture(encoder,5,TextureOr(frame.EnvironmentTexture,Black));
                 [encoder setCullMode:draw.Material.DoubleSided?MTLCullModeNone:MTLCullModeBack];
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:mesh->second.IndexCount indexType:MTLIndexTypeUInt32 indexBuffer:mesh->second.Indices indexBufferOffset:0];}

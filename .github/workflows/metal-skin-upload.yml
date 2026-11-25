@@ -1,0 +1,20 @@
+name: Metal skin upload contract
+on:
+  push:
+    branches: [main, fix/metal-large-skin-palettes]
+  pull_request:
+    paths:
+      - 'detail/MetalSkinUpload.hpp'
+      - 'detail/MetalBackend.mm'
+      - 'tests/MetalSkinUploadTests.cpp'
+      - '.github/workflows/metal-skin-upload.yml'
+permissions:
+  contents: read
+jobs:
+  ranges:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          g++ -std=c++23 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tests/MetalSkinUploadTests.cpp -o /tmp/metal-skin-test
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/metal-skin-test
