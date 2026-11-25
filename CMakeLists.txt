@@ -197,19 +197,23 @@ foreach(stage vert frag)
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/viewport_present.${stage}"
         VERBATIM)
 endforeach()
-add_custom_target(KairoRendererShaders DEPENDS
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/viewport_present.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/viewport_present.frag.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_shadow.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/instanced_triangle.frag.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_triangle.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/triangle.frag.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/debug_line.frag.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/shadow.vert.spv"
-    "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/skinned_shadow.vert.spv")
+include(cmake/VulkanShaderManifest.cmake)
+set(KAIRO_RENDERER_SHADER_BINARIES)
+foreach(name IN LISTS KAIRO_VULKAN_SHADER_NAMES)
+    list(APPEND KAIRO_RENDERER_SHADER_BINARIES "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}/${name}")
+endforeach()
+set(KAIRO_RENDERER_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(KAIRO_RENDERER_EMBEDDED_SHADER_HEADER "${KAIRO_RENDERER_GENERATED_DIR}/EmbeddedVulkanShaders.hpp")
+add_custom_command(
+    OUTPUT "${KAIRO_RENDERER_EMBEDDED_SHADER_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" "-DSHADER_DIR=${KAIRO_RENDERER_SHADER_OUTPUT_DIR}"
+        "-DOUTPUT=${KAIRO_RENDERER_EMBEDDED_SHADER_HEADER}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedVulkanShaders.cmake"
+    DEPENDS ${KAIRO_RENDERER_SHADER_BINARIES}
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VulkanShaderManifest.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedVulkanShaders.cmake"
+    VERBATIM)
+add_custom_target(KairoRendererShaders DEPENDS "${KAIRO_RENDERER_EMBEDDED_SHADER_HEADER}")
 
 set(KAIRO_RENDERER_MODULES
     GraphicsBackend.cppm
@@ -256,7 +260,7 @@ add_library(KairoRenderer)
 target_sources(KairoRenderer PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
     ${KAIRO_RENDERER_MODULES})
 add_dependencies(KairoRenderer KairoRendererShaders)
-target_compile_definitions(KairoRenderer PRIVATE KAIRO_RENDERER_SHADER_DIR="${KAIRO_RENDERER_SHADER_OUTPUT_DIR}")
+target_include_directories(KairoRenderer PRIVATE "${KAIRO_RENDERER_GENERATED_DIR}")
 target_compile_definitions(KairoRenderer PUBLIC
     KAIRO_RENDERER_HAS_VULKAN_BACKEND=1
     KAIRO_RENDERER_HAS_OPENGL_BACKEND=1)
@@ -452,6 +456,12 @@ if(KAIRO_RENDERER_BUILD_TESTS)
             COMMAND KairoRendererVulkanSkinningSmoke)
         set_tests_properties(KairoRendererVulkanSkinningSmoke PROPERTIES
             SKIP_RETURN_CODE 77)
+        add_executable(KairoRendererEmbeddedVulkanShaderTests tests/EmbeddedVulkanShaderTests.cpp)
+        add_dependencies(KairoRendererEmbeddedVulkanShaderTests KairoRendererShaders)
+        target_include_directories(KairoRendererEmbeddedVulkanShaderTests PRIVATE "${KAIRO_RENDERER_GENERATED_DIR}")
+        set_property(TARGET KairoRendererEmbeddedVulkanShaderTests PROPERTY COMPILE_WARNING_AS_ERROR ON)
+        add_test(NAME KairoRendererEmbeddedVulkanShaderTests
+            COMMAND KairoRendererEmbeddedVulkanShaderTests "${KAIRO_RENDERER_SHADER_OUTPUT_DIR}")
         add_executable(KairoRendererVulkanPresentationSmoke tests/VulkanPresentationSmoke.cpp)
         target_link_libraries(KairoRendererVulkanPresentationSmoke PRIVATE KairoRenderer)
         set_property(TARGET KairoRendererVulkanPresentationSmoke PROPERTY COMPILE_WARNING_AS_ERROR ON)
