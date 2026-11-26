@@ -227,8 +227,19 @@ export namespace kairo::renderer
         // object IDs. KairoGameEngine's shared RealtimeSceneBridge and
         // AssetAdapters resolve stable authored IDs beforehand.
         // This method does not modify EngineCore scene persistence.
+        [[nodiscard]] bool SupportsDistanceFog() const noexcept
+        {
+            if(Backend()==GraphicsBackend::Vulkan)return true;
+#if defined(KAIRO_RENDERER_HAS_METAL_BACKEND)
+            if(Backend()==GraphicsBackend::Metal)return true;
+#endif
+            return false;
+        }
+
         void SubmitRenderScene(const RenderScene& scene)
         {
+            if(scene.Environment().FogDensity>0.f&&!SupportsDistanceFog())
+                throw std::logic_error("Distance fog unavailable on selected backend.");
             Visit([&](auto& runtime) { runtime.SubmitRenderScene(scene); });
         }
 

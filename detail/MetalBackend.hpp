@@ -134,6 +134,8 @@ namespace kairo::renderer::detail
         float ReceiverBias = 0.0015f;
         float ConstantDepthBias = 1.25f;
         float SlopeDepthBias = 1.75f;
+        float FogDensity = 0.0f;
+        float FogStartDistance = 0.0f;
     };
 
     struct MetalCapture final

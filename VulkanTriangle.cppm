@@ -1400,6 +1400,10 @@ export namespace kairo::renderer
             uniform.Values[63u] = m_ShadowSettings.ReceiverBias;
             uniform.Values[64u] = static_cast<float>(m_ShadingMode);
             uniform.Values[65u] = m_Environment.ExposureEV100;
+            // Previously unused viewportParameters.zw: no UBO size or
+            // light-array offset changes for static, skinned or instanced draws.
+            uniform.Values[66u] = m_Environment.FogDensity;
+            uniform.Values[67u] = m_Environment.FogStartDistance;
             uniform.Values[68u] = static_cast<float>(m_Lights.size());
             uniform.Values[69u] = shadowIndex.has_value()
                 ? static_cast<float>(*shadowIndex) : -1.0f;

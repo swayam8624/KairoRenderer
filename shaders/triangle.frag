@@ -265,7 +265,18 @@ void main()
         texture(emissiveMap, varyTexCoord).rgb;
     const vec3 hdrColor = (ambient + direct + emissive) *
         exp2(camera.viewportParameters.y);
-    outColor = vec4(hdrColor / (hdrColor + vec3(1.0)), 1.0);
+    vec3 mappedColor = hdrColor / (hdrColor + vec3(1.0));
+    // Beer-Lambert visibility over the distance beyond the clear-air start.
+    // Mix in the same linear post-tone-map space as the background clear.
+    // Disabled fog is bit-identical; diagnostics returned before this branch.
+    if (camera.viewportParameters.z > 0.0)
+    {
+        const float distanceInFog = max(length(camera.cameraPosition.xyz - varyWorldPosition)
+            - camera.viewportParameters.w, 0.0);
+        const float visibility = exp(-camera.viewportParameters.z * distanceInFog);
+        mappedColor = mix(camera.backgroundColor.rgb, mappedColor, visibility);
+    }
+    outColor = vec4(mappedColor, 1.0);
     if (int(material.flags.x + 0.5) == 3) outColor.a = baseColorAlpha.a;
     outObjectID = DRAW_OBJECT_ID;
 }

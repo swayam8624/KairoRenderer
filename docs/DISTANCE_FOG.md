@@ -1,0 +1,9 @@
+# Native radial distance fog
+
+Set RenderEnvironment.FogDensity (inverse world units, 0..1000) and FogStartDistance (world units, 0..1e6) on a RenderScene before submission. Fog is off by default. RendererRuntime::SupportsDistanceFog reports Vulkan and Metal; OpenGL and Direct3D12 reject nonzero density before replacing scene state.
+
+Visibility is exp(-density * max(length(cameraPosition-worldPosition)-start,0)). Both native lit fragment paths blend the existing tone-mapped linear color toward the same viewport background clear. This is a cheap homogeneous distance approximation, not volumetric scattering, participating-media lighting, postprocessing bloom or height fog. Diagnostic shading, alpha and object ID output are unchanged. Fog works for static, skinned and instanced geometry through the shared fragment path; only the static two-cube native fixture is asserted so far.
+
+Read detail/DistanceFog.hpp, RenderScene.cppm, VulkanTriangle.cppm (viewportParameters.zw), shaders/triangle.frag, MetalRenderer.cppm, detail/MetalBackend.hpp and detail/MetalBackend.mm (cameraPosition.w and former padding slot). CPU and GPU layouts keep existing offsets. The existing graph Record/Submit (Vulkan) and RenderPresent/CaptureReadback (Metal) execute the shader; this is not a separate fullscreen pass.
+
+Both GCC and Clang passed 50,000 CPU reference samples each; exact tested blob IDs 40545e278f253f070259e5e859eff0d73af48d48 and 0e19fb10135a05dc8d8fff063c81829f3fef8307. The actual GLSL/MSL shader and full renderer have not compiled locally: glslang and Metal SDK are unavailable. Native smoke checks near geometry, far geometry, background, picking, disabled restoration, diagnostic modes and graph profile. It rejects unavailable presentation rather than skipping. CI must pass before the engine workspace pin changes. No authored scene-file integration or editor control yet.
