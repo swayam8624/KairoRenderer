@@ -114,6 +114,8 @@ export namespace kairo::renderer
     // passing only an untyped filename would erase color-space intent.
     using GltfTextureResolver = std::function<TextureHandle(
         std::string_view, kairo::assets::TextureSemantic)>;
+    using GltfEmbeddedTextureResolver = std::function<TextureHandle(
+        const kairo::assets::GltfTextureBinding&,kairo::assets::TextureSemantic)>;
 
     // CPU-owned primitive Geometry/Material plus glTF node/primitive/skin
     // indices; no GPU buffers yet. Node/skin identity is needed to compute
@@ -158,16 +160,19 @@ export namespace kairo::renderer
     // textures cannot quietly disappear at this conversion boundary.
     [[nodiscard]] inline PBRMaterial MakeGltfPBRMaterial(
         const kairo::assets::GltfMaterialData& source,
-        const GltfTextureResolver& resolveTexture = {})
+        const GltfTextureResolver& resolveTexture = {},
+        const GltfEmbeddedTextureResolver& resolveEmbedded = {})
     {
         const auto resolve = [&](const kairo::assets::GltfTextureBinding& binding,
             kairo::assets::TextureSemantic semantic)
         {
-            if (binding.Uri.empty()) return InvalidTextureHandle;
-            if (!resolveTexture)
-                throw std::invalid_argument(
-                    "A textured glTF material requires a texture resolver.");
-            const TextureHandle result = resolveTexture(binding.Uri, semantic);
+            if (!binding.HasTexture()) return InvalidTextureHandle;
+            const bool embedded=!binding.EmbeddedBytes.empty()||binding.Uri.starts_with("data:");
+            if(embedded&&!resolveEmbedded)
+                throw std::invalid_argument("An embedded glTF material image requires an embedded texture resolver.");
+            if(!embedded&&!resolveTexture)
+                throw std::invalid_argument("A textured glTF material requires a texture resolver.");
+            const TextureHandle result=embedded?resolveEmbedded(binding,semantic):resolveTexture(binding.Uri,semantic);
             if (result == InvalidTextureHandle)
                 throw std::invalid_argument(
                     "A glTF material texture resolved to an invalid renderer handle.");
@@ -223,7 +228,8 @@ export namespace kairo::renderer
     // multiplies the authored SceneInstance world transform exactly once.
     [[nodiscard]] inline GltfRenderAsset MakeGltfRenderAsset(
         const kairo::assets::GltfSceneArtifactData& source,
-        const GltfTextureResolver& resolveTexture = {})
+        const GltfTextureResolver& resolveTexture = {},
+        const GltfEmbeddedTextureResolver& resolveEmbedded = {})
     {
         kairo::assets::ValidateGltfSceneArtifactData(source);
         std::vector<kairo::foundation::math::Mat4f> world(
@@ -261,7 +267,7 @@ export namespace kairo::renderer
                 PBRMaterial material;
                 if (primitive.MaterialIndex != std::numeric_limits<std::uint32_t>::max())
                     material = MakeGltfPBRMaterial(
-                        source.Materials[primitive.MaterialIndex], resolveTexture);
+                        source.Materials[primitive.MaterialIndex], resolveTexture,resolveEmbedded);
                 const bool skinned = source.Nodes[nodeIndex].SkinIndex !=
                     kairo::assets::GltfMissingIndex;
                 Mesh geometry = skinned
