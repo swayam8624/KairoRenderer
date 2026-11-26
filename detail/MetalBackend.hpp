@@ -136,6 +136,9 @@ namespace kairo::renderer::detail
         float SlopeDepthBias = 1.75f;
         float FogDensity = 0.0f;
         float FogStartDistance = 0.0f;
+        float FogEndDistance = 1000.0f;
+        float FogColor[3]{};
+        std::uint32_t FogMode = 0u;
     };
 
     struct MetalCapture final

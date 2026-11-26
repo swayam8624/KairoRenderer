@@ -88,6 +88,25 @@ int main(int argc,char** argv)
             runtime.SetViewportShadingMode(mode);
             if(capture(0.f).RGBA!=capture(.4f).RGBA)throw std::runtime_error("Fog altered diagnostic view.");
         }
+        // A linear equation is enabled even with zero exponential density.
+        // Far geometry saturates to its own authored color; clear stays black.
+        runtime.SetViewportShadingMode(ViewportShadingMode::Lit);
+        environment.Fog=RenderFogMode::Linear;
+        environment.FogEndDistance=7.f;
+        environment.FogColor=Vec3f{.05f,.1f,.9f};
+        const auto linear=capture(0.f);
+        const auto farLinear=pixel(linear,72,48),nearLinear=pixel(linear,24,48);
+        if(farLinear[2]-farLinear[0]<40||pixel(linear,0,0)!=pixel(baseline,0,0))
+            throw std::runtime_error("Linear fog did not apply independent color.");
+        for(unsigned channel=0;channel<3;++channel)
+            if(std::abs(nearLinear[channel]-near0[channel])>1)throw std::runtime_error("Linear near cutoff changed geometry.");
+        if(pick(24)!=17u||pick(72)!=29u)throw std::runtime_error("Linear fog changed picking.");
+        invalid=environment;invalid.FogEndDistance=invalid.FogStartDistance;
+        rejected=false;try{scene.SetEnvironment(invalid);}catch(const std::invalid_argument&){rejected=true;}
+        if(!rejected||scene.Environment().FogEndDistance!=7.f)
+            throw std::runtime_error("Invalid linear interval replaced scene.");
+        environment.Fog=RenderFogMode::Disabled;
+        if(capture(1.f).RGBA!=baseline.RGBA)throw std::runtime_error("Explicit disabled mode did not restore baseline.");
         runtime.SubmitRenderScene(RenderScene{});runtime.DestroyMesh(mesh);
         std::cout<<"Native fog: near/far contrast, disabled restoration, picking and diagnostic isolation passed\n";
         return 0;

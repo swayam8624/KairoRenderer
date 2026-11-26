@@ -23,6 +23,7 @@ layout(set = 0, binding = 0) uniform CameraMatrices {
     vec4 lightDirectionRange[16];
     vec4 lightColorIntensity[16];
     vec4 lightSpot[16];
+    vec4 fogColorEnd; // appended; existing std140 offsets unchanged
 } camera;
 
 layout(set = 0, binding = 1) uniform sampler2D shadowMap;
@@ -267,14 +268,18 @@ void main()
         exp2(camera.viewportParameters.y);
     vec3 mappedColor = hdrColor / (hdrColor + vec3(1.0));
     // Beer-Lambert visibility over the distance beyond the clear-air start.
-    // Mix in the same linear post-tone-map space as the background clear.
+    // Mix in linear post-tone-map space; authored fog color can differ from clear.
     // Disabled fog is bit-identical; diagnostics returned before this branch.
-    if (camera.viewportParameters.z > 0.0)
+    const int fogMode = int(camera.sceneParameters.w + 0.5);
+    if (fogMode != 0)
     {
-        const float distanceInFog = max(length(camera.cameraPosition.xyz - varyWorldPosition)
-            - camera.viewportParameters.w, 0.0);
-        const float visibility = exp(-camera.viewportParameters.z * distanceInFog);
-        mappedColor = mix(camera.backgroundColor.rgb, mappedColor, visibility);
+        const float distanceFromCamera = length(camera.cameraPosition.xyz - varyWorldPosition);
+        const float start = camera.viewportParameters.w;
+        const float end = camera.fogColorEnd.w;
+        const float visibility = fogMode == 2
+            ? clamp((end - distanceFromCamera) / (end - start), 0.0, 1.0)
+            : exp(-camera.viewportParameters.z * max(distanceFromCamera - start, 0.0));
+        mappedColor = mix(camera.fogColorEnd.rgb, mappedColor, visibility);
     }
     outColor = vec4(mappedColor, 1.0);
     if (int(material.flags.x + 0.5) == 3) outColor.a = baseColorAlpha.a;

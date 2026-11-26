@@ -16,6 +16,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 #include "detail/DistanceFog.hpp"
@@ -65,6 +66,10 @@ export namespace kairo::renderer
         void Validate() const;
     };
 
+    // Explicit GPU equation IDs; do not cast the EngineCore authoring enum
+    // directly, since its ordinal values differ from this renderer contract.
+    enum class RenderFogMode:std::uint32_t{Disabled=0u,Exponential=1u,Linear=2u};
+
     /// Global renderer state selected from EngineCore's deterministic active
     /// environment. Environment maps remain a texture handle so Vulkan owns
     /// sampling resources while scene files retain persistent asset IDs.
@@ -76,10 +81,24 @@ export namespace kairo::renderer
         float EnvironmentIntensity = 1.0f;
         float ExposureEV100 = 0.0f;
         TextureHandle EnvironmentTexture = InvalidTextureHandle;
-        // Radial distance fog in world units, disabled by default. Fog
-        // color is the linear viewport background; applied after tone map.
+        // Legacy density-only callers keep exponential fog. Zero density
+        // still disables it; an explicit Disabled mode also overrides density.
         float FogDensity = 0.0f;
         float FogStartDistance = 0.0f;
+        RenderFogMode Fog = RenderFogMode::Exponential;
+        float FogEndDistance = 1000.0f;
+        // Absent color preserves legacy background-colored fog. Explicit
+        // authored color is linear post-tone-map RGB, independent of clear.
+        std::optional<kairo::foundation::math::Vec3f> FogColor;
+
+        [[nodiscard]] RenderFogMode EffectiveFogMode() const noexcept
+        {
+            return Fog==RenderFogMode::Exponential&&FogDensity==0.f?RenderFogMode::Disabled:Fog;
+        }
+        [[nodiscard]] kairo::foundation::math::Vec3f EffectiveFogColor() const noexcept
+        {
+            return FogColor.value_or(BackgroundColor);
+        }
 
         void Validate() const;
     };
@@ -217,7 +236,7 @@ export namespace kairo::renderer
 
     inline void RenderEnvironment::Validate() const
     {
-        detail::ValidateDistanceFog(FogDensity, FogStartDistance);
+        detail::ValidateDistanceFog(static_cast<detail::DistanceFogEquation>(Fog),FogDensity,FogStartDistance,FogEndDistance);
         const auto validColor = [](const auto& color)
         {
             return std::isfinite(color.x) && std::isfinite(color.y) &&
@@ -225,6 +244,7 @@ export namespace kairo::renderer
                 color.y >= 0.0f && color.z >= 0.0f;
         };
         if (!validColor(BackgroundColor) || !validColor(AmbientColor) ||
+            (FogColor.has_value()&&!validColor(*FogColor)) ||
             !std::isfinite(AmbientIntensity) || AmbientIntensity < 0.0f ||
             !std::isfinite(EnvironmentIntensity) || EnvironmentIntensity < 0.0f ||
             !std::isfinite(ExposureEV100) || ExposureEV100 < -32.0f ||

@@ -84,6 +84,9 @@ namespace kairo::renderer::detail
             // start distance. Keep every light offset unchanged.
             float FogDensity = 0.0f;
             MetalLight Lights[16]{};
+            // Appended aligned vectors retain all pre-existing frame offsets.
+            float FogColorEnd[4]{};
+            std::uint32_t FogMode[4]{};
         };
 
         // Per-draw CPU/shader uniform ABI: model/normal matrices, material,
@@ -107,7 +110,9 @@ namespace kairo::renderer::detail
         static_assert(offsetof(FrameUniforms, CameraPosition) == 192u);
         static_assert(offsetof(FrameUniforms, FogDensity) == 268u);
         static_assert(offsetof(FrameUniforms, Lights) == 272u);
-        static_assert(sizeof(FrameUniforms) == 1552u);
+        static_assert(offsetof(FrameUniforms,FogColorEnd)==1552u);
+        static_assert(offsetof(FrameUniforms,FogMode)==1568u);
+        static_assert(sizeof(FrameUniforms) == 1584u);
         static_assert(sizeof(DrawUniforms) == 176u);
         static_assert(offsetof(DrawUniforms, ObjectID) == 164u);
 
@@ -212,6 +217,7 @@ struct Frame {
     uint lightCount; int shadowLightIndex; uint shadingMode; uint shadowsEnabled;
     float shadowStrength; float receiverBias; float shadowTexel; float fogDensity;
     Light lights[16];
+    float4 fogColorEnd; uint4 fogMode;
 };
 struct Draw {
     float4x4 model; float4 normal0; float4 normal1; float4 normal2;
@@ -358,10 +364,13 @@ fragment FragmentOut mesh_fragment(VertexOut in [[stage_in]], constant Frame& fr
         (frame.shadingMode==3 ? direct : ambient+direct+emissive);
     color*=exp2(frame.ambientExposure.w); color=color/(color+1.0);
     // Match Vulkan's lit-only radial fog; preserve diagnostic and object ID paths.
-    if (frame.shadingMode==0 && frame.fogDensity>0.0) {
-        float distanceInFog=max(length(frame.cameraPosition.xyz-in.world)-frame.cameraPosition.w,0.0);
-        float visibility=exp(-frame.fogDensity*distanceInFog);
-        color=mix(frame.backgroundEnvironment.rgb,color,visibility);
+    if (frame.shadingMode==0 && frame.fogMode.x!=0) {
+        float distanceFromCamera=length(frame.cameraPosition.xyz-in.world);
+        float start=frame.cameraPosition.w, end=frame.fogColorEnd.w;
+        float visibility=frame.fogMode.x==2
+            ? clamp((end-distanceFromCamera)/(end-start),0.0,1.0)
+            : exp(-frame.fogDensity*max(distanceFromCamera-start,0.0));
+        color=mix(frame.fogColorEnd.rgb,color,visibility);
     }
     FragmentOut output; output.color=float4(color,draw.alphaMode==3?base.a:1.0); output.objectID=in.objectID; return output;
 }
@@ -672,6 +681,9 @@ fragment float4 viewport_ui_fragment(constant float4& color [[buffer(0)]]) { ret
             std::copy_n(frame.CameraPosition,3u,output.CameraPosition);
             output.CameraPosition[3]=frame.FogStartDistance;
             output.FogDensity=frame.FogDensity;
+            std::copy_n(frame.FogColor,3u,output.FogColorEnd);
+            output.FogColorEnd[3]=frame.FogEndDistance;
+            output.FogMode[0]=frame.FogMode;
             std::copy_n(frame.Ambient,3u,output.AmbientExposure); output.AmbientExposure[3]=frame.Exposure;
             std::copy_n(frame.Background,3u,output.BackgroundEnvironment); output.BackgroundEnvironment[3]=frame.EnvironmentIntensity;
             output.LightCount=static_cast<std::uint32_t>(std::min<std::size_t>(16u,frame.Lights.size()));

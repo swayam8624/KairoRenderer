@@ -277,3 +277,5 @@ The [Teaching source map](docs/SOURCE_READING_ORDER.md) gives a linked reading s
 ### Distance fog (Vulkan / Metal candidate)
 
 See [native distance fog](docs/DISTANCE_FOG.md) for density/start controls, shader ABI, reference tests and strict native acceptance. CPU reference passed; native acceptance pending.
+
+The authored fog extension adds linear near/far, independent fog color and explicit disabled mode alongside legacy exponential density. See [native distance fog](docs/DISTANCE_FOG.md) for ABI and test scope. Native acceptance pending.

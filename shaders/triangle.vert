@@ -15,6 +15,7 @@ layout(set = 0, binding = 0) uniform CameraMatrices {
     vec4 lightDirectionRange[16];
     vec4 lightColorIntensity[16];
     vec4 lightSpot[16];
+    vec4 fogColorEnd; // appended; existing std140 offsets unchanged
 } camera;
 
 #ifdef KAIRO_INSTANCED

@@ -238,7 +238,7 @@ export namespace kairo::renderer
 
         void SubmitRenderScene(const RenderScene& scene)
         {
-            if(scene.Environment().FogDensity>0.f&&!SupportsDistanceFog())
+            if(scene.Environment().EffectiveFogMode()!=RenderFogMode::Disabled&&!SupportsDistanceFog())
                 throw std::logic_error("Distance fog unavailable on selected backend.");
             Visit([&](auto& runtime) { runtime.SubmitRenderScene(scene); });
         }
