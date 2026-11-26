@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <limits>
+#include <cstddef>
+#include <stdexcept>
 #include <vector>
 
 import Kairo.Renderer;
@@ -537,4 +539,39 @@ TEST_CASE("Debug draw preserves oriented box geometry", "[KairoRenderer][Debug]"
     CHECK(draw.Lines().front().B.y == 2.5f);
     REQUIRE_THROWS(draw.AddOBB({}, { 1.0f, 0.0f, 1.0f }, rotation));
     REQUIRE_THROWS(draw.AddOBB({}, { 1.0f, 1.0f, 1.0f }, kairo::foundation::math::Quatf::Zero()));
+}
+
+TEST_CASE("Embedded glTF material textures retain channel semantics",
+    "[KairoRenderer][Gltf][Texture]")
+{
+    using namespace kairo::assets;
+    GltfMaterialData material;
+    material.BaseColorTexture.EmbeddedBytes={std::byte{1},std::byte{2}};
+    material.BaseColorTexture.MimeType="image/png";
+    material.NormalTexture=material.BaseColorTexture;
+    material.MetallicRoughnessTexture.Uri="maps/data.png";
+    unsigned color=0,normal=0,external=0;
+    const auto resolveExternal=[&](std::string_view uri,TextureSemantic semantic)
+    {
+        CHECK(uri=="maps/data.png");
+        CHECK(semantic==TextureSemantic::Data);
+        ++external;return TextureHandle{17};
+    };
+    const auto resolveEmbedded=[&](const GltfTextureBinding& binding,TextureSemantic semantic)
+    {
+        CHECK(binding.EmbeddedBytes==material.BaseColorTexture.EmbeddedBytes);
+        if(semantic==TextureSemantic::Color){++color;return TextureHandle{11};}
+        CHECK(semantic==TextureSemantic::Normal);
+        ++normal;return TextureHandle{13};
+    };
+    CHECK_THROWS(MakeGltfPBRMaterial(material,resolveExternal));
+    const auto result=MakeGltfPBRMaterial(material,resolveExternal,resolveEmbedded);
+    CHECK(result.BaseColorTexture==11);
+    CHECK(result.NormalTexture==13);
+    CHECK(result.MetallicRoughnessTexture==17);
+    CHECK(color==1);
+    CHECK(normal==1);
+    CHECK(external==1);
+    CHECK_THROWS(MakeGltfPBRMaterial(material,resolveExternal,
+        [](const auto&,auto){return InvalidTextureHandle;}));
 }
