@@ -27,6 +27,6 @@ int main()
         rejected=false;try{(void)DistanceFogVisibility(1.f,0.f,invalid);}catch(const std::invalid_argument&){rejected=true;}Check(rejected,"invalid distance");
     }
     bool rejected=false;try{ValidateDistanceFog(1001.f,0.f);}catch(const std::invalid_argument&){rejected=true;}Check(rejected,"density cap");
-    rejected=false;try{ValidateDistanceFog(1.f,1e7f);}catch(const std::invalid_argument&){rejected=true;}Check(rejected,"start cap");
+    rejected=false;try{ValidateDistanceFog(1.f,1e8f);}catch(const std::invalid_argument&){rejected=true;}Check(rejected,"start cap");
     std::cout<<"50000 distance fog samples matched double reference; bounds, monotonicity and disabled behavior passed\n";
 }

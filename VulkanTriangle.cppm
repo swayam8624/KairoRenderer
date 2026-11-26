@@ -449,7 +449,7 @@ export namespace kairo::renderer
 
     private:
         /// std140-compatible view/projection plus directional-light data.
-        struct CameraUniform final { std::array<float, 332> Values{}; };
+        struct CameraUniform final { std::array<float, 336> Values{}; };
         /// 64-byte model + three padded normal columns + 16-byte tint exactly
         /// fit Vulkan's guaranteed minimum 128-byte push-constant capacity.
         struct MeshPushConstants final { std::array<float, 32> Values{}; };
@@ -1400,14 +1400,20 @@ export namespace kairo::renderer
             uniform.Values[63u] = m_ShadowSettings.ReceiverBias;
             uniform.Values[64u] = static_cast<float>(m_ShadingMode);
             uniform.Values[65u] = m_Environment.ExposureEV100;
-            // Previously unused viewportParameters.zw: no UBO size or
-            // light-array offset changes for static, skinned or instanced draws.
+            // viewportParameters.zw retain density/start. sceneParameters.w
+            // holds the equation ID; one vec4 follows the unchanged light arrays.
             uniform.Values[66u] = m_Environment.FogDensity;
             uniform.Values[67u] = m_Environment.FogStartDistance;
             uniform.Values[68u] = static_cast<float>(m_Lights.size());
             uniform.Values[69u] = shadowIndex.has_value()
                 ? static_cast<float>(*shadowIndex) : -1.0f;
             uniform.Values[70u] = m_Environment.EnvironmentIntensity;
+            uniform.Values[71u] = static_cast<float>(m_Environment.EffectiveFogMode());
+            const auto fogColor=m_Environment.EffectiveFogColor();
+            uniform.Values[332u]=fogColor.x;
+            uniform.Values[333u]=fogColor.y;
+            uniform.Values[334u]=fogColor.z;
+            uniform.Values[335u]=m_Environment.FogEndDistance;
             uniform.Values[72u] = m_Environment.BackgroundColor.x;
             uniform.Values[73u] = m_Environment.BackgroundColor.y;
             uniform.Values[74u] = m_Environment.BackgroundColor.z;
