@@ -5,6 +5,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 import Kairo.Renderer;
 import Kairo.Foundation.Math;
@@ -31,6 +32,11 @@ int main(int argc,char** argv)
         draw.Material.BaseColor={1.f,.1f,.1f};draw.Material.Emissive={2.f,1.f,.5f};
         draw.Model=MakeTranslation(Vec3f{-1.f,0.f,0.f});draw.ObjectID=17u;scene.Add(draw);
         draw.Model=MakeTranslation(Vec3f{1.f,0.f,-4.f});draw.ObjectID=29u;scene.Add(draw);
+        // Lighting diagnostics need a direct light to distinguish geometry from clear.
+        RenderLight light;
+        light.Direction={0.f,0.f,1.f};
+        light.CastShadows=false;
+        scene.AddLight(light);
         RenderEnvironment environment;environment.BackgroundColor={0.f,0.f,0.f};
         environment.AmbientIntensity=1.f;environment.EnvironmentIntensity=0.f;environment.FogStartDistance=6.f;
         const auto capture=[&](float density)
