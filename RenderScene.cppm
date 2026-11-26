@@ -18,6 +18,7 @@ module;
 #include <limits>
 #include <stdexcept>
 #include <vector>
+#include "detail/DistanceFog.hpp"
 
 export module Kairo.Renderer.RenderScene;
 
@@ -75,6 +76,10 @@ export namespace kairo::renderer
         float EnvironmentIntensity = 1.0f;
         float ExposureEV100 = 0.0f;
         TextureHandle EnvironmentTexture = InvalidTextureHandle;
+        // Radial distance fog in world units, disabled by default. Fog
+        // color is the linear viewport background; applied after tone map.
+        float FogDensity = 0.0f;
+        float FogStartDistance = 0.0f;
 
         void Validate() const;
     };
@@ -212,6 +217,7 @@ export namespace kairo::renderer
 
     inline void RenderEnvironment::Validate() const
     {
+        detail::ValidateDistanceFog(FogDensity, FogStartDistance);
         const auto validColor = [](const auto& color)
         {
             return std::isfinite(color.x) && std::isfinite(color.y) &&

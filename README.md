@@ -273,3 +273,7 @@ The [Teaching source map](docs/SOURCE_READING_ORDER.md) gives a linked reading s
 **Current scope and limitations.** Multi-backend source exists, but native backend execution requires platform-specific validation; cross-platform selection-policy tests cannot replace it.
 
 **Learning and reuse.** Project-authored code is intended for study, modification and further development under the repository's applicable license. See [LICENSE](LICENSE) where present. Third-party libraries, borrowed source, assets, test data, models and media remain under their own terms; do not treat a top-level license as permission to redistribute restricted content.
+
+### Distance fog (Vulkan / Metal candidate)
+
+See [native distance fog](docs/DISTANCE_FOG.md) for density/start controls, shader ABI, reference tests and strict native acceptance. CPU reference passed; native acceptance pending.

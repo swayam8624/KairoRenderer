@@ -478,6 +478,7 @@ export namespace kairo::renderer
 
         void SubmitRenderScene(const RenderScene& scene)
         {
+            if(scene.Environment().FogDensity>0.f)throw std::logic_error("Distance fog unavailable on this backend.");
             for (const MeshDraw& draw : scene.Draws())
             {
                 RenderScene::Validate(draw);

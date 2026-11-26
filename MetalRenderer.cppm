@@ -163,6 +163,8 @@ export namespace kairo::renderer
             Copy(m_Environment.AmbientColor * m_Environment.AmbientIntensity,
                 frame.Ambient);
             frame.Exposure = m_Environment.ExposureEV100;
+            frame.FogDensity = m_Environment.FogDensity;
+            frame.FogStartDistance = m_Environment.FogStartDistance;
             frame.EnvironmentIntensity = m_Environment.EnvironmentIntensity;
             frame.EnvironmentTexture = m_Environment.EnvironmentTexture;
             frame.ShadingMode = static_cast<std::uint32_t>(m_ShadingMode);
