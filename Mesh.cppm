@@ -102,14 +102,65 @@ export namespace kairo::renderer
         /// native APIs to bind skinning as a second stream/buffer.
         [[nodiscard]] static Mesh FromGltfPrimitive(
             const kairo::assets::GltfPrimitiveData& primitive,
-            const kairo::foundation::math::Vec3f& color = { 1.0f, 1.0f, 1.0f })
+            const kairo::foundation::math::Vec3f& color = { 1.0f, 1.0f, 1.0f },
+            bool includeSkin = true)
         {
-            Mesh result = FromArtifact(primitive.Mesh, color);
-            if (!primitive.Skinning.empty())
+            const auto& artifact=primitive.Mesh;
+            // glTF permits missing NORMAL and requires flat shading in that
+            // case. Duplicate corners rather than averaging across shared
+            // edges: otherwise an authored hard crease becomes smooth.
+            const bool skin=includeSkin&&!primitive.Skinning.empty();
+            if(skin&&primitive.Skinning.size()!=artifact.Vertices.size())
+                throw std::invalid_argument("Renderer glTF skin stream must match the vertex count.");
+            if(!artifact.HasNormals)
             {
-                if (primitive.Skinning.size() != result.m_Vertices.size())
-                    throw std::invalid_argument(
-                        "Renderer glTF skin stream must match the vertex count.");
+                kairo::assets::ValidateMeshArtifactData(artifact);
+                if(!std::isfinite(color.x)||!std::isfinite(color.y)||!std::isfinite(color.z)||
+                    color.x<0.f||color.y<0.f||color.z<0.f)
+                    throw std::invalid_argument("Renderer mesh color must be finite and non-negative.");
+                if(artifact.Indices.size()>3'000'000u)
+                    throw std::length_error("Generated flat-normal glTF mesh exceeds corner budget.");
+                std::vector<MeshVertex> vertices;
+                std::vector<std::uint32_t> indices;
+                std::vector<SkinVertexInfluence> influences;
+                vertices.reserve(artifact.Indices.size());indices.reserve(artifact.Indices.size());
+                if(skin)influences.reserve(artifact.Indices.size());
+                for(std::size_t i=0;i<artifact.Indices.size();i+=3)
+                {
+                    const auto& a=artifact.Vertices[artifact.Indices[i]].Position;
+                    const auto& b=artifact.Vertices[artifact.Indices[i+1]].Position;
+                    const auto& c=artifact.Vertices[artifact.Indices[i+2]].Position;
+                    const double ux=double(b[0])-a[0],uy=double(b[1])-a[1],uz=double(b[2])-a[2];
+                    const double vx=double(c[0])-a[0],vy=double(c[1])-a[1],vz=double(c[2])-a[2];
+                    const double nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+                    const double length=std::hypot(nx,ny,nz);
+                    if(!std::isfinite(length)||length<=0.)
+                        throw std::invalid_argument("Cannot generate normal for degenerate glTF triangle.");
+                    const kairo::foundation::math::Vec3f normal{float(nx/length),float(ny/length),float(nz/length)};
+                    for(std::size_t corner=0;corner<3;++corner)
+                    {
+                        const auto index=artifact.Indices[i+corner];
+                        const auto& source=artifact.Vertices[index];
+                        indices.push_back(static_cast<std::uint32_t>(vertices.size()));
+                        vertices.push_back({{source.Position[0],source.Position[1],source.Position[2]},
+                            color,normal,artifact.HasTexCoords?
+                                kairo::foundation::math::Vec2f{source.TexCoord[0],source.TexCoord[1]}:
+                                kairo::foundation::math::Vec2f{}});
+                        if(skin)
+                        {
+                            const auto& value=primitive.Skinning[index];
+                            influences.push_back({value.Joints,value.Weights});
+                        }
+                    }
+                }
+                Mesh result(std::move(vertices),std::move(indices));
+                result.m_Skinning=std::move(influences);
+                result.Validate();
+                return result;
+            }
+            Mesh result = FromArtifact(artifact, color);
+            if (skin)
+            {
                 result.m_Skinning.reserve(primitive.Skinning.size());
                 for (const auto& source : primitive.Skinning)
                 {
