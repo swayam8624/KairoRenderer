@@ -433,8 +433,9 @@ export namespace kairo::renderer
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
                     static_cast<GLint>(texture.Mips.size() - 1u));
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                    texture.Mips.size() > 1u ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    sampling.Nearest ? (texture.Mips.size()>1u?GL_NEAREST_MIPMAP_NEAREST:GL_NEAREST) :
+                    (texture.Mips.size() > 1u ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR));
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, sampling.Nearest?GL_NEAREST:GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
                     ToOpenGL(sampling.AddressU));
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,

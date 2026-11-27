@@ -194,9 +194,9 @@ export namespace kairo::renderer
         {
             VkSamplerCreateInfo create{};
             create.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-            create.magFilter = VK_FILTER_LINEAR;
-            create.minFilter = VK_FILTER_LINEAR;
-            create.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            create.magFilter = sampling.Nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+            create.minFilter = sampling.Nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+            create.mipmapMode = sampling.Nearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR;
             create.addressModeU = Address(sampling.AddressU);
             create.addressModeV = Address(sampling.AddressV);
             create.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
