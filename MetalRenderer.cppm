@@ -340,6 +340,7 @@ export namespace kairo::renderer
             upload.Format = Convert(texture.Format, texture.ColorSpace);
             upload.AddressU = Convert(sampler.AddressU);
             upload.AddressV = Convert(sampler.AddressV);
+            if(sampler.Nearest)upload.MinFilter=upload.MagFilter=detail::MetalFilter::Nearest;
             upload.Bytes = bytes.data();
             upload.ByteCount = bytes.size();
             // The native texture exists before the STL handle set may grow.
