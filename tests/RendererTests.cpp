@@ -575,3 +575,35 @@ TEST_CASE("Embedded glTF material textures retain channel semantics",
     CHECK_THROWS(MakeGltfPBRMaterial(material,resolveExternal,
         [](const auto&,auto){return InvalidTextureHandle;}));
 }
+
+TEST_CASE("glTF missing normals generate flat corners and preserve skin influences",
+    "[KairoRenderer][Gltf][Normals]")
+{
+    using namespace kairo::assets;
+    GltfPrimitiveData primitive;
+    primitive.Mesh.Vertices.resize(4);
+    primitive.Mesh.Vertices[0].Position={0,0,0};
+    primitive.Mesh.Vertices[1].Position={1,0,0};
+    primitive.Mesh.Vertices[2].Position={0,1,0};
+    primitive.Mesh.Vertices[3].Position={0,0,1};
+    primitive.Mesh.Indices={0,1,2,0,3,1};
+    primitive.Skinning.resize(4);
+    for(std::size_t i=0;i<4;++i)
+    {
+        primitive.Skinning[i].Joints={static_cast<std::uint32_t>(i),0,0,0};
+        primitive.Skinning[i].Weights={1,0,0,0};
+    }
+    const auto mesh=Mesh::FromGltfPrimitive(primitive);
+    REQUIRE(mesh.Vertices().size()==6);
+    REQUIRE(mesh.Skinning().size()==6);
+    for(std::size_t i=0;i<3;++i)
+    {
+        CHECK(mesh.Vertices()[i].Normal.z==1.f);
+        CHECK(mesh.Vertices()[i+3].Normal.y==1.f);
+    }
+    CHECK(mesh.Skinning()[3].Joints[0]==0);
+    CHECK(mesh.Skinning()[4].Joints[0]==3);
+    CHECK(mesh.Skinning()[5].Joints[0]==1);
+    CHECK_FALSE(Mesh::FromGltfPrimitive(primitive,{1,1,1},false).IsSkinned());
+    CHECK_THROWS(Mesh::FromArtifact(primitive.Mesh)); // generic contract unchanged
+}

@@ -270,9 +270,7 @@ export namespace kairo::renderer
                         source.Materials[primitive.MaterialIndex], resolveTexture,resolveEmbedded);
                 const bool skinned = source.Nodes[nodeIndex].SkinIndex !=
                     kairo::assets::GltfMissingIndex;
-                Mesh geometry = skinned
-                    ? Mesh::FromGltfPrimitive(primitive)
-                    : Mesh::FromArtifact(primitive.Mesh);
+                Mesh geometry = Mesh::FromGltfPrimitive(primitive,{1.f,1.f,1.f},skinned);
                 // EngineCore skin palettes are jointWorld * inverseBind in
                 // imported-asset space. Applying the mesh node world again
                 // would double-transform skinned vertices, so only static
