@@ -28,6 +28,39 @@ int main()
         camera.OrthographicSize=4.f;
         runtime.SetCameraPose(camera);
         runtime.SetViewportShadingMode(ViewportShadingMode::Unlit);
+        // An actual unlit quad must preserve its base color in the linear
+        // RGBA16F capture, even with nonzero scene exposure.
+        // A relative image comparison cannot catch a shared tone-map error.
+        const auto flat=runtime.CreateMesh(Mesh(
+            {{{-1.f,1.f,0.f},{1.f,1.f,1.f},{0.f,0.f,1.f},{0.f,0.f}},
+             {{-1.f,-1.f,0.f},{1.f,1.f,1.f},{0.f,0.f,1.f},{0.f,1.f}},
+             {{1.f,-1.f,0.f},{1.f,1.f,1.f},{0.f,0.f,1.f},{1.f,1.f}},
+             {{1.f,1.f,0.f},{1.f,1.f,1.f},{0.f,0.f,1.f},{1.f,0.f}}},
+            {0,1,2,0,2,3}));
+        RenderScene flatScene;
+        RenderEnvironment flatEnvironment;
+        flatEnvironment.ExposureEV100=2.f;
+        flatScene.SetEnvironment(flatEnvironment);
+        MeshDraw flatDraw;
+        flatDraw.Mesh=flat;flatDraw.ObjectID=0x5A17u;
+        flatDraw.Material.BaseColor={64.f/255.f,128.f/255.f,192.f/255.f};
+        flatDraw.Material.DoubleSided=true;flatDraw.CastShadows=false;
+        flatScene.Add(flatDraw);
+        runtime.SubmitRenderScene(flatScene);
+        runtime.RequestViewportCapture();
+        runtime.RequestViewportPick(48,48);
+        runtime.DrawFrame();
+        const auto flatImage=runtime.TakeViewportCapture();
+        const auto flatID=runtime.TakeViewportPickResult();
+        if(!flatImage||flatImage->Width!=96||flatImage->Height!=96||!flatID||*flatID!=0x5A17u)
+            throw std::runtime_error("Metal unlit quad capture/pick unavailable");
+        const auto center=(48u*96u+48u)*4u;
+        for(unsigned channel=0;channel<3;++channel)
+            if(std::abs(int(flatImage->RGBA.at(center+channel))-int(64u*(channel+1)))>2)
+                throw std::runtime_error("Metal unlit color differs from authored linear RGB");
+        runtime.SubmitRenderScene(RenderScene{});
+        runtime.DestroyMesh(flat);
+        std::cout<<"Metal unlit authored color and object ID passed\n";
         const auto geometry=Mesh::MakeCube();
         const auto shared=runtime.CreateMesh(geometry), separate=runtime.CreateMesh(geometry);
         constexpr unsigned left=0x12345678u,right=0xDEADBEEFu;

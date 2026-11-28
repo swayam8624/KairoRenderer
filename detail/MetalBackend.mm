@@ -299,6 +299,14 @@ fragment FragmentOut mesh_fragment(VertexOut in [[stage_in]], constant Frame& fr
     sampler shadowSampler [[sampler(6)]]) {
     float4 base = baseTex.sample(baseSampler, in.uv) * draw.baseColor * float4(in.color,1.0);
     if (draw.alphaMode == 2 && base.a < draw.factors.w) discard_fragment();
+    // Match Vulkan Unlit: authored linear base color, no lighting, emissive,
+    // exposure or tone mapping. Keep alpha-mask discard and object picking.
+    if (frame.shadingMode == 1) {
+        FragmentOut output;
+        output.color = float4(clamp(base.rgb, float3(0.0), float3(1.0)), 1.0);
+        output.objectID = in.objectID;
+        return output;
+    }
     float4 mr = mrTex.sample(mrSampler, in.uv); float metallic = clamp(draw.factors.x * mr.b,0.0,1.0);
     float roughness = clamp(draw.factors.y * mr.g,0.045,1.0);
     float ao = clamp(draw.factors.z * occlusionTex.sample(occlusionSampler,in.uv).r,0.0,1.0);
@@ -348,8 +356,7 @@ fragment FragmentOut mesh_fragment(VertexOut in [[stage_in]], constant Frame& fr
     float3 ambient=(frame.ambientExposure.rgb*base.rgb+
         environment*base.rgb*(1.0-metallic)+environment*fresnel(NdotV,f0)*
         (1.0-roughness*0.65))*ao;
-    float3 color = frame.shadingMode==1 ? base.rgb+emissive :
-        (frame.shadingMode==3 ? direct : ambient+direct+emissive);
+    float3 color = frame.shadingMode==3 ? direct : ambient+direct+emissive;
     color*=exp2(frame.ambientExposure.w); color=color/(color+1.0);
     FragmentOut output; output.color=float4(color,draw.alphaMode==3?base.a:1.0); output.objectID=in.objectID; return output;
 }
